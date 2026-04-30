@@ -1,0 +1,36 @@
+{
+  "name": "mariana-fractal-mx",
+  "version": "1.0.0",
+  "description": "AI Assistant para WhatsApp Business - Fractal MX",
+  "main": "mariana-assistant-FORMAL.js",
+  "scripts": {
+    "start": "node mariana-assistant-FORMAL.js",
+    "dev": "node mariana-assistant-FORMAL.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "twilio",
+    "ai-assistant",
+    "fractal-mx",
+    "mariana"
+  ],
+  "author": "Fermín Monroy - Fractal MX",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "franc-min": "^6.2.0",
+    "moment-timezone": "^0.5.45",
+    "natural": "^8.1.1",
+    "sentiment": "^5.0.2",
+    "sharp": "^0.34.5",
+    "twilio": "^4.10.0",
+    "uuid": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}
