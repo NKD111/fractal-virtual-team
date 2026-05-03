@@ -8,7 +8,8 @@ router.get('/', async (req, res) => {
   try {
     const { data: agents, error } = await supabase
       .from('agents')
-      .select('*, office_state(*)');
+      .select('id, name, slug, role, area, status, current_mood, energy_level, last_active')
+      .order('name');
     if (error) throw error;
     res.json({ success: true, agents });
   } catch (err) {
@@ -21,7 +22,7 @@ router.get('/:slug', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('agents')
-      .select('*, office_state(*)')
+      .select('id, name, slug, role, area, status, current_mood, energy_level, last_active')
       .eq('slug', req.params.slug)
       .single();
     if (error) throw error;
