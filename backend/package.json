@@ -1,0 +1,28 @@
+{
+  "name": "fractal-virtual-team-backend",
+  "version": "4.0.0",
+  "description": "Fractal Virtual Team v4.0 - 10 AI agents backend",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node tests/test-agents.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
+    "@supabase/supabase-js": "^2.45.0",
+    "bullmq": "^5.0.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "ioredis": "^5.3.2",
+    "socket.io": "^4.7.0",
+    "twilio": "^4.10.0",
+    "uuid": "^9.0.0",
+    "moment-timezone": "^0.5.45"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

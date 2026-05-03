@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg-primary: #0A0A0F;
+  --bg-secondary: #12121A;
+  --bg-card: #1A1A27;
+  --border: rgba(255,255,255,0.08);
+  --text-primary: #F0F0FF;
+  --text-secondary: #8888AA;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+/* Agent status indicators */
+.status-active { background: #27AE60; box-shadow: 0 0 8px #27AE60; }
+.status-busy   { background: #F39C12; box-shadow: 0 0 8px #F39C12; }
+.status-offline { background: #555; }
+.status-sleeping { background: #9B59B6; box-shadow: 0 0 8px #9B59B6; }
+
+/* Glass card */
+.glass {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+}
+
+/* Glow text */
+.glow { text-shadow: 0 0 20px currentColor; }
+
+/* Agent avatars */
+.agent-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  border: 2px solid currentColor;
+  box-shadow: 0 0 12px currentColor;
+}

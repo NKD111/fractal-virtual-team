@@ -1,0 +1,109 @@
+const express = require('express');
+const router = express.Router();
+const { processIncoming } = require('../core/orchestrator');
+const { supabase } = require('../core/supabase');
+
+// ─── META CLOUD API (Production WhatsApp) ─────────────────────────────────────
+
+// Webhook verification
+router.get('/meta', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === process.env.META_VERIFY_TOKEN) {
+    console.log('[Webhook] Meta verified');
+    return res.status(200).send(challenge);
+  }
+  res.sendStatus(403);
+});
+
+// Incoming messages
+router.post('/meta', async (req, res) => {
+  res.sendStatus(200); // Ack immediately
+
+  try {
+    const body = req.body;
+    if (!body?.entry?.[0]?.changes?.[0]?.value?.messages) return;
+
+    const value = body.entry[0].changes[0].value;
+    const message = value.messages[0];
+    const from = message.from; // phone number
+
+    let text = '';
+    let mediaUrl = null;
+
+    if (message.type === 'text') {
+      text = message.text.body;
+    } else if (message.type === 'image') {
+      text = message.image?.caption || '[imagen recibida]';
+      mediaUrl = message.image?.id; // Meta media ID
+    } else if (message.type === 'audio') {
+      text = '[nota de voz recibida]';
+    } else if (message.type === 'document') {
+      text = `[documento: ${message.document?.filename || 'archivo'}]`;
+    } else {
+      text = `[mensaje tipo: ${message.type}]`;
+    }
+
+    // Log raw webhook
+    await supabase.from('webhooks_log').insert({
+      source: 'meta_whatsapp',
+      event_type: message.type,
+      payload: body,
+      processed: false
+    });
+
+    // Process
+    await processIncoming({ from, text, channel: 'whatsapp', mediaUrl });
+
+    // Mark processed
+    await supabase.from('webhooks_log')
+      .update({ processed: true })
+      .eq('source', 'meta_whatsapp')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+  } catch (err) {
+    console.error('[Webhook Meta] Error:', err.message);
+  }
+});
+
+// ─── TWILIO (Sandbox / dev WhatsApp) ──────────────────────────────────────────
+
+router.post('/twilio', async (req, res) => {
+  res.sendStatus(200);
+
+  try {
+    const { From, Body, MediaUrl0, MediaContentType0 } = req.body;
+    if (!From || !Body) return;
+
+    await supabase.from('webhooks_log').insert({
+      source: 'twilio_whatsapp',
+      event_type: 'message',
+      payload: req.body
+    });
+
+    await processIncoming({
+      from: From,
+      text: Body,
+      channel: 'whatsapp',
+      mediaUrl: MediaUrl0 || null
+    });
+  } catch (err) {
+    console.error('[Webhook Twilio] Error:', err.message);
+  }
+});
+
+// ─── HEALTH CHECK ──────────────────────────────────────────────────────────────
+
+router.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    team: 'Fractal Virtual Team v4.0',
+    agents: 10,
+    timestamp: new Date().toISOString()
+  });
+});
+
+module.exports = router;
