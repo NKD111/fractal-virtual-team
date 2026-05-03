@@ -56,17 +56,30 @@ function routeMessage(text) {
   return 'mariana'; // Default hub
 }
 
+// Normaliza cualquier identificador de phone/whatsapp a solo dígitos
+function normalizePhone(str) {
+  return (str || '').replace(/\D/g, '');
+}
+
 // Main message processor
 async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = null }) {
   console.log(`[Orchestrator] New message from ${from} via ${channel}: ${text?.substring(0, 80)}`);
 
   try {
-    // Check if Fermín is messaging
-    const neikyPhone = process.env.NEIKY_WHATSAPP?.replace('whatsapp:', '');
-    const fromPhone = from.replace('whatsapp:', '').replace('+', '');
-    const isNeiky = fromPhone === neikyPhone?.replace('+', '');
+    // Check if Fermín/Neiky is messaging
+    // Usamos normalización por últimos 10 dígitos para ser robustos ante variaciones
+    // de prefijo (+52 vs +521, whatsapp: prefix, etc.)
+    const neikyRef = normalizePhone(
+      process.env.NEIKY_WHATSAPP || process.env.NEIKY_PHONE || '+5215534189583'
+    );
+    const fromNorm = normalizePhone(from);
+    const isNeiky =
+      (channel === 'web' && (from === 'web_neiky' || from === 'neiky')) ||
+      (fromNorm.length >= 10 && fromNorm.endsWith(neikyRef.slice(-10)));
 
-    // Route to appropriate agent
+    console.log(`[Orchestrator] isNeiky=${isNeiky} | from=${from} | fromNorm=${fromNorm} | neikyRef.slice(-10)=${neikyRef.slice(-10)}`);
+
+    // Route to appropriate agent — Neiky SIEMPRE va a Mariana primero
     const targetSlug = isNeiky ? 'mariana' : routeMessage(text);
     const agent = getAgent(targetSlug);
 
