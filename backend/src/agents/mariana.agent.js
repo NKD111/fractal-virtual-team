@@ -216,12 +216,15 @@ class MarianaAgent extends BaseAgent {
         }
       }
 
-      console.log(`[Mariana] loadCrossChannelHistory: ${pairs.length} pares encontrados`);
-      pairs.slice(0, 3).forEach(p =>
+      // Invertir para tener los MÁS RECIENTES primero — así slice(0,8) toma los últimos 8
+      const recentFirst = pairs.reverse();
+
+      console.log(`[Mariana] loadCrossChannelHistory: ${recentFirst.length} pares encontrados (más reciente primero)`);
+      recentFirst.slice(0, 3).forEach(p =>
         console.log(`  [${p.channel?.toUpperCase()}] "${p.message_in?.substring(0, 60)}"`)
       );
 
-      return pairs.slice(0, 15); // últimos 15 intercambios
+      return recentFirst.slice(0, 15); // 15 más recientes
     } catch (err) {
       console.error('[Mariana] loadCrossChannelHistory error:', err.message);
       return [];
@@ -331,7 +334,7 @@ REGLAS ABSOLUTAS DE IDENTIDAD:
 - Si está estresado o hay urgencia: modo coordinadora seria pero cálida
 - Si es algo casual: responde con calidez y naturalidad
 
-═══ HISTORIAL CROSS-CHANNEL (conversaciones tuyas con Neiky en todos los canales) ═══
+═══ HISTORIAL CROSS-CHANNEL (más reciente primero — incluye WhatsApp, web, etc.) ═══
 ${historyText}
 
 ═══ INTENT DETECTADO ═══
