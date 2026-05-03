@@ -75,8 +75,13 @@ router.post('/twilio', async (req, res) => {
   res.sendStatus(200);
 
   try {
-    const { From, Body, MediaUrl0, MediaContentType0 } = req.body;
+    const { From, Body, MediaUrl0 } = req.body;
     if (!From || !Body) return;
+
+    // Decodificar por si viene URL-encoded (sandbox/simulación) o tiene caracteres especiales
+    const text = (() => { try { return decodeURIComponent(Body); } catch { return Body; } })();
+
+    console.log(`[Webhook Twilio] From=${From} Body="${text.substring(0, 80)}"`);
 
     await supabase.from('webhooks_log').insert({
       source: 'twilio_whatsapp',
@@ -86,7 +91,7 @@ router.post('/twilio', async (req, res) => {
 
     await processIncoming({
       from: From,
-      text: Body,
+      text,
       channel: 'whatsapp',
       mediaUrl: MediaUrl0 || null
     });

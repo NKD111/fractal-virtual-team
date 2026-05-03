@@ -191,6 +191,12 @@ class MarianaAgent extends BaseAgent {
 
       if (!msgs || msgs.length === 0) return [];
 
+      // Decodificar mensajes que puedan venir URL-encoded (ej. de simulaciones de Twilio)
+      const decode = (s) => { try { return decodeURIComponent(s || ''); } catch { return s || ''; } };
+
+      console.log(`[Mariana] loadCrossChannelHistory: ${convs.length} convs, ${msgs.length} msgs para clientId=${clientId}`);
+      console.log(`[Mariana] Canales encontrados: ${[...new Set(convs.map(c => c.channel))].join(', ')}`);
+
       // 3. Convertir al formato que usa respondToNeiky/Client
       // Agrupar user+assistant en pares
       const pairs = [];
@@ -201,14 +207,19 @@ class MarianaAgent extends BaseAgent {
         if (m.role === 'user' && next.role === 'assistant') {
           pairs.push({
             channel: channelMap[m.conversation_id] || 'unknown',
-            message_in: m.content,
-            message_out: next.content,
+            message_in: decode(m.content),
+            message_out: decode(next.content),
             timestamp: m.created_at,
             intent: 'unknown'
           });
           i++; // skip next
         }
       }
+
+      console.log(`[Mariana] loadCrossChannelHistory: ${pairs.length} pares encontrados`);
+      pairs.slice(0, 3).forEach(p =>
+        console.log(`  [${p.channel?.toUpperCase()}] "${p.message_in?.substring(0, 60)}"`)
+      );
 
       return pairs.slice(0, 15); // últimos 15 intercambios
     } catch (err) {
