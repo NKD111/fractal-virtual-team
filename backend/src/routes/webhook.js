@@ -73,7 +73,7 @@ router.post('/meta', async (req, res) => {
 // ─── TWILIO (Sandbox / dev WhatsApp) ──────────────────────────────────────────
 
 router.post('/twilio', async (req, res) => {
-  res.sendStatus(200); // ACK inmediato a Twilio
+  res.status(200).end(); // ACK vacío — sendStatus(200) manda "OK" como body y Twilio lo reenvía
 
   try {
     const { From, Body, MediaUrl0 } = req.body;
