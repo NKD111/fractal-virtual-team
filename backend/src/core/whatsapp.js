@@ -5,6 +5,33 @@ const META_TOKEN = process.env.META_ACCESS_TOKEN;
 const META_PHONE_ID = process.env.META_PHONE_NUMBER_ID;
 const META_API_URL = `https://graph.facebook.com/v18.0/${META_PHONE_ID}/messages`;
 
+// ─── TWILIO ───────────────────────────────────────────────────────────────────
+const TWILIO_SID    = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_FROM   = process.env.TWILIO_WHATSAPP_NUMBER || process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886';
+
+async function sendTwilioMessage(to, text) {
+  if (!TWILIO_SID || !TWILIO_TOKEN) {
+    console.warn('[Twilio] No credentials — mensaje no enviado');
+    return;
+  }
+  // Asegurar formato whatsapp:+XXXXXXXXXX
+  const toFormatted = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+  try {
+    const twilio = require('twilio')(TWILIO_SID, TWILIO_TOKEN);
+    const msg = await twilio.messages.create({
+      from: TWILIO_FROM,
+      to: toFormatted,
+      body: text
+    });
+    console.log(`[Twilio] Enviado a ${toFormatted} — SID: ${msg.sid}`);
+    return msg;
+  } catch (err) {
+    console.error('[Twilio] Error enviando mensaje:', err.message);
+    throw err;
+  }
+}
+
 // Send text via Meta Cloud API (production WhatsApp)
 async function sendMetaMessage(to, text) {
   const phone = to.replace('whatsapp:', '').replace('+', '');
@@ -67,4 +94,4 @@ async function notifyNeiky(message) {
   return sendMetaMessage(neikyPhone, message);
 }
 
-module.exports = { sendMetaMessage, sendMetaTemplate, sendMetaImage, notifyNeiky };
+module.exports = { sendMetaMessage, sendMetaTemplate, sendMetaImage, notifyNeiky, sendTwilioMessage };

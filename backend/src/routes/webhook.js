@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { processIncoming } = require('../core/orchestrator');
 const { supabase } = require('../core/supabase');
+const { sendTwilioMessage } = require('../core/whatsapp');
 
 // ─── META CLOUD API (Production WhatsApp) ─────────────────────────────────────
 
@@ -72,7 +73,7 @@ router.post('/meta', async (req, res) => {
 // ─── TWILIO (Sandbox / dev WhatsApp) ──────────────────────────────────────────
 
 router.post('/twilio', async (req, res) => {
-  res.sendStatus(200);
+  res.sendStatus(200); // ACK inmediato a Twilio
 
   try {
     const { From, Body, MediaUrl0 } = req.body;
@@ -89,12 +90,19 @@ router.post('/twilio', async (req, res) => {
       payload: req.body
     });
 
-    await processIncoming({
+    // Procesar mensaje y obtener respuesta de Mariana
+    const response = await processIncoming({
       from: From,
       text,
       channel: 'whatsapp',
       mediaUrl: MediaUrl0 || null
     });
+
+    // Enviar respuesta de Mariana de vuelta al WhatsApp de quien escribió
+    if (response && typeof response === 'string') {
+      await sendTwilioMessage(From, response);
+      console.log(`[Webhook Twilio] Respuesta enviada a ${From}`);
+    }
   } catch (err) {
     console.error('[Webhook Twilio] Error:', err.message);
   }
