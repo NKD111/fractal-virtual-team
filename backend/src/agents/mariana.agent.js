@@ -352,7 +352,55 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
       messages: [{ role: 'user', content: neikyPrompt }]
     });
 
-    return response.content[0].text;
+    const responseText = response.content[0].text;
+
+    // ── Delegación automática a agentes ──────────────────────────────────────
+    await this._checkAndDelegate(content, responseText, sender);
+
+    return responseText;
+  }
+
+  /**
+   * Detecta si el mensaje necesita acción de un agente y lo ejecuta en background
+   */
+  async _checkAndDelegate(content, marianaResponse, sender) {
+    const lower = content.toLowerCase();
+
+    // ── TAREA DE DISEÑO con email ─────────────────────────────────────────────
+    const isDesignTask = ['arte ', 'diseño', 'pieza', 'arte para', 'propuesta', 'creativo', 'grafico', 'gráfico', 'banner', 'flyer', 'poster', 'anuncio'].some(k => lower.includes(k));
+    const hasEmail = lower.includes('@') || lower.includes('correo') || lower.includes('email') || lower.includes('mail');
+    const mentionsDiego = lower.includes('diego') || lower.includes('diseñador');
+    const mentionsFIF = lower.includes('fif') || lower.includes('festival') || lower.includes('vanexpo') || lower.includes('expo');
+
+    if (isDesignTask || mentionsDiego || mentionsFIF) {
+      // Extraer email del mensaje si se menciona explícitamente
+      const emailMatch = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      const emailDestino = emailMatch?.[0] || process.env.NEIKY_EMAIL || 'nakedgeometry19@gmail.com';
+
+      // Extraer deadline si se menciona
+      const deadlineMatch = content.match(/(\d{1,2}:\d{2}|antes de las \d|mañana|hoy)/i);
+      const deadline = deadlineMatch?.[0] || 'Hoy antes de las 6:30 PM';
+
+      console.log(`[Mariana] Delegando tarea de diseño a Diego → ${emailDestino}`);
+
+      // Ejecutar en background sin bloquear la respuesta a Neiky
+      setImmediate(async () => {
+        try {
+          const DiegoAgent = require('./diego.agent');
+          const diego = new DiegoAgent();
+          await diego.generateFIFProposal({
+            evento: mentionsFIF ? 'FIF Ciudad de México — Próxima Edición' : 'Proyecto de diseño Fractal MX',
+            descripcion: content.substring(0, 500),
+            contexto: 'Agencia de marketing digital premium. Identidad: moderna, audaz, profesional. Redes: Instagram, LinkedIn.',
+            emailDestino,
+            deadline
+          });
+          console.log(`[Mariana] Diego entregó propuesta a ${emailDestino} ✓`);
+        } catch (err) {
+          console.error('[Mariana] Error delegando a Diego:', err.message);
+        }
+      });
+    }
   }
 
   /**
