@@ -62,20 +62,45 @@ class BaseAgent {
    * Inicializa el agente cargando datos de Supabase
    */
   async init() {
+    // Buscar por nombre (case-insensitive) o por slug
     const { data, error } = await this.supabase
       .from('agents')
       .select('*')
-      .eq('name', this.name)
-      .single();
+      .ilike('name', this.name)
+      .maybeSingle();
+
+    // Si no encontró por name, intentar por slug
+    if (!data && !error) {
+      const slug = this.name.toLowerCase().replace('-', '');
+      const { data: bySlug } = await this.supabase
+        .from('agents')
+        .select('*')
+        .ilike('slug', slug)
+        .maybeSingle();
+
+      if (bySlug) {
+        this.id = bySlug.id;
+        this.currentStatus = bySlug.status || 'idle';
+        this.currentMood = bySlug.current_mood || bySlug.mood || 'neutral';
+        this.energyLevel = bySlug.energy_level || 80;
+        console.log(`✅ ${this.name} inicializado (por slug)`);
+        return this;
+      }
+    }
 
     if (error) {
       console.warn(`⚠️  No se pudo cargar ${this.name} de DB: ${error.message}`);
       return this;
     }
 
+    if (!data) {
+      console.warn(`⚠️  ${this.name} no encontrado en DB — operando sin ID`);
+      return this;
+    }
+
     this.id = data.id;
-    this.currentStatus = data.current_status || 'idle';
-    this.currentMood = data.current_mood || 'neutral';
+    this.currentStatus = data.status || 'idle';
+    this.currentMood = data.current_mood || data.mood || 'neutral';
     this.energyLevel = data.energy_level || 80;
 
     console.log(`✅ ${this.name} inicializado correctamente`);
@@ -324,7 +349,7 @@ ${data.notes || 'Sin notas adicionales'}`;
     await this.supabase
       .from('agents')
       .update({
-        current_status: status,
+        status: status,
         current_mood: mood || this.currentMood,
         last_active: new Date()
       })

@@ -1,16 +1,35 @@
 const { supabase, getOrCreateClient, saveMessage, logActivity } = require('./supabase');
 const { notifyNeiky } = require('./whatsapp');
 
-// Lazy load agents to avoid circular deps
-const agents = {};
+// ─── v4.2: Lazy load agents (prefer .agent.js, fallback to .js) ──────────────
+const agentInstances = {};
+
 function getAgent(slug) {
-  if (!agents[slug]) {
-    agents[slug] = require(`../agents/${slug}`);
+  if (!agentInstances[slug]) {
+    let AgentClass;
+    try {
+      // Intentar cargar la versión v4.2 primero
+      AgentClass = require(`../agents/${slug}.agent`);
+      const instance = new AgentClass();
+      agentInstances[slug] = instance;
+    } catch (e) {
+      // Fallback a versión legacy
+      agentInstances[slug] = require(`../agents/${slug}`);
+    }
   }
-  return agents[slug];
+  return agentInstances[slug];
 }
 
-const ALL_SLUGS = ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto'];
+// QCBOT solo existe en v4.2
+function getQCBot() {
+  if (!agentInstances['qcbot']) {
+    const QCBotAgent = require('../agents/qcbot.agent');
+    agentInstances['qcbot'] = new QCBotAgent();
+  }
+  return agentInstances['qcbot'];
+}
+
+const ALL_SLUGS = ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto', 'qcbot'];
 
 // Routing rules: which agent handles which topic keywords
 const ROUTING_RULES = [
@@ -87,14 +106,15 @@ async function processAgentTask({ fromSlug, toSlug, message, taskId }) {
 // Initialize all agents (pre-load data from DB)
 async function initAllAgents(io) {
   global.io = io;
-  console.log('[Orchestrator] Initializing all agents...');
+  console.log('[Orchestrator] Initializing all agents (v4.2)...');
 
   for (const slug of ALL_SLUGS) {
     try {
-      const agent = getAgent(slug);
-      agent.setIo(io);
-      await agent.init();
-      console.log(`  ✓ ${slug}`);
+      const agent = slug === 'qcbot' ? getQCBot() : getAgent(slug);
+      if (typeof agent.setIo === 'function') agent.setIo(io);
+      if (typeof agent.init === 'function') await agent.init();
+      const name = agent.name || agent.slug || slug;
+      console.log(`  ✓ ${name}`);
     } catch (err) {
       console.error(`  ✗ ${slug}:`, err.message);
     }
