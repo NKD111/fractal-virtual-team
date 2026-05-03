@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.next/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.production
+.env.development
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Build outputs
+*.tsbuildinfo
+
+# SAT certs (sensitive)
+backend/certs/*.key
+backend/certs/*.cer
+
+# Personal
+todo.md
+notes/
