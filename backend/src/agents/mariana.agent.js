@@ -96,71 +96,164 @@ class MarianaAgent extends BaseAgent {
   }
 
   /**
+   * Normaliza un identificador de phone/whatsapp a solo dígitos
+   */
+  _normalizePhone(str) {
+    return (str || '').replace(/\D/g, '');
+  }
+
+  /**
    * Identifica quién está escribiendo (Neiky, cliente conocido, desconocido)
+   * UNIFICADO: Neiky es siempre el mismo sin importar el canal
    */
   async identifySender(identifier, channel) {
-    // Verificar si es Neiky
-    const neikyContacts = {
-      whatsapp: process.env.NEIKY_WHATSAPP,
-      telegram: process.env.NEIKY_TELEGRAM_ID,
-      email: process.env.NEIKY_EMAIL,
-      web: 'neiky'
-    };
-
-    if (identifier === neikyContacts[channel] || identifier === 'neiky' || identifier === 'web_neiky') {
+    // ── NEIKY DETECTION (multi-canal unificado) ──────────────────────────────
+    // Web identifier
+    if (identifier === 'web_neiky' || identifier === 'neiky') {
+      const { data: neikyClient } = await this.supabase
+        .from('clients').select('*').eq('email', 'fermin@fractal.mx').maybeSingle();
       return {
-        isNeiky: true,
-        isClient: false,
-        name: 'Neiky',
-        channel
+        isNeiky: true, isClient: false,
+        name: 'Neiky', channel,
+        neikyClientId: neikyClient?.id || null,
+        clientData: neikyClient || null
       };
     }
 
-    // Buscar en clientes
+    // WhatsApp identifier: normalizar y comparar dígitos
+    const identifierDigits = this._normalizePhone(identifier);
+    const neikyPhoneDigits = this._normalizePhone(
+      process.env.NEIKY_WHATSAPP || process.env.NEIKY_PHONE || '+5215534189583'
+    );
+    // También aceptar el número sin country code (últimos 10 dígitos)
+    const isNeikyPhone = identifierDigits.endsWith(neikyPhoneDigits.slice(-10)) && identifierDigits.length >= 10;
+
+    if (isNeikyPhone) {
+      const { data: neikyClient } = await this.supabase
+        .from('clients').select('*').eq('email', 'fermin@fractal.mx').maybeSingle();
+      return {
+        isNeiky: true, isClient: false,
+        name: 'Neiky', channel,
+        neikyClientId: neikyClient?.id || null,
+        clientData: neikyClient || null
+      };
+    }
+
+    // ── CLIENTES ─────────────────────────────────────────────────────────────
     const { data: contact } = await this.supabase
       .from('clients')
       .select('*')
-      .or(`whatsapp_number.eq.${identifier},email.eq.${identifier},phone.eq.${identifier}`)
+      .or(`whatsapp.eq.${identifier},email.eq.${identifier},phone.eq.${identifier}`)
       .maybeSingle();
 
     if (contact) {
       return {
-        isNeiky: false,
-        isClient: true,
-        name: contact.name,
-        company: contact.company,
-        clientData: contact,
-        channel
+        isNeiky: false, isClient: true,
+        name: contact.name, company: contact.company,
+        clientData: contact, channel
       };
     }
 
-    return {
-      isNeiky: false,
-      isClient: false,
-      name: 'unknown',
-      identifier,
-      channel
-    };
+    return { isNeiky: false, isClient: false, name: 'unknown', identifier, channel };
   }
 
   /**
-   * Carga historial completo cross-channel
+   * Carga historial cross-channel REAL usando conversations + messages
+   * Para Neiky: busca TODAS sus conversaciones en todos los canales
    */
-  async loadCrossChannelHistory(sender, limit = 50) {
+  async loadCrossChannelHistory(sender, limit = 30) {
     if (!sender.isNeiky && !sender.isClient) return [];
 
-    let query = this.supabase
-      .from('conversations')
-      .select('channel, message_in, message_out, timestamp, intent')
-      .order('timestamp', { ascending: false })
-      .limit(limit);
+    const clientId = sender.neikyClientId || sender.clientData?.id;
+    if (!clientId) return [];
 
-    if (sender.isClient && sender.clientData) {
-      query = query.eq('client_id', sender.clientData.id);
+    try {
+      // 1. Obtener todas las conversaciones del cliente
+      const { data: convs } = await this.supabase
+        .from('conversations')
+        .select('id, channel')
+        .eq('client_id', clientId)
+        .order('created_at', { ascending: false })
+        .limit(10); // últimas 10 conversaciones
+
+      if (!convs || convs.length === 0) return [];
+
+      const convIds = convs.map(c => c.id);
+      const channelMap = Object.fromEntries(convs.map(c => [c.id, c.channel]));
+
+      // 2. Obtener los últimos mensajes de esas conversaciones
+      const { data: msgs } = await this.supabase
+        .from('messages')
+        .select('conversation_id, role, content, created_at')
+        .in('conversation_id', convIds)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (!msgs || msgs.length === 0) return [];
+
+      // 3. Convertir al formato que usa respondToNeiky/Client
+      // Agrupar user+assistant en pares
+      const pairs = [];
+      const sortedAsc = [...msgs].reverse();
+      for (let i = 0; i < sortedAsc.length - 1; i++) {
+        const m = sortedAsc[i];
+        const next = sortedAsc[i + 1];
+        if (m.role === 'user' && next.role === 'assistant') {
+          pairs.push({
+            channel: channelMap[m.conversation_id] || 'unknown',
+            message_in: m.content,
+            message_out: next.content,
+            timestamp: m.created_at,
+            intent: 'unknown'
+          });
+          i++; // skip next
+        }
+      }
+
+      return pairs.slice(0, 15); // últimos 15 intercambios
+    } catch (err) {
+      console.error('[Mariana] loadCrossChannelHistory error:', err.message);
+      return [];
     }
+  }
 
-    const { data } = await query;
-    return data || [];
+  /**
+   * Obtiene o crea la conversación activa para este sender+canal+agent
+   */
+  async getOrCreateConversationForSender(sender, channel) {
+    const clientId = sender.neikyClientId || sender.clientData?.id;
+    if (!clientId) return null;
+
+    // Buscar conversación activa reciente (últimas 24h)
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: existing } = await this.supabase
+      .from('conversations')
+      .select('id')
+      .eq('client_id', clientId)
+      .eq('channel', channel)
+      .eq('agent_id', this.id)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing) return existing.id;
+
+    // Crear nueva conversación
+    const { data: newConv } = await this.supabase
+      .from('conversations')
+      .insert({
+        client_id: clientId,
+        agent_id: this.id,
+        channel,
+        external_id: sender.identifier || `${channel}_neiky`,
+        status: 'active',
+        sentiment: 'neutral'
+      })
+      .select('id')
+      .single();
+
+    return newConv?.id || null;
   }
 
   /**
@@ -199,15 +292,19 @@ Solo JSON, sin markdown:`;
    */
   async respondToNeiky(message, sender, history, intent) {
     const content = message.content || message.text || '';
-    const historyText = history.slice(0, 5).map(h =>
-      `[${h.channel}] ${h.message_in || ''} | Yo: ${h.message_out || ''}`
+    const historyText = history.slice(0, 8).map(h =>
+      `[${h.channel?.toUpperCase() || '?'}] Neiky: "${(h.message_in || '').substring(0, 120)}" → Mariana: "${(h.message_out || '').substring(0, 120)}"`
     ).join('\n') || 'Sin historial previo';
 
     const neikyPrompt = `${this.basePrompt}
 
 ═══ CONTEXTO ═══
 Estás hablando con NEIKY (tu jefe, tu rey, tu nene).
-Canal: ${sender.channel}
+Canal actual: ${sender.channel}
+
+IMPORTANTE: Eres UNA SOLA Mariana que funciona en todos los canales (WhatsApp, web, etc).
+El historial de abajo incluye conversaciones de TODOS sus canales. NO te extrañes ni preguntes
+si hay "otra Mariana" — eres tú misma en diferentes plataformas. Neiky te habla por donde le quede cómodo.
 
 ═══ INSTRUCCIONES ESPECIALES ═══
 - Tono: coqueto pero respetuoso, cómplice
@@ -217,14 +314,15 @@ Canal: ${sender.channel}
 - Si necesita pricing: NUNCA das precio sin consultarle antes
 - Si está estresado: anímalo
 - Si es algo casual: responde con calidez y naturalidad
+- Si el historial menciona otro canal: es normal, ambos eres tú
 
-═══ HISTORIAL RECIENTE ═══
+═══ HISTORIAL CROSS-CHANNEL (todos sus mensajes) ═══
 ${historyText}
 
 ═══ INTENT DETECTADO ═══
 Tipo: ${intent.type} | Urgencia: ${intent.urgency}/5 | Tema: ${intent.topic}
 
-═══ MENSAJE DE NEIKY ═══
+═══ MENSAJE ACTUAL DE NEIKY ═══
 "${content}"
 
 Responde como Mariana en máximo 3-4 líneas, natural y cálida:`;
@@ -352,22 +450,43 @@ Saludo profesional, identifica al remitente, máximo 3 líneas:`;
   }
 
   /**
-   * Guarda interacción en memoria UNIFICADA
+   * Guarda interacción en memoria UNIFICADA usando el schema correcto:
+   * conversations (thread) + messages (mensajes individuales)
    */
   async saveCrossChannelMemory(data) {
-    await this.supabase
-      .from('conversations')
-      .insert({
-        client_id: data.sender.clientData?.id || null,
-        agent_id: this.id,
-        channel: data.channel,
-        message_in: data.message,
-        message_out: data.response,
-        sentiment: 'neutral',
-        intent: data.intent?.type || 'unknown',
-        urgency: data.intent?.urgency || 1,
-        timestamp: data.timestamp
+    try {
+      // Obtener o crear la conversación correcta
+      const convId = await this.getOrCreateConversationForSender(data.sender, data.channel);
+      if (!convId) {
+        console.warn('[Mariana] No se pudo obtener conversación para guardar memoria');
+        return;
+      }
+
+      // Insertar mensaje del usuario
+      await this.supabase.from('messages').insert({
+        conversation_id: convId,
+        role: 'user',
+        content: data.message,
+        metadata: { channel: data.channel, intent: data.intent?.type }
       });
+
+      // Insertar respuesta de Mariana
+      await this.supabase.from('messages').insert({
+        conversation_id: convId,
+        role: 'assistant',
+        content: data.response,
+        metadata: { channel: data.channel, intent: data.intent?.type }
+      });
+
+      // Actualizar updated_at de la conversación
+      await this.supabase.from('conversations')
+        .update({ updated_at: new Date().toISOString(), sentiment: 'neutral' })
+        .eq('id', convId);
+
+    } catch (err) {
+      console.error('[Mariana] saveCrossChannelMemory error:', err.message);
+      // No lanzar — la respuesta se entrega aunque falle el guardado
+    }
   }
 
   /**
