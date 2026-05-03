@@ -7,7 +7,10 @@ const { initAllAgents } = require('./core/orchestrator');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  pingTimeout: 60000,    // 60s — da tiempo al AI processing en Railway
+  pingInterval: 25000,   // 25s ping normal
+  transports: ['polling', 'websocket'],
 });
 
 const PORT = process.env.PORT || 3000;
@@ -49,22 +52,42 @@ app.get('/', (req, res) => {
 io.on('connection', (socket) => {
   console.log(`[Socket] Client connected: ${socket.id}`);
 
-  socket.on('send_message', async (data) => {
+  socket.on('send_message', async (data, ackCallback) => {
+    // Capturar socketId antes del async — si hay reconnect, aún podemos emitir
+    const socketId = socket.id;
+    const respond = (payload) => {
+      // Intentar via ack primero (garantizado), luego via emit (fallback)
+      if (typeof ackCallback === 'function') {
+        ackCallback({ ok: true, ...payload });
+      }
+      // También emitir event para compatibilidad
+      io.to(socketId).emit('message_response', payload.response || payload);
+    };
+    const respondError = (msg) => {
+      if (typeof ackCallback === 'function') {
+        ackCallback({ ok: false, error: msg });
+      }
+      io.to(socketId).emit('mariana_error', { message: msg });
+    };
+
     try {
       const { processIncoming } = require('./core/orchestrator');
+      console.log(`[Socket] Processing message from ${data.from}: "${(data.text||'').substring(0,60)}"`);
       const result = await processIncoming({
         from: data.from || 'web_user',
         text: data.text,
         channel: 'web'
       });
-      socket.emit('message_response', result);
+      console.log(`[Socket] Response ready for ${socketId}: "${String(result).substring(0,60)}"`);
+      respond({ response: result });
     } catch (err) {
-      socket.emit('error', { message: err.message });
+      console.error(`[Socket] Error processing message:`, err.message);
+      respondError(err.message);
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log(`[Socket] Client disconnected: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`[Socket] Client disconnected: ${socket.id} — ${reason}`);
   });
 });
 
