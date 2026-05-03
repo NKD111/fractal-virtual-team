@@ -56,18 +56,20 @@ io.on('connection', (socket) => {
     // Capturar socketId antes del async — si hay reconnect, aún podemos emitir
     const socketId = socket.id;
     const respond = (payload) => {
-      // Intentar via ack primero (garantizado), luego via emit (fallback)
       if (typeof ackCallback === 'function') {
+        // Cliente moderno: usa ack (garantizado, no duplicar con event)
         ackCallback({ ok: true, ...payload });
+      } else {
+        // Cliente legacy sin ack: usar evento
+        io.to(socketId).emit('message_response', payload.response || payload);
       }
-      // También emitir event para compatibilidad
-      io.to(socketId).emit('message_response', payload.response || payload);
     };
     const respondError = (msg) => {
       if (typeof ackCallback === 'function') {
         ackCallback({ ok: false, error: msg });
+      } else {
+        io.to(socketId).emit('mariana_error', { message: msg });
       }
-      io.to(socketId).emit('mariana_error', { message: msg });
     };
 
     try {
