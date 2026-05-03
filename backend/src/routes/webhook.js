@@ -100,8 +100,8 @@ router.post('/twilio', async (req, res) => {
 router.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    team: 'Fractal Virtual Team v4.0',
-    agents: 10,
+    team: 'Fractal Virtual Team v4.2',
+    agents: 11,
     timestamp: new Date().toISOString()
   });
 });

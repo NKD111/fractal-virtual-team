@@ -32,9 +32,9 @@ app.use('/api/financial', require('./routes/financial'));
 
 app.get('/', (req, res) => {
   res.json({
-    name: 'Fractal Virtual Team v4.0',
+    name: 'Fractal Virtual Team v4.2',
     status: 'online',
-    agents: ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto'],
+    agents: ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto', 'qcbot'],
     endpoints: {
       webhook_meta: 'POST /webhook/meta',
       webhook_twilio: 'POST /webhook/twilio',
@@ -72,7 +72,7 @@ global.io = io;
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 server.listen(PORT, async () => {
-  console.log(`\n🌸 Fractal Virtual Team v4.0`);
+  console.log(`\n🌸 Fractal Virtual Team v4.2`);
   console.log(`📡 Server: http://localhost:${PORT}`);
   console.log(`🔗 Webhook Meta: POST /webhook/meta`);
   console.log(`🔗 Webhook Twilio: POST /webhook/twilio`);
