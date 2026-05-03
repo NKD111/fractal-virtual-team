@@ -28,6 +28,7 @@ app.use((req, res, next) => {
 app.use('/webhook', require('./routes/webhook'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/financial', require('./routes/financial'));
 
 app.get('/', (req, res) => {
   res.json({
