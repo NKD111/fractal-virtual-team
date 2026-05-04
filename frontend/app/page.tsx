@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import ChatPanel from '@/components/ChatPanel';
 import StatsBar from '@/components/StatsBar';
 import OfficeCanvas from '@/components/OfficeCanvas';
+import GuardianPanel from '@/components/GuardianPanel';
 import { useSocket } from '@/hooks/useSocket';
 
 const AGENTS = [
@@ -94,6 +95,9 @@ export default function Home() {
           )}
         </main>
       </div>
+
+      {/* Floating Guardian panel — NEXUS + ATLAS real-time monitoring */}
+      <GuardianPanel />
     </div>
   );
 }
