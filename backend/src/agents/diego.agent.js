@@ -4,6 +4,8 @@
 const BaseAgent = require('../core/BaseAgent');
 const DIEGO_PROMPT = require('../prompts/diego.prompts');
 const { sendEmail } = require('../core/email');
+const OpenAI = require('openai');
+const axios = require('axios');
 
 class DiegoAgent extends BaseAgent {
   constructor() {
@@ -96,11 +98,64 @@ Responde constructivamente. Son iguales, buscan lo mejor para el cliente.`;
   }
 
   /**
+   * Investiga las redes sociales oficiales de FIF para tener contexto real
+   */
+  async researchFIFSocials() {
+    const sources = [
+      'https://www.instagram.com/fifcdmx/',
+      'https://fifcdmx.com',
+      'https://www.vanexpo.mx/fif',
+      'https://www.instagram.com/vanexpomx/'
+    ];
+
+    const findings = [];
+    for (const url of sources) {
+      try {
+        const { data } = await axios.get(url, {
+          timeout: 8000,
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FractalBot/1.0)' }
+        });
+        // Extraer texto relevante — títulos, meta descripción, textos visibles
+        const titleMatch = data.match(/<title[^>]*>([^<]+)<\/title>/i);
+        const descMatch = data.match(/content="([^"]{20,200})"/);
+        const ogTitle = data.match(/property="og:title" content="([^"]+)"/i);
+        const ogDesc = data.match(/property="og:description" content="([^"]+)"/i);
+
+        if (titleMatch || ogTitle) {
+          findings.push({
+            url,
+            title: (ogTitle?.[1] || titleMatch?.[1] || '').substring(0, 100),
+            description: (ogDesc?.[1] || descMatch?.[1] || '').substring(0, 200)
+          });
+        }
+      } catch (err) {
+        findings.push({ url, error: err.message });
+      }
+    }
+
+    return findings;
+  }
+
+  /**
    * Genera propuesta de arte para FIF CDMX y la envía por email
+   * Usa GPT-4o para la propuesta editorial + DALL-E 3 para la imagen
    * @param {object} brief - { evento, descripcion, contexto, emailDestino, deadline }
    */
   async generateFIFProposal(brief) {
     console.log(`[Diego] Generando propuesta FIF para ${brief.emailDestino}...`);
+
+    // 1. Investigar redes sociales oficiales de FIF
+    console.log('[Diego] Investigando redes sociales de FIF CDMX...');
+    const socialFindings = await this.researchFIFSocials();
+    const socialContext = socialFindings
+      .filter(f => !f.error)
+      .map(f => `[${f.url}] ${f.title} — ${f.description}`)
+      .join('\n') || 'No se pudo acceder a las redes en este momento';
+
+    console.log(`[Diego] Research completado: ${socialFindings.length} fuentes revisadas`);
+
+    // 2. Inicializar OpenAI
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const researchPrompt = `${this.basePrompt}
 
@@ -112,8 +167,13 @@ DESCRIPCIÓN: ${brief.descripcion}
 CONTEXTO DE MARCA: ${brief.contexto}
 DEADLINE ENTREGA: ${brief.deadline}
 
+═══ RESEARCH REAL DE REDES SOCIALES FIF (obtenido ahora mismo) ═══
+${socialContext}
+
 ═══ LO QUE YA SÉ DE FIF ═══
 Trabajo FIF / VANEXPO desde hace tiempo con Fractal MX. El Festival de la Industria del Futuro (FIF) Ciudad de México es un evento de tecnología, innovación e industria. Tiene una identidad visual de vanguardia — tipografías geométricas, paleta oscura con acentos de color eléctrico (cian/magenta/amarillo), lenguaje futurista pero accesible.
+
+TIPOGRAFÍA OFICIAL: Gotham Font Family — usar Gotham Bold para headlines, Gotham Medium para subheads, Gotham Book para cuerpo. Esta es la familia tipográfica de la marca y no se sustituye.
 
 ═══ MI MISIÓN ═══
 1. Hacer el research de la identidad visual actual de FIF CDMX (redes sociales, ediciones anteriores)
@@ -155,15 +215,44 @@ Genera una propuesta de arte COMPLETA, detallada y lista para ejecutar. Incluye:
 
 Sé específico. Esto es para ejecutar, no para inspirar.`;
 
-    const response = await this.claude.messages.create({
-      model: this.model,
+    // 3. Generar propuesta editorial con GPT-4o
+    console.log('[Diego] Generando propuesta con GPT-4o...');
+    const gptResponse = await openai.chat.completions.create({
+      model: 'gpt-4o',
       max_tokens: 3000,
       messages: [{ role: 'user', content: researchPrompt }]
     });
+    const proposal = gptResponse.choices[0].message.content;
 
-    const proposal = response.content[0].text;
+    // 4. Generar imagen con DALL-E 3
+    let imageUrl = null;
+    let imageSection = '';
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        console.log('[Diego] Generando imagen con DALL-E 3...');
+        const dallePrompt = `Professional event announcement poster for "FIF Ciudad de México" — Festival de la Industria del Futuro, next edition. Dark near-black background (#0a0a0a). Large bold "FIF" text in white at top. "CIUDAD DE MÉXICO" in electric cyan below, wide letter spacing. Center: geometric circuit/grid glowing lines suggesting future technology and innovation industry, in cyan and electric yellow. "PRÓXIMA EDICIÓN" at bottom in white. Magenta accent horizontal lines. Clean Swiss grid layout. Gotham Bold typeface style. Square 1:1 format for Instagram. Sharp professional typography. Futuristic refined aesthetic. No gradients on text. Premium event identity design.`;
 
-    // Formatear como email HTML profesional
+        const imgResponse = await openai.images.generate({
+          model: 'dall-e-3',
+          prompt: dallePrompt,
+          size: '1024x1024',
+          quality: 'hd',
+          style: 'vivid',
+          n: 1
+        });
+        imageUrl = imgResponse.data[0].url;
+        imageSection = `<div style="margin: 32px 0; text-align: center;">
+          <img src="${imageUrl}" alt="Arte FIF Ciudad de México" style="width: 100%; max-width: 600px; border-radius: 4px; border: 1px solid #333;" />
+          <p style="font-size: 11px; color: #555; margin-top: 8px;">Arte generado por Diego · DALL-E 3 HD · Para revisión editorial</p>
+        </div>`;
+        console.log('[Diego] Imagen DALL-E 3 generada ✓');
+      } catch (imgErr) {
+        console.error('[Diego] Error DALL-E 3:', imgErr.message);
+        imageSection = `<p style="color:#FF6B6B; font-size: 12px;">⚠️ Imagen no generada: ${imgErr.message}</p>`;
+      }
+    }
+
+    // 5. Formatear como email HTML profesional
     const htmlBody = `
 <!DOCTYPE html>
 <html lang="es">
@@ -190,8 +279,9 @@ Sé específico. Esto es para ejecutar, no para inspirar.`;
       <div class="logo">FRACTAL MX</div>
       <div class="from">Propuesta de Diego Ramírez · Senior Designer</div>
     </div>
-    <span class="badge">📐 PROPUESTA DE ARTE</span>
+    <span class="badge">📐 PROPUESTA DE ARTE · GPT-4o + DALL-E 3</span>
     <h1>${brief.evento}</h1>
+    ${imageSection}
     <div class="content">${proposal.replace(/## /g, '<h2>').replace(/\n/g, '<br>')}</div>
     <div class="footer">
       <strong>Diego Ramírez Salazar</strong> · Senior Graphic Designer<br>
