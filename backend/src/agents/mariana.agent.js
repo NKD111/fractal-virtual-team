@@ -577,13 +577,13 @@ Responde como Mariana, profesional pero cálida, máximo 4-5 líneas:`;
 
     const responseText = response.content[0].text;
 
-    // Si necesita escalar a otro agente, hacerlo
+    // Si necesita escalar a otro agente, hacerlo (non-blocking)
     if (intent.needs_other_agent && this.id) {
-      await this.escalateToAgent(intent.needs_other_agent, {
+      this.escalateToAgent(intent.needs_other_agent, {
         client: sender,
         message: content,
         context: responseText
-      });
+      }).catch(err => console.warn(`[Mariana] escalateToAgent(${intent.needs_other_agent}): ${err.message}`));
     }
 
     return responseText;

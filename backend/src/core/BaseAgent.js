@@ -366,8 +366,8 @@ ${data.notes || 'Sin notas adicionales'}`;
     const { data: toAgent } = await this.supabase
       .from('agents')
       .select('id')
-      .eq('name', toAgentName)
-      .single();
+      .ilike('name', toAgentName)
+      .maybeSingle();
 
     if (!toAgent) throw new Error(`Agent ${toAgentName} not found`);
 
