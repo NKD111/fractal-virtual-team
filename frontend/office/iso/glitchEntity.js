@@ -31,19 +31,19 @@ export class GlitchEntity {
       const sheet = await Assets.load('/assets/sprites/glitch.png');
       const base = sheet?.source ? sheet : sheet?.texture || sheet;
       const w = base.width, h = base.height;
-      // Expecting 1x5 horizontal sheet
-      const cw = Math.floor(w / 5), ch = h;
+      // glitch.png is a 2x2-ish cluster (sitting / running / teleport / laying / adult).
+      // We extract the running puppy from top-right (column 1, row 0) as the main pose.
+      const cw = Math.floor(w / 2), ch = Math.floor(h / 2);
       this.poseTex = [
-        new Texture({ source: base.source, frame: new Rectangle(0,    0, cw, ch) }),
-        new Texture({ source: base.source, frame: new Rectangle(cw,   0, cw, ch) }),
-        new Texture({ source: base.source, frame: new Rectangle(cw*2, 0, cw, ch) }),
-        new Texture({ source: base.source, frame: new Rectangle(cw*3, 0, cw, ch) }),
-        new Texture({ source: base.source, frame: new Rectangle(cw*4, 0, cw, ch) })
+        new Texture({ source: base.source, frame: new Rectangle(cw, 0, cw, ch) })   // running pose
       ];
       this.spriteImg = new Sprite(this.poseTex[0]);
       this.spriteImg.anchor.set(0.5, 1);
+      // Scale to ~70px tall so he fits with the agents
+      const targetH = 70;
+      const k = targetH / ch;
+      this.spriteImg.scale.set(k);
       this.container.addChild(this.spriteImg);
-      // Hide procedural
       if (this.procedural) this.procedural.visible = false;
       this._spritesLoaded = true;
       return true;
