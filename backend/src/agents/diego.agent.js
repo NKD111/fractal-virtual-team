@@ -273,6 +273,64 @@ Sé extremadamente estricto con texto. Un solo carácter malformado = has_text_a
   }
 
   /**
+   * Extrae el copy del proposal de GPT-4o y compósita texto sobre la imagen base.
+   * Devuelve URL de la imagen compuesta (con texto real encima).
+   *
+   * SOLUCIÓN AL PROBLEMA: DALL-E genera la foto → compositor añade texto/copy
+   * Resultado: entrega completa con copy visible, no una foto en blanco.
+   *
+   * @param {string} aiImageUrl - URL de la imagen base de DALL-E
+   * @param {string} proposal   - Texto de la propuesta de GPT-4o (con copy extraíble)
+   * @param {object} brief      - Brief original del proyecto
+   * @returns {{ composedUrl, buffer, source }}
+   */
+  async _compositeWithCopy(aiImageUrl, proposal, brief) {
+    try {
+      const compositor = require('../services/workflows/design-compositor');
+
+      // Extraer copy del proposal generado por GPT-4o
+      const ex = (pattern, fallback = '') => {
+        const m = proposal.match(pattern);
+        return m ? m[1].replace(/\*\*/g, '').trim().split('\n')[0].trim() : fallback;
+      };
+
+      const compositionBrief = {
+        // Campos del brief base
+        evento:    brief.evento || 'FIF 2025',
+        formato:   brief.formato || 'story',
+        marca:     brief.marca || 'FIF',
+
+        // Copy extraído del proposal
+        titulo:    ex(/##\s*(?:HEADLINE DEL POST|TITULAR?|TÍTULO)\s*\n+([\s\S]+?)(?=##|$)/i) ||
+                   ex(/HEADLINE[:\s]+([\S ]+)/i) ||
+                   brief.evento || 'FIF 2025',
+
+        subtitulo: ex(/##\s*(?:SUB[- ]?COPY|SUBTÍTULO?|SUBHEADLINE)\s*\n+([\s\S]+?)(?=##|$)/i) ||
+                   ex(/SUB-?COPY[:\s]+([\S ]+)/i) || '',
+
+        fecha:     brief.fecha || ex(/FECHA[:\s]+([\S ]+)/i, ''),
+        lugar:     brief.lugar || ex(/LUGAR[:\s]+([\S ]+)/i, ''),
+
+        cta:       ex(/##\s*(?:URL|CTA BADGE|CTA)\s*\n+([\s\S]+?)(?=##|$)/i) ||
+                   ex(/CTA[:\s]+([\S ]+)/i) || 'Más info →',
+
+        hashtag:   ex(/(#\w+(?:\s+#\w+)*)/),
+        badge:     brief.badge || ex(/BADGE[:\s]+([\S ]+)/i, ''),
+        logo_text: brief.logo_text || 'FRACTAL MX'
+      };
+
+      console.log(`[Diego Compositor] Compositing con copy: "${compositionBrief.titulo.substring(0, 40)}"...`);
+      const result = await compositor.compositeAndUpload(aiImageUrl, compositionBrief, ['composed', 'diego']);
+      console.log(`[Diego Compositor] ✅ Imagen compuesta lista — fuente: ${result.source}`);
+      return result;
+
+    } catch (err) {
+      console.error('[Diego Compositor] Error compositing:', err.message);
+      return { url: aiImageUrl, buffer: null, source: 'original' };
+    }
+  }
+
+  /**
    * Loop de generación de imagen con QC — hasta 3 intentos
    */
   async _generateImageWithQC(openai, brief, proposal) {
@@ -438,21 +496,34 @@ Sé específico. Esto va directo a ejecución.`;
     let qcSummary = '';
 
     if (bestResult) {
-      imageUrl = bestResult.imageUrl;
+      const rawImageUrl = bestResult.imageUrl;
       const qc = bestResult.qcResult;
       const statusIcon = qc.approved ? '✅' : '⚠️';
       const intentLabel = `Intento ${bestResult.attempt}/${attempts.length}`;
 
-      qcSummary = `${statusIcon} QC Visual: ${qc.score}/10 — ${intentLabel} ${qc.approved ? '(APROBADO)' : '(MEJOR DISPONIBLE — revisar antes de usar)'}`;
+      qcSummary = `${statusIcon} QC Visual: ${qc.score}/10 — ${intentLabel} ${qc.approved ? '(APROBADO)' : '(MEJOR DISPONIBLE)'}`;
       if (qc.issues?.length) qcSummary += `\nObservaciones: ${qc.issues.join(' | ')}`;
 
+      // ── COMPOSITOR: añadir copy/texto encima de la foto ─────────────────
+      console.log('[Diego] Compositing texto y copy sobre la imagen...');
+      const compBrief = {
+        ...brief,
+        formato: brief.formato || 'story',
+        marca: 'FIF',
+        logo_text: 'FRACTAL MX',
+        badge: 'FIF 2025'
+      };
+      const composed = await this._compositeWithCopy(rawImageUrl, proposal, compBrief);
+      imageUrl = composed.url;
+
+      const isComposed = composed.source !== 'original';
       imageSection = `
         <div style="margin: 32px 0; text-align: center;">
-          <img src="${imageUrl}" alt="Concepto Visual FIF — Arte referencia" style="width: 100%; max-width: 500px; border-radius: 4px; border: 1px solid #ddd;" />
+          <img src="${imageUrl}" alt="Arte FIF — con copy composited" style="width: 100%; max-width: 500px; border-radius: 4px; border: 1px solid #ddd;" />
           <p style="font-size: 11px; color: #666; margin-top: 8px; line-height: 1.5;">
-            <strong>Concepto visual de referencia</strong> — Generado por Diego · DALL-E 3 HD · ${intentLabel}<br>
-            ${qc.approved ? '✅ Aprobado por QC visual' : '⚠️ Mejor disponible — el arte final se ejecuta en Illustrator/Figma'}<br>
-            <em>Nota: El copy/tipografía se integra en post-producción sobre el canvas 1080×1350. Este arte es referencia de composición y estilo.</em>
+            <strong>${isComposed ? '🎨 Arte compuesto con copy' : 'Concepto visual base'}</strong> — Diego · DALL-E 3 HD + Compositor · ${intentLabel}<br>
+            ${qc.approved ? '✅ Aprobado por QC visual' : '⚠️ Mejor disponible'} ${isComposed ? '· Copy y branding integrados programáticamente' : ''}<br>
+            ${isComposed ? '<em>Este arte ya incluye texto. Para ajustar copy exacto o tipografía Gotham, abrir en Figma/Illustrator.</em>' : '<em>Arte base — integrar copy en Figma/Illustrator.</em>'}
           </p>
         </div>`;
     } else {
@@ -674,20 +745,33 @@ Sé específico y ejecutable. El copy tiene que ser lo suficientemente fuerte pa
     let qcSummary = '';
 
     if (bestResult) {
-      imageUrl = bestResult.imageUrl;
+      const rawImageUrl = bestResult.imageUrl;
       const qc = bestResult.qcResult;
       const statusIcon = qc.approved ? '✅' : '⚠️';
       const intentLabel = `Intento ${bestResult.attempt}/${attempts.length}`;
       qcSummary = `${statusIcon} QC: ${qc.score}/10 — ${intentLabel} ${qc.approved ? '(APROBADO)' : '(MEJOR DISPONIBLE)'}`;
       if (qc.issues?.length) qcSummary += `\nNotas: ${qc.issues.join(' | ')}`;
 
+      // ── COMPOSITOR: headline + sub-copy + URL sobre la foto ─────────────
+      console.log('[Diego] Compositing copy sobre imagen de artículo...');
+      const compBrief = {
+        ...brief,
+        formato: 'story',
+        marca: 'FRANQUICIASHOY',
+        logo_text: 'FranquiciasHoy.com',
+        cta: 'Leer artículo →'
+      };
+      const composed = await this._compositeWithCopy(rawImageUrl, proposal, compBrief);
+      imageUrl = composed.url;
+
+      const isComposed = composed.source !== 'original';
       imageSection = `
         <div style="margin: 24px 0; text-align: center;">
-          <img src="${imageUrl}" alt="Concepto visual artículo" style="width: 100%; max-width: 480px; border-radius: 6px; border: 1px solid #eee;" />
+          <img src="${imageUrl}" alt="Post artículo con copy" style="width: 100%; max-width: 480px; border-radius: 6px; border: 1px solid #eee;" />
           <p style="font-size: 11px; color: #666; margin-top: 8px; line-height: 1.5; text-align:center;">
-            <strong>Escena cinemática generada</strong> — DALL-E 3 HD · ${intentLabel}<br>
-            ${qc.approved ? '✅ Aprobada por QC visual' : '⚠️ Mejor disponible — revisar antes de usar'}<br>
-            <em>Esta imagen va en la zona inferior del post. El copy, logos y acento geométrico se integran en Figma/Illustrator encima.</em>
+            <strong>${isComposed ? '🎨 Post compuesto con headline y copy' : 'Escena cinemática base'}</strong> — DALL-E 3 HD + Compositor · ${intentLabel}<br>
+            ${qc.approved ? '✅ QC aprobado' : '⚠️ Mejor disponible'} ${isComposed ? '· Copy integrado programáticamente' : ''}<br>
+            ${isComposed ? '<em>Copy incluido. Para ajuste fino de tipografía o brand elements, abrir en Figma.</em>' : '<em>Base sin texto — integrar copy en Figma/Illustrator.</em>'}
           </p>
         </div>`;
     } else {
