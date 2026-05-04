@@ -288,16 +288,14 @@ Sé extremadamente estricto con texto. Un solo carácter malformado = has_text_a
       const dallePrompt = this._buildDallePrompt(brief, attempt, previousIssues);
 
       try {
-        const imgResponse = await openai.images.generate({
-          model: 'dall-e-3',
-          prompt: dallePrompt,
-          size: '1024x1792',   // Portrait — el más cercano a 1080x1350
+        const modelRouter = require('../services/workflows/model-router');
+        const routeResult = await modelRouter.generate(dallePrompt, brief, {
+          size: '1024x1792',
           quality: 'hd',
-          style: 'natural',    // 'natural' > 'vivid' para diseño editorial elegante
-          n: 1
+          style: 'natural'
         });
-
-        const imageUrl = imgResponse.data[0].url;
+        const imageUrl = await modelRouter.persistToCloudinary(routeResult.imageUrl, ['fif', 'fractal-mx']);
+        console.log(`[Diego] Modelo usado: ${routeResult.model} — ${routeResult.reasoning}`);
         console.log(`[Diego] Imagen ${attempt} generada. Iniciando QC...`);
 
         // QC visual con GPT-4o Vision
