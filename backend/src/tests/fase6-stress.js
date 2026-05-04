@@ -18,20 +18,23 @@ async function safeDelete(table, column, value) {
 
 // Helpers to create / clean test entities
 async function createTestClient() {
-  const marker = `TEST_VERIF_${Date.now()}`;
-  const { data } = await supabase.from('clients')
-    .insert({ name: marker, phone: `+5255TEST${Math.floor(Math.random() * 1e6)}` })
+  const marker = `TEST_VERIF_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const phone = `+5255TEST${Math.floor(Math.random() * 1e8)}`;
+  const { data, error } = await supabase.from('clients')
+    .insert({ name: marker, phone, whatsapp: phone })
     .select().single();
+  if (error) throw new Error(`createTestClient failed: ${error.message}`);
   return data;
 }
 
 async function createTestProject(clientId, opts = {}) {
-  const { data } = await supabase.from('projects').insert({
+  const { data, error } = await supabase.from('projects').insert({
     client_id: clientId,
-    name: opts.name || `TEST_VERIF_PROJ_${Date.now()}`,
+    name: opts.name || `TEST_VERIF_PROJ_${Date.now()}_${Math.floor(Math.random() * 1e6)}`,
     status: opts.status || 'briefing',
     deadline: opts.deadline || null
   }).select().single();
+  if (error) throw new Error(`createTestProject failed: ${error.message}`);
   return data;
 }
 
