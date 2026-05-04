@@ -47,21 +47,29 @@ export class AtlasEntity {
       const sheet = await Assets.load('/assets/sprites/atlas.png');
       const base = sheet?.source ? sheet : sheet?.texture || sheet;
       const w = base.width, h = base.height;
-      const cw = Math.floor(w / 2), ch = Math.floor(h / 2);
+      // PNG includes a top title bar ("ATLAS - Technical Engineer") and per-cell
+      // bottom labels ("1.IDLE" etc). Skip top 14% and crop bottom 18% of each cell.
+      const topMargin = Math.floor(h * 0.14);
+      const usableH = h - topMargin;
+      const cellOuterW = Math.floor(w / 2);
+      const cellOuterH = Math.floor(usableH / 2);
+      const cw = cellOuterW;
+      const ch = Math.floor(cellOuterH * 0.82); // drop label area
 
       this.stateTextures = {};
       Object.entries(STATE_COORDS).forEach(([state, [c, r]]) => {
         this.stateTextures[state] = new Texture({
-          source: base.source, frame: new Rectangle(c * cw, r * ch, cw, ch)
+          source: base.source,
+          frame: new Rectangle(c * cellOuterW, topMargin + r * cellOuterH, cw, ch)
         });
       });
       this.spriteImg = new Sprite(this.stateTextures[ATLAS_STATE.IDLE]);
-      this.spriteImg.anchor.set(0.5, 0.5);
-      const targetH = 96;
+      this.spriteImg.anchor.set(0.5, 1); // anchor at feet, like agents
+      const targetH = 80;
       this.spriteImg.scale.set(targetH / ch);
       this.container.addChildAt(this.spriteImg, 0);
       if (this.proceduralBox) this.proceduralBox.visible = false;
-      this.label.position.set(0, -targetH / 2 - 8);
+      this.label.position.set(0, -targetH - 8);
       return true;
     } catch (_) { return false; }
   }

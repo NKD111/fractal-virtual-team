@@ -47,25 +47,24 @@ export class NexusEntity {
       const sheet = await Assets.load('/assets/sprites/nexus.png');
       const base = sheet?.source ? sheet : sheet?.texture || sheet;
       const w = base.width, h = base.height;
-      // 2x2 sheet (PNG is square): IDLE=top-left, ACTIVE=top-right, ALERT=bot-left, REPORTING=bot-right
-      const cw = Math.floor(w / 2), ch = Math.floor(h / 2);
+      // PNG is 1x4 horizontal with content in upper 60%. Crop unused bottom 40%.
+      const cw = Math.floor(w / 4);
+      const ch = Math.floor(h * 0.62);
 
       this.stateTextures = {
-        [NEXUS_STATE.IDLE]:      new Texture({ source: base.source, frame: new Rectangle(0,  0,  cw, ch) }),
-        [NEXUS_STATE.ACTIVE]:    new Texture({ source: base.source, frame: new Rectangle(cw, 0,  cw, ch) }),
-        [NEXUS_STATE.ALERT]:     new Texture({ source: base.source, frame: new Rectangle(0,  ch, cw, ch) }),
-        [NEXUS_STATE.REPORTING]: new Texture({ source: base.source, frame: new Rectangle(cw, ch, cw, ch) })
+        [NEXUS_STATE.IDLE]:      new Texture({ source: base.source, frame: new Rectangle(0,    0, cw, ch) }),
+        [NEXUS_STATE.ACTIVE]:    new Texture({ source: base.source, frame: new Rectangle(cw,   0, cw, ch) }),
+        [NEXUS_STATE.ALERT]:     new Texture({ source: base.source, frame: new Rectangle(cw*2, 0, cw, ch) }),
+        [NEXUS_STATE.REPORTING]: new Texture({ source: base.source, frame: new Rectangle(cw*3, 0, cw, ch) })
       };
       this.spriteImg = new Sprite(this.stateTextures[NEXUS_STATE.IDLE]);
-      this.spriteImg.anchor.set(0.5, 0.5);
-      // Floats outside rooms (machine/HUD entity), keep at ~96px
-      const targetH = 96;
+      this.spriteImg.anchor.set(0.5, 1); // anchor at feet, like agents
+      // Sized like Oracle (~72px), it's a small floating monitor
+      const targetH = 72;
       this.spriteImg.scale.set(targetH / ch);
       this.container.addChildAt(this.spriteImg, 0);
-      // Hide procedural
       if (this.proceduralBox) this.proceduralBox.visible = false;
-      // Position label above sprite
-      this.label.position.set(0, -targetH / 2 - 8);
+      this.label.position.set(0, -targetH - 8);
       return true;
     } catch (_) { return false; }
   }

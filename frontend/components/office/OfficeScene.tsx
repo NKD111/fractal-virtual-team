@@ -77,6 +77,7 @@ export default function OfficeScene() {
       });
       if (!mounted) { app.destroy(true, { children: true, texture: true }); return; }
       appRef.current = app;
+      (window as any).__PIXI_APP = app;
       containerRef.current!.appendChild(app.canvas);
 
       // World container, centered on screen
@@ -127,6 +128,7 @@ export default function OfficeScene() {
         presetEntries.map(([slug, preset]) => loadAgentSpritesheet(slug, preset).catch(() => ({ hasReal: false, textures: null })))
       );
 
+      console.log('[OfficeScene] sheets loaded:', sheets.map((s, i) => `${presetEntries[i][0]}=${s?.hasReal ? 'REAL' : 'PROC'}`));
       for (let i = 0; i < presetEntries.length; i++) {
         const [slug, preset] = presetEntries[i];
         const sheet = sheets[i];
@@ -191,30 +193,27 @@ export default function OfficeScene() {
       world.addChild(glitch.container);
       glitch.tryLoadSpritesheet();
 
-      // NEXUS — top-right floating, in screen space (not world)
+      // NEXUS — world entity, top-right of Oracle tower
       const nexus = new NexusEntity();
-      app.stage.addChild(nexus.container);
+      world.addChild(nexus.container);
       nexus.tryLoadSpritesheet();
       nexus.container.on('pointerover', () => nexus.setHoverLabel(true));
       nexus.container.on('pointerout', () => nexus.setHoverLabel(false));
       nexus.container.on('pointertap', () => setGuardianMode('nexus'));
+      const nexusPos = isoToScreen(oracleRoom.gx + oracleRoom.sx + 1.5, oracleRoom.gy + 0.5);
+      nexus.setBasePosition(nexusPos.x, nexusPos.y);
+      nexus.container.zIndex = nexusPos.x + nexusPos.y * 1000;
 
-      // ATLAS — bottom-right floating, in screen space
+      // ATLAS — world entity, bottom-right of Oracle tower
       const atlas = new AtlasEntity();
-      app.stage.addChild(atlas.container);
+      world.addChild(atlas.container);
       atlas.tryLoadSpritesheet();
       atlas.container.on('pointerover', () => atlas.setHoverLabel(true));
       atlas.container.on('pointerout', () => atlas.setHoverLabel(false));
       atlas.container.on('pointertap', () => setGuardianMode('atlas'));
-
-      // Position NEXUS and ATLAS in screen space; reposition on resize
-      const placeGuardians = () => {
-        const w = app.screen.width, h = app.screen.height;
-        nexus.setBasePosition(w - 100, 140);
-        atlas.setBasePosition(w - 100, h - 140);
-      };
-      placeGuardians();
-      app.renderer.on('resize', placeGuardians);
+      const atlasPos = isoToScreen(oracleRoom.gx + oracleRoom.sx + 1.5, oracleRoom.gy + oracleRoom.sy + 0.5);
+      atlas.setBasePosition(atlasPos.x, atlasPos.y);
+      atlas.container.zIndex = atlasPos.x + atlasPos.y * 1000;
 
       const recentlyBusy: Set<string> = new Set();
 
