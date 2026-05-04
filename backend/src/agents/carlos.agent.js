@@ -87,6 +87,56 @@ Sé directo pero constructivo. Da dirección real, no solo crítica.`;
   }
 
   /**
+   * Revisa propuesta editorial de Diego para FIF CDMX
+   * Evalúa desde perspectiva de branding y sistemas visuales
+   */
+  async reviewFIFProposal(diegoProposal, brief) {
+    const reviewPrompt = `${this.basePrompt}
+
+═══ MISIÓN ═══
+Diego acaba de entregar esta propuesta editorial para FIF CDMX (Feria Internacional de Franquicias).
+Tu rol: revisarla desde tu perspectiva de Senior Designer especializado en Branding & Sistemas Visuales.
+
+═══ PROPUESTA DE DIEGO ═══
+${diegoProposal}
+
+═══ CONTEXTO DEL EVENTO ═══
+Evento: ${brief.evento || 'FIF CDMX — Feria Internacional de Franquicias'}
+Descripción: ${brief.descripcion || ''}
+
+═══ IDENTIDAD ACTUAL @feriadefranquicias ═══
+- Paleta: azul marino (#1B3A5C) + blanco + acentos dorados (#C4973A)
+- Tipografía: Gotham Font Family — Bold headlines, Medium subheads, Book body
+- Estilo: corporativo-premium, geométrico, alto contraste
+- Formato habitual: 1080×1350px portrait
+- Fondos: blancos/muy claros, textura sutil premium
+- Elementos decorativos: orgánicos (botánica esquemática) + geometría limpia
+
+═══ TU EVALUACIÓN (sé directo, específico, constructivo) ═══
+
+Estructura tu feedback así:
+
+## ✅ LO QUE FUNCIONA
+(qué elementos de Diego son sólidos y por qué)
+
+## ⚠️ LO QUE ELEVAR
+(qué aspectos necesitan más fuerza o refinamiento — con dirección específica)
+
+## 🎨 PERSPECTIVA DE BRANDING
+(consistencia con sistema visual FIF, jerarquía de marca, aplicación del logo, espaciado, etc.)
+
+## 📐 SISTEMA VISUAL
+(¿el layout propuesto sostiene un sistema? ¿escala a otros formatos: Stories, LinkedIn, impresión?)
+
+## 🚦 VEREDICTO FINAL
+APROBADO / APROBADO CON AJUSTES / REQUIERE REVISIÓN
+
+Sé bold, honesto y específico. No critique por criticar — da dirección real.`;
+
+    return this.think(reviewPrompt);
+  }
+
+  /**
    * Debate creativo con Diego
    */
   async debateWithDiego(proposal, diegoProposal) {

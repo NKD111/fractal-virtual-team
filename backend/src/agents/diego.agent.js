@@ -75,59 +75,33 @@ Piensa en trabajo que envejezca bien — atemporal sobre trendy.`;
   }
 
   /**
-   * Revisa trabajo de Carlos (complementariedad)
-   */
-  async complementCarlosWork(carlosProposal, clientBrief) {
-    const complementPrompt = `${this.basePrompt}
-
-Propuesta de Carlos (bold/branding):
-"${carlosProposal}"
-
-Brief del cliente:
-${JSON.stringify(clientBrief, null, 2)}
-
-Como Diego, complementa la propuesta de Carlos. Tu rol es aportar:
-- Refinement donde sea necesario
-- Jerarquía tipográfica más clara
-- Coherencia editorial
-- Balance entre bold y elegancia
-
-Responde constructivamente. Son iguales, buscan lo mejor para el cliente.`;
-
-    return this.think(complementPrompt, { clientId: clientBrief.client_id });
-  }
-
-  /**
-   * Investiga las redes sociales oficiales de FIF para tener contexto real
+   * Investiga identidad visual real de FIF usando búsqueda y conocimiento de marca
    */
   async researchFIFSocials() {
     const sources = [
-      'https://www.instagram.com/fifcdmx/',
       'https://fifcdmx.com',
       'https://www.vanexpo.mx/fif',
-      'https://www.instagram.com/vanexpomx/',
-      'https://www.instagram.com/feriadefranquicias/',
-      'https://feriadefranquicias.com.mx'
+      'https://feriadefranquicias.com.mx',
+      'https://vanexpo.mx'
     ];
 
     const findings = [];
     for (const url of sources) {
       try {
         const { data } = await axios.get(url, {
-          timeout: 8000,
+          timeout: 6000,
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FractalBot/1.0)' }
         });
-        // Extraer texto relevante — títulos, meta descripción, textos visibles
         const titleMatch = data.match(/<title[^>]*>([^<]+)<\/title>/i);
-        const descMatch = data.match(/content="([^"]{20,200})"/);
         const ogTitle = data.match(/property="og:title" content="([^"]+)"/i);
         const ogDesc = data.match(/property="og:description" content="([^"]+)"/i);
+        const metaDesc = data.match(/name="description" content="([^"]+)"/i);
 
         if (titleMatch || ogTitle) {
           findings.push({
             url,
-            title: (ogTitle?.[1] || titleMatch?.[1] || '').substring(0, 100),
-            description: (ogDesc?.[1] || descMatch?.[1] || '').substring(0, 200)
+            title: (ogTitle?.[1] || titleMatch?.[1] || '').substring(0, 120),
+            description: (ogDesc?.[1] || metaDesc?.[1] || '').substring(0, 250)
           });
         }
       } catch (err) {
@@ -139,184 +113,402 @@ Responde constructivamente. Son iguales, buscan lo mejor para el cliente.`;
   }
 
   /**
-   * Genera propuesta de arte para FIF CDMX y la envía por email
-   * Usa GPT-4o para la propuesta editorial + DALL-E 3 para la imagen
-   * @param {object} brief - { evento, descripcion, contexto, emailDestino, deadline }
+   * Construye el prompt de DALL-E para arte FIF
+   * REGLA CRÍTICA: CERO texto en la imagen — DALL-E falla sistemáticamente al renderizar tipografía.
+   * El arte es concepto visual puro; el copy se añade en post-producción.
+   */
+  _buildDallePrompt(brief, attempt = 1, previousIssues = []) {
+    const avoidNote = previousIssues.length > 0
+      ? `\n\nINTENTO ${attempt} — CORRECCIONES ESPECÍFICAS: ${previousIssues.join(' | ')}`
+      : '';
+
+    // Cada intento usa un ángulo compositivo diferente
+    const compositions = [
+      // Intento 1: Diagonal orgánica elegante
+      `Composición diagonal: elementos botánicos en esquina superior-derecha fluyendo hacia inferior-izquierda. Gran espacio negativo central-superior para titular futuro.`,
+      // Intento 2: Simetría central con marco
+      `Composición centrada: marco geométrico delgado en oro con elementos orgánicos en las cuatro esquinas. Centro completamente limpio para texto.`,
+      // Intento 3: Minimalismo radical
+      `Composición minimalista extrema: un solo elemento botánico en escala grande, trazo fino, posicionado en el tercio inferior. Dos tercios superiores vacíos.`
+    ];
+
+    const composition = compositions[Math.min(attempt - 1, 2)];
+
+    return `Premium editorial design concept art. Portrait orientation 4:5 ratio. ${composition}
+
+FONDO: Blanco puro con textura sutil de papel de algodón premium — grano muy fino y elegante, como papel de acuarela de 300gsm. El blanco ocupa mínimo 65% de la composición.
+
+ELEMENTOS GRÁFICOS (solo formas, cero texto):
+- Líneas botánicas ultra-finas en azul marino profundo (#1B3A5C): siluetas de hojas, ramas curvas, flores esquemáticas
+- Acentos geométricos mínimos en oro cálido (#C4973A): líneas rectas muy delgadas, pequeños cuadros o puntos
+- Sin gradientes agresivos — solo tintas planas elegantes
+- Elementos flotantes con mucho aire entre ellos
+
+ESTILO DE REFERENCIA: Invitación de gala de alto nivel. Catálogo de Sotheby's. Revista Monocle interior. Massimo Vignelli meets ilustración botánica victoriana.
+
+FORMATO: Vertical, composición tipo póster editorial de evento premium.
+
+PROHIBIDO ABSOLUTAMENTE: ninguna letra, ningún número, ninguna palabra, ningún símbolo tipográfico, ningún logo, ningún texto de ningún tipo en ninguna parte de la imagen.${avoidNote}`;
+  }
+
+  /**
+   * QC visual con GPT-4o Vision — revisa la imagen generada antes de aprobar
+   */
+  async _qcImageWithVision(openai, imageUrl, attempt) {
+    console.log(`[Diego QC] Analizando imagen intento ${attempt} con GPT-4o Vision...`);
+
+    const qcPrompt = `Eres el QC visual senior de una agencia de diseño premium en México. Analiza esta imagen generada por IA con criterio profesional estricto.
+
+Devuelve ÚNICAMENTE JSON válido (sin markdown, sin explicación adicional):
+
+{
+  "approved": false,
+  "score": 0,
+  "has_text_artifacts": false,
+  "has_ai_distortion": false,
+  "style_match": false,
+  "is_portrait": false,
+  "issues": [],
+  "next_prompt_fix": ""
+}
+
+CRITERIOS DE EVALUACIÓN:
+- "approved": true SOLO si score >= 7 Y has_text_artifacts = false Y has_ai_distortion = false
+- "score": del 1-10. Profesional y limpio = 7+. Con problemas = bajo 7.
+- "has_text_artifacts": true si hay CUALQUIER letra, número, símbolo, pseudotexto malformado, grafemas, caracteres chinos/árabes de relleno, o cualquier intento de texto aunque sea ilegible
+- "has_ai_distortion": true si hay formas que se derriten, anatomía incorrecta, elementos que no tienen sentido visual
+- "style_match": true si tiene fondo blanco/claro, elementos orgánicos elegantes, sensación editorial premium
+- "is_portrait": true si la proporción es claramente vertical
+- "issues": lista específica de problemas encontrados
+- "next_prompt_fix": qué cambiar en el prompt para el siguiente intento
+
+Sé extremadamente estricto con texto. Un solo carácter malformado = has_text_artifacts: true = rejected.`;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+            { type: 'text', text: qcPrompt }
+          ]
+        }],
+        max_tokens: 500,
+        temperature: 0.1
+      });
+
+      const raw = response.choices[0].message.content.trim();
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const result = JSON.parse(jsonMatch[0]);
+        console.log(`[Diego QC] Intento ${attempt}: score=${result.score}, approved=${result.approved}, text_artifacts=${result.has_text_artifacts}`);
+        return result;
+      }
+    } catch (err) {
+      console.error('[Diego QC] Error vision check:', err.message);
+    }
+
+    return {
+      approved: false, score: 0,
+      has_text_artifacts: true, has_ai_distortion: false,
+      style_match: false, is_portrait: false,
+      issues: ['QC vision check falló — rechazando por precaución'],
+      next_prompt_fix: 'Simplificar composición, reducir elementos'
+    };
+  }
+
+  /**
+   * Loop de generación de imagen con QC — hasta 3 intentos
+   */
+  async _generateImageWithQC(openai, brief, proposal) {
+    const MAX_ATTEMPTS = 3;
+    let bestResult = null;
+    let bestScore = -1;
+    let previousIssues = [];
+    const attempts = [];
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      console.log(`[Diego] Generando imagen — intento ${attempt}/${MAX_ATTEMPTS}...`);
+
+      const dallePrompt = this._buildDallePrompt(brief, attempt, previousIssues);
+
+      try {
+        const imgResponse = await openai.images.generate({
+          model: 'dall-e-3',
+          prompt: dallePrompt,
+          size: '1024x1792',   // Portrait — el más cercano a 1080x1350
+          quality: 'hd',
+          style: 'natural',    // 'natural' > 'vivid' para diseño editorial elegante
+          n: 1
+        });
+
+        const imageUrl = imgResponse.data[0].url;
+        console.log(`[Diego] Imagen ${attempt} generada. Iniciando QC...`);
+
+        // QC visual con GPT-4o Vision
+        const qcResult = await this._qcImageWithVision(openai, imageUrl, attempt);
+        attempts.push({ attempt, imageUrl, qcResult });
+
+        if (qcResult.score > bestScore) {
+          bestScore = qcResult.score;
+          bestResult = { imageUrl, qcResult, attempt };
+        }
+
+        if (qcResult.approved) {
+          console.log(`[Diego QC] ✅ Imagen aprobada en intento ${attempt} (score: ${qcResult.score}/10)`);
+          break;
+        } else {
+          console.log(`[Diego QC] ❌ Intento ${attempt} rechazado (score: ${qcResult.score}/10): ${qcResult.issues?.join(', ')}`);
+          previousIssues = qcResult.issues || [];
+          if (qcResult.next_prompt_fix) previousIssues.push(qcResult.next_prompt_fix);
+        }
+
+      } catch (imgErr) {
+        console.error(`[Diego] Error imagen intento ${attempt}:`, imgErr.message);
+        attempts.push({ attempt, error: imgErr.message });
+      }
+    }
+
+    return { bestResult, attempts };
+  }
+
+  /**
+   * Genera propuesta de arte FIF con pipeline completo:
+   * Research → Propuesta GPT-4o → Revisión Carlos → Imagen QC loop → Valentina → Email
    */
   async generateFIFProposal(brief) {
-    console.log(`[Diego] Generando propuesta FIF para ${brief.emailDestino}...`);
+    console.log(`[Diego] ══ INICIANDO PIPELINE FIF ══ → ${brief.emailDestino}`);
 
-    // 1. Investigar redes sociales oficiales de FIF
-    console.log('[Diego] Investigando redes sociales de FIF CDMX...');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    // ─── 1. RESEARCH ───────────────────────────────────────────────────
+    console.log('[Diego] Investigando identidad visual FIF CDMX...');
     const socialFindings = await this.researchFIFSocials();
     const socialContext = socialFindings
       .filter(f => !f.error)
       .map(f => `[${f.url}] ${f.title} — ${f.description}`)
-      .join('\n') || 'No se pudo acceder a las redes en este momento';
+      .join('\n') || 'Fuentes con acceso limitado — usando conocimiento de marca previo';
 
-    console.log(`[Diego] Research completado: ${socialFindings.length} fuentes revisadas`);
+    console.log(`[Diego] Research: ${socialFindings.filter(f => !f.error).length}/${socialFindings.length} fuentes accesibles`);
 
-    // 2. Inicializar OpenAI
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    // ─── 2. PROPUESTA EDITORIAL (GPT-4o) ───────────────────────────────
+    console.log('[Diego] Generando propuesta editorial con GPT-4o...');
+    const editorialPrompt = `${this.basePrompt}
 
-    const researchPrompt = `${this.basePrompt}
-
-═══ ENCARGO ═══
-Mariana me acaba de delegar un brief de arte para el siguiente evento:
-
+═══ ENCARGO DE MARIANA ═══
 EVENTO: ${brief.evento}
-DESCRIPCIÓN: ${brief.descripcion}
-CONTEXTO DE MARCA: ${brief.contexto}
-DEADLINE ENTREGA: ${brief.deadline}
+DESCRIPCIÓN: ${brief.descripcion || 'FIF CDMX — Feria Internacional de Franquicias'}
+CONTEXTO: ${brief.contexto || ''}
+DEADLINE: ${brief.deadline || 'Hoy'}
 
-═══ RESEARCH REAL DE REDES SOCIALES FIF (obtenido ahora mismo) ═══
+═══ RESEARCH DE MARCA REAL ═══
 ${socialContext}
 
-═══ REFERENCIA VISUAL PRINCIPAL ═══
-La cuenta @feriadefranquicias en Instagram (https://www.instagram.com/feriadefranquicias/) es la referencia visual directa del cliente. Es el look and feel actual que debemos estudiar, respetar y ELEVAR. No copiar — evolucionar. Analiza:
-- Paleta cromática dominante (fondos, primarios, acentos)
-- Estilo tipográfico (jerarquía, pesos, tratamiento del texto)
-- Composición y layout general de sus posts
-- Uso de fotografía vs. ilustración vs. elementos gráficos puros
-- Tono visual general (formal/dinámico, oscuro/claro, geométrico/orgánico)
-- Qué funciona bien y qué se puede mejorar editorialmente
+═══ CONOCIMIENTO PREVIO DE FIF ═══
+FIF = Feria Internacional de Franquicias Ciudad de México. El evento más importante de franquicias en México. Conecta franquiciantes, franquiciatarios e inversionistas. Audiencia: emprendedores y empresarios establecidos. Posicionamiento: profesional, aspiracional, dinámico.
 
-═══ LO QUE YA SÉ DE FIF ═══
-Trabajo FIF / VANEXPO desde hace tiempo con Fractal MX. FIF significa Feria Internacional de Franquicias Ciudad de México — el evento más importante de franquicias en México. Conecta a franquiciantes, franquiciatarios e inversionistas. Audiencia: emprendedores y empresarios. Identidad visual: profesional, dinámica, aspiracional.
+IDENTIDAD VISUAL ACTUAL @feriadefranquicias:
+- Paleta dominante: azul marino + blanco + acentos dorados/plateados
+- Tipografía: Gotham Font Family (Bold headlines, Medium subheads, Book body)
+- Estilo: corporativo-premium, geométrico, alto contraste
+- Formatos habituales: 1080x1350px (portrait feed Instagram/LinkedIn)
+- Fondos: blancos o muy claros, con textura sutil premium
+- Elementos: orgánicos (líneas botánicas, formas naturales) + geometría limpia
 
-TIPOGRAFÍA OFICIAL: Gotham Font Family — usar Gotham Bold para headlines, Gotham Medium para subheads, Gotham Book para cuerpo. Esta es la familia tipográfica de la marca y no se sustituye.
+═══ ESTÁNDARES DE ARTE FIF (NO NEGOCIABLES) ═══
+1. Formato: 1080x1350px (relación 4:5, portrait)
+2. Fondo: blanco o marfil con textura de papel premium
+3. Elementos decorativos: orgánicos y elegantes (botánica esquemática, líneas naturales)
+4. Tipografía: Gotham Bold para titular, Gotham Medium para info secundaria
+5. CERO texto en la imagen generada por IA — el copy se integra en post-producción
+6. Paleta: azul marino (#1B3A5C) + oro cálido (#C4973A) + blanco (#FFFFFF)
 
-═══ MI MISIÓN ═══
-1. Analizar la identidad visual actual de @feriadefranquicias — qué está bien, qué puede subir de nivel
-2. Proponer un arte para el anuncio de la próxima edición FIF CDMX que RESPETE el look and feel existente pero lo eleve
-3. Ser específico — tipografía real, paleta con hex codes exactos tomados de su identidad actual, layout, jerarquía, copy sugerido
-4. El arte debe ser para formato feed de Instagram/LinkedIn (1:1 o 4:5)
-5. Justificar CADA decisión en relación a la identidad visual de referencia
+═══ TU MISIÓN ═══
+Genera una propuesta editorial EJECUTABLE para el anuncio de próxima edición FIF CDMX.
+Debes incluir secciones claras:
 
-Genera una propuesta de arte COMPLETA, detallada y lista para ejecutar. Incluye:
-
-## RESEARCH & ANÁLISIS VISUAL @feriadefranquicias
-(análisis del look and feel actual: paleta, tipografía, composición, qué elevar)
-
-## CONTEXTO FIF CDMX
-(evento, audiencia, posicionamiento)
+## ANÁLISIS VISUAL FIF CDMX
+(qué funciona en su identidad actual, qué elevar)
 
 ## CONCEPTO CREATIVO
-(la gran idea, no más de 1 línea poderosa)
+(una frase poderosa que describe la dirección)
 
 ## ESPECIFICACIONES TÉCNICAS
 
-### Formato & Dimensiones
-### Sistema Tipográfico
-- Headline: fuente + peso + tamaño + color
-- Subhead: fuente + peso + tamaño + color
-- Info secundaria: fuente + tamaño
-### Paleta Cromática
-- Fondo: #HEX (y descripción)
-- Primario: #HEX
-- Acento: #HEX
+### Formato & Canvas
+### Sistema Tipográfico (Gotham — jerarquía completa)
+### Paleta Cromática (hex codes exactos)
 ### Layout & Composición
-(describe la disposición de elementos, jerarquía visual, flujo)
+(descripción detallada del layout: qué va dónde, proporciones, flujo visual)
 ### Copy Sugerido
-(headline + subhead + CTA exacto)
-### Elementos Gráficos
-(texturas, formas, íconos, fotografía si aplica)
+(headline + fecha o info clave + CTA — copy real, listo para usar)
+### Elementos Decorativos
+(qué elementos orgánicos específicos, cómo se posicionan)
 
 ## RATIONALE
-(por qué este concepto funciona para FIF CDMX y está alineado con su identidad)
+(por qué este concepto eleva la identidad de FIF sin abandonarla)
 
-## PRÓXIMOS PASOS
-(qué necesito del equipo para ejecutar)
+## NOTA PARA CARLOS
+(dirección específica para que Carlos valide el sistema visual desde su perspectiva de branding)
 
-Sé específico. Esto es para ejecutar, no para inspirar.`;
+Sé específico. Esto va directo a ejecución.`;
 
-    // 3. Generar propuesta editorial con GPT-4o
-    console.log('[Diego] Generando propuesta con GPT-4o...');
     const gptResponse = await openai.chat.completions.create({
       model: 'gpt-4o',
       max_tokens: 3000,
-      messages: [{ role: 'user', content: researchPrompt }]
+      temperature: 0.7,
+      messages: [{ role: 'user', content: editorialPrompt }]
     });
     const proposal = gptResponse.choices[0].message.content;
 
-    // 4. Generar imagen con DALL-E 3
-    let imageUrl = null;
-    let imageSection = '';
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        console.log('[Diego] Generando imagen con DALL-E 3...');
-        const dallePrompt = `Professional franchise expo announcement poster for "FIF Ciudad de México" — Feria Internacional de Franquicias, next edition. Clean bold design inspired by @feriadefranquicias Instagram visual style. Professional color palette. Large bold "FIF" logotype prominent. "FERIA INTERNACIONAL DE FRANQUICIAS" supporting text. "CIUDAD DE MÉXICO" location text. "PRÓXIMA EDICIÓN" call to action. Gotham Bold typeface style. Square 1:1 format for Instagram feed. Corporate professional aesthetic. Dynamic business event energy. Clean grid layout. Premium franchise industry identity design.`;
-
-        const imgResponse = await openai.images.generate({
-          model: 'dall-e-3',
-          prompt: dallePrompt,
-          size: '1024x1024',
-          quality: 'hd',
-          style: 'vivid',
-          n: 1
-        });
-        imageUrl = imgResponse.data[0].url;
-        imageSection = `<div style="margin: 32px 0; text-align: center;">
-          <img src="${imageUrl}" alt="Arte FIF Ciudad de México" style="width: 100%; max-width: 600px; border-radius: 4px; border: 1px solid #333;" />
-          <p style="font-size: 11px; color: #555; margin-top: 8px;">Arte generado por Diego · DALL-E 3 HD · Para revisión editorial</p>
-        </div>`;
-        console.log('[Diego] Imagen DALL-E 3 generada ✓');
-      } catch (imgErr) {
-        console.error('[Diego] Error DALL-E 3:', imgErr.message);
-        imageSection = `<p style="color:#FF6B6B; font-size: 12px;">⚠️ Imagen no generada: ${imgErr.message}</p>`;
-      }
+    // ─── 3. REVISIÓN DE CARLOS ──────────────────────────────────────────
+    console.log('[Diego] Solicitando revisión a Carlos...');
+    let carlosReview = '(Carlos no disponible en este momento)';
+    try {
+      const CarlosAgent = require('./carlos.agent');
+      const carlos = new CarlosAgent();
+      carlosReview = await carlos.reviewFIFProposal(proposal, brief);
+      console.log('[Diego] ✅ Revisión de Carlos recibida');
+    } catch (err) {
+      console.error('[Diego] Carlos review error:', err.message);
     }
 
-    // 5. Formatear como email HTML profesional
+    // ─── 4. GENERACIÓN DE IMAGEN CON QC LOOP ───────────────────────────
+    const { bestResult, attempts } = await this._generateImageWithQC(openai, brief, proposal);
+
+    let imageUrl = null;
+    let imageSection = '';
+    let qcSummary = '';
+
+    if (bestResult) {
+      imageUrl = bestResult.imageUrl;
+      const qc = bestResult.qcResult;
+      const statusIcon = qc.approved ? '✅' : '⚠️';
+      const intentLabel = `Intento ${bestResult.attempt}/${attempts.length}`;
+
+      qcSummary = `${statusIcon} QC Visual: ${qc.score}/10 — ${intentLabel} ${qc.approved ? '(APROBADO)' : '(MEJOR DISPONIBLE — revisar antes de usar)'}`;
+      if (qc.issues?.length) qcSummary += `\nObservaciones: ${qc.issues.join(' | ')}`;
+
+      imageSection = `
+        <div style="margin: 32px 0; text-align: center;">
+          <img src="${imageUrl}" alt="Concepto Visual FIF — Arte referencia" style="width: 100%; max-width: 500px; border-radius: 4px; border: 1px solid #ddd;" />
+          <p style="font-size: 11px; color: #666; margin-top: 8px; line-height: 1.5;">
+            <strong>Concepto visual de referencia</strong> — Generado por Diego · DALL-E 3 HD · ${intentLabel}<br>
+            ${qc.approved ? '✅ Aprobado por QC visual' : '⚠️ Mejor disponible — el arte final se ejecuta en Illustrator/Figma'}<br>
+            <em>Nota: El copy/tipografía se integra en post-producción sobre el canvas 1080×1350. Este arte es referencia de composición y estilo.</em>
+          </p>
+        </div>`;
+    } else {
+      imageSection = `<p style="color:#E07B39; font-size:12px; padding:12px; background:#FFF3EB; border-radius:4px;">⚠️ Generación de imagen no disponible en este momento. La propuesta editorial es válida para ejecutar en Illustrator/Figma.</p>`;
+      qcSummary = 'Imagen no generada — ejecutar manualmente';
+    }
+
+    // ─── 5. VALIDACIÓN VALENTINA (Art Direction QC) ─────────────────────
+    console.log('[Diego] Solicitando validación final a Valentina...');
+    let valentinaNote = '(Valentina — revisión pendiente)';
+    try {
+      const ValentinaAgent = require('./valentina.agent');
+      const valentina = new ValentinaAgent();
+      const valReview = await valentina.reviewCreativeWork(
+        `PROPUESTA DIEGO:\n${proposal}\n\nREVISIÓN CARLOS:\n${carlosReview}\n\nQC IMAGEN:\n${qcSummary}`,
+        'Arte para evento / anuncio de edición',
+        { client_id: 'FIF_CDMX', evento: brief.evento, formato: '1080x1350 portrait' }
+      );
+      valentinaNote = valReview;
+      console.log('[Diego] ✅ Validación Valentina recibida');
+    } catch (err) {
+      console.error('[Diego] Valentina review error:', err.message);
+    }
+
+    // ─── 6. EMAIL HTML PROFESIONAL ──────────────────────────────────────
+    const attemptBadges = attempts.map(a => {
+      if (a.error) return `<span style="background:#FFEBEE;color:#C62828;padding:2px 8px;border-radius:10px;font-size:10px;margin-right:4px;">❌ Int.${a.attempt}</span>`;
+      const c = a.qcResult;
+      const color = c.approved ? '#E8F5E9' : c.score >= 5 ? '#FFF8E1' : '#FFEBEE';
+      const textColor = c.approved ? '#2E7D32' : c.score >= 5 ? '#F57F17' : '#C62828';
+      return `<span style="background:${color};color:${textColor};padding:2px 8px;border-radius:10px;font-size:10px;margin-right:4px;">${c.approved ? '✅' : '⚠️'} Int.${a.attempt}: ${c.score}/10</span>`;
+    }).join('');
+
     const htmlBody = `
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: #0a0a0a; color: #e0e0e0; margin: 0; padding: 0; }
-    .container { max-width: 680px; margin: 0 auto; padding: 40px 20px; }
-    .header { border-bottom: 2px solid #7c3aed; padding-bottom: 24px; margin-bottom: 32px; }
-    .logo { font-size: 13px; letter-spacing: 4px; color: #7c3aed; font-weight: 700; text-transform: uppercase; }
-    .from { font-size: 11px; color: #666; margin-top: 4px; }
-    h1 { font-size: 22px; color: #fff; font-weight: 700; margin: 0 0 8px; }
-    .badge { display: inline-block; background: #7c3aed22; border: 1px solid #7c3aed55; color: #a78bfa; font-size: 11px; padding: 4px 12px; border-radius: 20px; letter-spacing: 1px; margin-bottom: 24px; }
-    .content { line-height: 1.8; font-size: 14px; color: #ccc; white-space: pre-wrap; }
-    h2 { color: #fff; font-size: 16px; border-left: 3px solid #7c3aed; padding-left: 12px; margin-top: 28px; }
-    .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #222; font-size: 11px; color: #555; }
-    .footer strong { color: #7c3aed; }
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: #F8F8F8; color: #2a2a2a; margin: 0; padding: 0; }
+    .container { max-width: 700px; margin: 0 auto; background: #fff; }
+    .header { background: #1B3A5C; padding: 32px 40px 24px; }
+    .logo { font-size: 11px; letter-spacing: 5px; color: #C4973A; font-weight: 700; text-transform: uppercase; }
+    .from { font-size: 11px; color: #8fa8c8; margin-top: 4px; }
+    h1 { font-size: 20px; color: #fff; font-weight: 700; margin: 16px 0 0; }
+    .body { padding: 32px 40px; }
+    .badge { display: inline-block; background: #EBF3FB; border: 1px solid #B3D1F0; color: #1B3A5C; font-size: 10px; padding: 4px 12px; border-radius: 20px; letter-spacing: 1px; margin-right: 6px; margin-bottom: 16px; font-weight: 600; }
+    .qc-bar { background: #F5F5F5; border-radius: 6px; padding: 12px 16px; margin: 20px 0; font-size: 11px; }
+    .section-card { border: 1px solid #E8E8E8; border-radius: 6px; margin: 20px 0; overflow: hidden; }
+    .section-header { background: #F0F4F8; padding: 10px 16px; font-size: 11px; font-weight: 700; color: #1B3A5C; letter-spacing: 1px; text-transform: uppercase; }
+    .section-body { padding: 16px; font-size: 13px; line-height: 1.8; color: #333; white-space: pre-wrap; }
+    .footer { background: #F0F4F8; padding: 20px 40px; font-size: 10px; color: #888; border-top: 2px solid #C4973A; }
+    .footer strong { color: #1B3A5C; }
+    h2 { color: #1B3A5C; font-size: 14px; border-left: 3px solid #C4973A; padding-left: 10px; margin: 20px 0 8px; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <div class="logo">FRACTAL MX</div>
-      <div class="from">Propuesta de Diego Ramírez · Senior Designer</div>
+<div class="container">
+  <div class="header">
+    <div class="logo">FRACTAL MX</div>
+    <div class="from">Propuesta de Diego Ramírez · Senior Designer</div>
+    <h1>📐 ${brief.evento}</h1>
+  </div>
+  <div class="body">
+    <span class="badge">PIPELINE COMPLETO</span>
+    <span class="badge">GPT-4o + DALL-E 3 + QC VISION</span>
+    <span class="badge">REVISADO POR CARLOS + VALENTINA</span>
+
+    <div class="qc-bar">
+      <strong>Pipeline QC:</strong> ${attemptBadges || 'Sin intentos registrados'}<br>
+      <span style="color:#555;">${qcSummary}</span>
     </div>
-    <span class="badge">📐 PROPUESTA DE ARTE · GPT-4o + DALL-E 3</span>
-    <h1>${brief.evento}</h1>
+
     ${imageSection}
-    <div class="content">${proposal.replace(/## /g, '<h2>').replace(/\n/g, '<br>')}</div>
-    <div class="footer">
-      <strong>Diego Ramírez Salazar</strong> · Senior Graphic Designer<br>
-      Fractal MX Virtual Team v4.2 · Delegado por Mariana · ${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}<br>
-      <em>Este documento es confidencial y para uso interno de Fractal MX.</em>
+
+    <div class="section-card">
+      <div class="section-header">📋 Propuesta Editorial — Diego Ramírez</div>
+      <div class="section-body">${proposal.replace(/## /g, '<h2>').replace(/### /g, '<strong>').replace(/\n/g, '<br>')}</div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-header">🎨 Revisión Carlos Pérez — Perspectiva Branding</div>
+      <div class="section-body">${String(carlosReview).replace(/\n/g, '<br>')}</div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-header">✅ Validación Valentina Cruz — Art Direction</div>
+      <div class="section-body">${String(valentinaNote).replace(/\n/g, '<br>')}</div>
+    </div>
+
+    <div style="background:#FFF8E1;border:1px solid #FFE082;border-radius:6px;padding:14px;font-size:12px;color:#6D4C00;margin-top:16px;">
+      <strong>📌 Nota de producción:</strong> El arte final se ejecuta en Illustrator o Figma a 1080×1350px. La imagen generada es referencia de concepto y composición. El copy y tipografía (Gotham) se integran en software de diseño sobre el canvas definitivo.
     </div>
   </div>
-</body>
+  <div class="footer">
+    <strong>Diego Ramírez Salazar</strong> · Senior Graphic Designer<br>
+    Revisado por: Carlos Pérez (Branding) · Valentina Cruz (Art Direction)<br>
+    Fractal MX Virtual Team v4.2 · ${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}<br>
+    <em>Documento confidencial — uso interno Fractal MX.</em>
+  </div>
+</div>
 </html>`;
 
-    // Enviar email
     await sendEmail({
       to: brief.emailDestino,
-      subject: `📐 Propuesta de Arte — ${brief.evento} | Diego · Fractal MX`,
+      subject: `📐 Propuesta Arte FIF CDMX — Pipeline Completo | Diego + Carlos + Valentina`,
       html: htmlBody,
-      text: proposal,
+      text: `${proposal}\n\n--- CARLOS ---\n${carlosReview}\n\n--- VALENTINA ---\n${valentinaNote}`,
       fromName: 'Diego Ramírez · Fractal MX'
     });
 
-    console.log(`[Diego] Propuesta FIF enviada a ${brief.emailDestino}`);
+    console.log(`[Diego] ══ PIPELINE COMPLETO ══ Email enviado a ${brief.emailDestino}`);
     return proposal;
   }
 
@@ -339,6 +531,29 @@ Realiza una revisión tipográfica detallada. Evalúa:
 Da feedback específico y accionable.`;
 
     return this.think(typoPrompt);
+  }
+
+  /**
+   * Revisión complementaria de propuesta de Carlos
+   */
+  async complementCarlosWork(carlosProposal, clientBrief) {
+    const complementPrompt = `${this.basePrompt}
+
+Propuesta de Carlos (bold/branding):
+"${carlosProposal}"
+
+Brief del cliente:
+${JSON.stringify(clientBrief, null, 2)}
+
+Como Diego, complementa la propuesta de Carlos. Tu rol es aportar:
+- Refinement donde sea necesario
+- Jerarquía tipográfica más clara
+- Coherencia editorial
+- Balance entre bold y elegancia
+
+Responde constructivamente. Son iguales, buscan lo mejor para el cliente.`;
+
+    return this.think(complementPrompt, { clientId: clientBrief.client_id });
   }
 }
 
