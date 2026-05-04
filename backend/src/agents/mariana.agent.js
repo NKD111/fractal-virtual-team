@@ -368,22 +368,38 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
 
     // ── TAREA DE DISEÑO con email ─────────────────────────────────────────────
     const isDesignTask = ['arte ', 'diseño', 'pieza', 'arte para', 'propuesta', 'creativo', 'grafico', 'gráfico', 'banner', 'flyer', 'poster', 'anuncio'].some(k => lower.includes(k));
-    const hasEmail = lower.includes('@') || lower.includes('correo') || lower.includes('email') || lower.includes('mail');
     const mentionsDiego = lower.includes('diego') || lower.includes('diseñador');
-    const mentionsFIF = lower.includes('fif') || lower.includes('festival') || lower.includes('vanexpo') || lower.includes('expo');
+    const mentionsFIF = lower.includes('fif') || lower.includes('vanexpo') || lower.includes('feria de franquicias') || lower.includes('feria internacional');
+    const mentionsArticle = (lower.includes('articulo') || lower.includes('artículo') || lower.includes('post') || lower.includes('nota')) &&
+                            (lower.includes('franquiciashoy') || lower.includes('franquicias hoy') || lower.includes('medio') || lower.includes('revista'));
 
-    if (isDesignTask || mentionsDiego || mentionsFIF) {
-      // Extraer email del mensaje si se menciona explícitamente
-      const emailMatch = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-      const emailDestino = emailMatch?.[0] || process.env.NEIKY_EMAIL || 'nakedgeometry19@gmail.com';
+    // Extraer email del mensaje si se menciona explícitamente
+    const emailMatch = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    const emailDestino = emailMatch?.[0] || process.env.NEIKY_EMAIL || 'nakedgeometry19@gmail.com';
+    const deadlineMatch = content.match(/(\d{1,2}:\d{2}|antes de las \d|mañana|hoy)/i);
+    const deadline = deadlineMatch?.[0] || 'Hoy';
 
-      // Extraer deadline si se menciona
-      const deadlineMatch = content.match(/(\d{1,2}:\d{2}|antes de las \d|mañana|hoy)/i);
-      const deadline = deadlineMatch?.[0] || 'Hoy antes de las 6:30 PM';
-
+    if (mentionsArticle) {
+      // ── PIPELINE: Post artículo FranquiciasHoy ──────────────────────────────
+      console.log(`[Mariana] Delegando article post a Diego → ${emailDestino}`);
+      setImmediate(async () => {
+        try {
+          const DiegoAgent = require('./diego.agent');
+          const diego = new DiegoAgent();
+          await diego.generateArticlePost({
+            tema: content.substring(0, 200),
+            descripcion: content.substring(0, 500),
+            emailDestino,
+            deadline
+          });
+          console.log(`[Mariana] Diego entregó article post a ${emailDestino} ✓`);
+        } catch (err) {
+          console.error('[Mariana] Error article post:', err.message);
+        }
+      });
+    } else if (isDesignTask || mentionsDiego || mentionsFIF) {
+      // ── PIPELINE: Arte FIF / diseño genérico ────────────────────────────────
       console.log(`[Mariana] Delegando tarea de diseño a Diego → ${emailDestino}`);
-
-      // Ejecutar en background sin bloquear la respuesta a Neiky
       setImmediate(async () => {
         try {
           const DiegoAgent = require('./diego.agent');
@@ -395,7 +411,7 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
             emailDestino,
             deadline
           });
-          console.log(`[Mariana] Diego entregó propuesta a ${emailDestino} ✓`);
+          console.log(`[Mariana] Diego entregó propuesta FIF a ${emailDestino} ✓`);
         } catch (err) {
           console.error('[Mariana] Error delegando a Diego:', err.message);
         }

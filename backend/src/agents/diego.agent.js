@@ -75,14 +75,52 @@ Piensa en trabajo que envejezca bien — atemporal sobre trendy.`;
   }
 
   /**
-   * Investiga identidad visual real de FIF usando búsqueda y conocimiento de marca
+   * Scrape artículos recientes de franquiciashoy.com
+   */
+  async researchFranquiciasHoy() {
+    const sources = [
+      'https://franquiciashoy.com.mx',
+      'https://www.franquiciashoy.com.mx/noticias',
+      'https://www.franquiciashoy.com.mx/articulos'
+    ];
+
+    const findings = [];
+    for (const url of sources) {
+      try {
+        const { data } = await axios.get(url, {
+          timeout: 8000,
+          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0 Safari/537.36' }
+        });
+        const titleMatch = data.match(/<title[^>]*>([^<]+)<\/title>/i);
+        const ogTitle = data.match(/property="og:title" content="([^"]+)"/i);
+        const ogDesc = data.match(/property="og:description" content="([^"]+)"/i);
+        const metaDesc = data.match(/name="description" content="([^"]+)"/i);
+
+        // Extraer artículos del HTML
+        const articleMatches = [...data.matchAll(/<h[23][^>]*>([^<]{20,120})<\/h[23]>/gi)];
+        const articles = articleMatches.slice(0, 6).map(m => m[1].trim());
+
+        findings.push({
+          url,
+          siteTitle: (ogTitle?.[1] || titleMatch?.[1] || '').substring(0, 120),
+          siteDesc: (ogDesc?.[1] || metaDesc?.[1] || '').substring(0, 250),
+          articles
+        });
+      } catch (err) {
+        findings.push({ url, error: err.message });
+      }
+    }
+    return findings;
+  }
+
+  /**
+   * Investiga identidad visual real de FIF
    */
   async researchFIFSocials() {
     const sources = [
       'https://fifcdmx.com',
       'https://www.vanexpo.mx/fif',
-      'https://feriadefranquicias.com.mx',
-      'https://vanexpo.mx'
+      'https://feriadefranquicias.com.mx'
     ];
 
     const findings = [];
@@ -96,7 +134,6 @@ Piensa en trabajo que envejezca bien — atemporal sobre trendy.`;
         const ogTitle = data.match(/property="og:title" content="([^"]+)"/i);
         const ogDesc = data.match(/property="og:description" content="([^"]+)"/i);
         const metaDesc = data.match(/name="description" content="([^"]+)"/i);
-
         if (titleMatch || ogTitle) {
           findings.push({
             url,
@@ -108,54 +145,64 @@ Piensa en trabajo que envejezca bien — atemporal sobre trendy.`;
         findings.push({ url, error: err.message });
       }
     }
-
     return findings;
   }
 
   /**
-   * Construye el prompt de DALL-E para arte FIF
-   * REGLA CRÍTICA: CERO texto en la imagen — DALL-E falla sistemáticamente al renderizar tipografía.
-   * El arte es concepto visual puro; el copy se añade en post-producción.
+   * Construye prompt DALL-E para fotografía cinemática aspiracional.
+   *
+   * APRENDIZAJE CLAVE de referencias Expo Franquicias:
+   * - El DALL-E genera la ESCENA FOTOGRÁFICA (personaje + situación narrativa)
+   * - El diseño gráfico (logos, texto, rombos, tipografía) va en post-producción
+   * - Estilo: fotografía comercial de alto presupuesto, personajes mexicanos, fondo limpio
+   * - Ejemplos reales: emprendedor caminando sobre monedas, chef vs robot de pizzas, apretón de manos expo
+   *
+   * CERO texto en imagen — DALL-E sistemáticamente falla al renderizar tipografía
    */
   _buildDallePrompt(brief, attempt = 1, previousIssues = []) {
+    const concept = brief.imageConcept || brief.descripcion || '';
     const avoidNote = previousIssues.length > 0
-      ? `\n\nATTEMPT ${attempt} SPECIFIC FIXES REQUIRED: ${previousIssues.join(' | ')}`
+      ? `\n\nATTEMPT ${attempt} — MANDATORY FIXES: ${previousIssues.join(' | ')}`
       : '';
 
-    // FIF = Feria Internacional de Franquicias — corporate B2B trade show
-    // Visual identity: executive, geometric, architectural, premium business
-    // NOT botanical/wedding — think: Bloomberg summit, luxury business conference, Forbes 500 event
-    const compositions = [
-      // Intento 1: Franja diagonal geométrica premium
-      `Single poster design. A bold deep navy diagonal band cuts from upper-left to lower-right, occupying roughly one-third of the composition. The band has a subtle linen texture. One thin gold line runs precisely parallel to the band edge. Upper-right and lower-left areas remain bright white with very subtle warm paper grain. Small scattered geometric gold accent marks — tiny squares and single dots — float in the white zones, sparse and deliberate. Generous empty white space in center for future typography overlay.`,
-
-      // Intento 2: Marco arquitectónico minimalista
-      `Single poster design. Minimal architectural frame: four thin gold lines form an elegant rectangular border inset 6% from each edge, with clean mitered corners. In the upper-right corner of the frame, a small geometric emblem — three concentric thin gold squares rotating slightly, like an abstract growth or expansion symbol. The interior is entirely clean white with faint warm paper texture. Bottom-left corner has a solid deep navy triangle accent, sharp and geometric. Balanced, corporate, executive.`,
-
-      // Intento 3: Banda lateral + acento dorado
-      `Single poster design. Left edge: a narrow vertical deep navy column, exactly 12% of width, clean and solid. From it, three evenly-spaced thin horizontal gold lines extend rightward into the white field, fading before reaching center. Right side: completely clean white with subtle warm linen paper texture. Lower-right corner: a small stacked geometric motif — thin navy rectangle over thinner gold rectangle — like an abstract podium or award. Entire composition breathes with white space.`
+    // Ángulos cinematográficos: misma narrativa, diferente composición
+    const cameraAngles = [
+      `Medium shot, subject at center-left third, looking toward camera with confident expression. Background slightly out of focus.`,
+      `3/4 angle shot from slightly below, subject appears powerful and aspirational. Clean background, dramatic but soft lighting.`,
+      `Wide establishing shot showing full environment context. Subject is in foreground, setting tells the story.`
     ];
 
-    const composition = compositions[Math.min(attempt - 1, 2)];
+    const angle = cameraAngles[Math.min(attempt - 1, 2)];
 
-    return `Professional corporate event poster — single vertical poster design ONLY, one card, not multiple. Portrait orientation tall format. ${composition}
+    return `Cinematic commercial photography for Mexican franchise industry magazine. ${angle}
 
-BACKGROUND: Premium off-white, warm paper texture — subtle linen or cotton grain, very fine. NOT botanical paper. Corporate stationery feel. White occupies at least 70% of composition.
+SCENE CONCEPT: ${concept}
 
-COLOR PALETTE (strict):
-- Deep navy blue: solid, rich, executive
-- Warm gold / champagne gold: thin lines, small accents only — elegant not flashy
-- White/off-white: dominant background
-- NO green, no teal, no coral, no pastels
+PHOTOGRAPHY STYLE:
+- High-end advertising photography, CGI/3D render quality or real photography aesthetic
+- Warm professional studio lighting with soft shadows — NOT harsh flash
+- Background: clean white, very light warm gray, or minimal contextual setting (office, expo floor, modern workspace)
+- Color grade: slightly warm, professional, aspirational
+- Production value: equivalent to Forbes Mexico, Entrepreneur en Español, Bloomberg Businessweek covers
 
-VISUAL LANGUAGE: Corporate luxury. Business summit. Executive conference. Think Bloomberg, Davos, Forbes summit branding. Clean geometric shapes, architectural lines, professional grade. Premium business event — franchise industry trade show for entrepreneurs and investors.
+SUBJECT (if people appear):
+- Mexican or Latin American appearance, professional, 28-45 years old
+- Business casual to formal attire — entrepreneur energy, not corporate stiffness
+- Confident, aspirational expression — success within reach
+- If multiple people: interaction feels natural and positive (handshake, collaboration, celebration)
+
+COMPOSITION:
+- Upper 35-40% of image: intentionally clean — slightly lighter area for future text overlay
+- Lower 60-65%: main visual scene
+- Leave bottom-right corner slightly free (geometric brand element added in post)
+- Vertical portrait format — all action within single frame
 
 ABSOLUTE PROHIBITIONS:
-- NO flowers, NO leaves, NO botanical elements, NO plants, NO organic curves
-- NO text, NO letters, NO numbers, NO symbols, NO logos, NO watermarks
-- NO multiple panels or cards — ONE single poster only
-- NO gradients that look cheap or digital — only subtle textures
-- NO clipart, NO wedding aesthetic, NO decorative flourishes${avoidNote}`;
+- NO text, letters, numbers, symbols, logos, watermarks, signs with readable text
+- NO visible brand names on objects (blur or avoid showing labels)
+- NO wedding, botanical, or decorative design elements
+- NO abstract geometric backgrounds or patterns
+- ONE single image only — not a collage or split design${avoidNote}`;
   }
 
   /**
@@ -184,7 +231,7 @@ CRITERIOS DE EVALUACIÓN:
 - "score": del 1-10. Profesional y limpio = 7+. Con problemas = bajo 7.
 - "has_text_artifacts": true si hay CUALQUIER letra, número, símbolo, pseudotexto malformado, grafemas, caracteres chinos/árabes de relleno, o cualquier intento de texto aunque sea ilegible
 - "has_ai_distortion": true si hay formas que se derriten, anatomía incorrecta, elementos que no tienen sentido visual
-- "style_match": true si tiene fondo blanco/claro, elementos orgánicos elegantes, sensación editorial premium
+- "style_match": true si tiene estilo fotográfico comercial/cinemático: personaje o escena clara, fondo limpio/profesional, iluminación cálida y uniforme, sensación aspiracional
 - "is_portrait": true si la proporción es claramente vertical
 - "issues": lista específica de problemas encontrados
 - "next_prompt_fix": qué cambiar en el prompt para el siguiente intento
@@ -520,6 +567,248 @@ Sé específico. Esto va directo a ejecución.`;
     });
 
     console.log(`[Diego] ══ PIPELINE COMPLETO ══ Email enviado a ${brief.emailDestino}`);
+    return proposal;
+  }
+
+  /**
+   * Genera post para artículo de FranquiciasHoy.com
+   * Pipeline: Research artículo → Copy GPT-4o → Carlos review → Imagen cinemática QC → Valentina → Email
+   *
+   * Sistema visual de referencia (Expo Franquicias / FIF):
+   * - Foto: escena cinemática aspiracional, personaje mexicano, fondo limpio
+   * - Copy: headline rojo bold arriba, URL en pill, logo arriba derecha
+   * - Acento: rombo geométrico azul/rojo/cyan abajo derecha (post-producción)
+   * - Paleta: #E31837 rojo + #1B2F5C navy + blanco
+   */
+  async generateArticlePost(brief) {
+    console.log(`[Diego] ══ PIPELINE ARTICLE POST ══ → ${brief.emailDestino}`);
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    // ─── 1. RESEARCH ─────────────────────────────────────────────────────────
+    console.log('[Diego] Investigando FranquiciasHoy.com...');
+    const siteFindings = await this.researchFranquiciasHoy();
+    const siteContext = siteFindings
+      .filter(f => !f.error)
+      .map(f => `[${f.url}]\nSitio: ${f.siteTitle}\nDesc: ${f.siteDesc}\nArtículos encontrados: ${(f.articles || []).join(' | ')}`)
+      .join('\n\n') || 'Sin acceso directo al sitio — usando conocimiento del medio';
+
+    // ─── 2. COPY + CONCEPTO DE IMAGEN (GPT-4o) ────────────────────────────────
+    console.log('[Diego] Generando copy e imagen concept con GPT-4o...');
+    const copyPrompt = `${this.basePrompt}
+
+═══ ENCARGO ═══
+Crear un post de Instagram/LinkedIn para FranquiciasHoy.com promoviendo un artículo.
+
+═══ RESEARCH DEL SITIO ═══
+${siteContext}
+
+═══ CONTEXTO DEL CLIENTE ═══
+Tema del post: ${brief.tema || 'artículo de tendencias en el mundo de las franquicias'}
+Descripción: ${brief.descripcion || ''}
+Audiencia: emprendedores mexicanos, inversionistas, franquiciatarios potenciales
+
+═══ SISTEMA VISUAL DE REFERENCIA (cómo se hacen estos posts) ═══
+El formato que usan medios como Expo Franquicias, FranquiciasHoy, FIF:
+- Fondo superior: BLANCO limpio (aquí va el copy/texto)
+- Zona inferior: foto cinemática aspiracional con personaje en situación narrativa
+- Paleta: ROJO #E31837 + Navy #1B2F5C + Blanco
+- Tipografía: Gotham / Montserrat Bold para headlines
+- Headline: pregunta o dato impactante en rojo bold
+- Sub-copy: frase explicativa en navy
+- Badge URL: pill button con la web
+- Acento esquina: rombo geométrico abstracto (lo añade el diseñador)
+
+═══ LO QUE NECESITO ═══
+
+## ARTÍCULO SUGERIDO
+(título que encaje perfectamente con el medio y la audiencia)
+
+## HEADLINE DEL POST
+(máx 8 palabras, en rojo, estilo pregunta o dato impactante — como "¿Sin capital suficiente?" o "¡Reserva tu stand hoy mismo!")
+
+## SUB-COPY
+(1-2 líneas en navy, explicación o complemento del headline)
+
+## URL / CTA BADGE
+(texto corto para el pill button, ej: "FranquiciasHoy.com")
+
+## CONCEPTO DE IMAGEN CINEMÁTICA
+(describe en inglés la escena fotográfica que debe generar DALL-E — personaje mexicano, situación narrativa aspiracional relacionada con el artículo, fondo limpio, sin texto. Máx 50 palabras. SOLO la escena, sin mencionar logos ni texto)
+
+## COPY PARA CAPTION INSTAGRAM
+(150-200 palabras, con hashtags relevantes del sector franquicias MX)
+
+## RATIONALE
+(por qué este concepto funciona para la audiencia de FranquiciasHoy)
+
+Sé específico y ejecutable. El copy tiene que ser lo suficientemente fuerte para parar el scroll.`;
+
+    const gptResponse = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      max_tokens: 2500,
+      temperature: 0.75,
+      messages: [{ role: 'user', content: copyPrompt }]
+    });
+    const proposal = gptResponse.choices[0].message.content;
+
+    // Extraer concepto de imagen del proposal para usarlo en DALL-E
+    const imageConceptMatch = proposal.match(/## CONCEPTO DE IMAGEN CINEMÁTICA\s*([\s\S]+?)(?=##|$)/i);
+    const imageConcept = imageConceptMatch?.[1]?.trim() || brief.descripcion || 'Mexican entrepreneur in aspirational business moment, clean studio background';
+    const enrichedBrief = { ...brief, imageConcept };
+
+    // ─── 3. REVISIÓN CARLOS ────────────────────────────────────────────────────
+    console.log('[Diego] Solicitando revisión a Carlos...');
+    let carlosReview = '(Carlos no disponible)';
+    try {
+      const CarlosAgent = require('./carlos.agent');
+      const carlos = new CarlosAgent();
+      carlosReview = await carlos.reviewFIFProposal(proposal, brief);
+      console.log('[Diego] ✅ Revisión Carlos recibida');
+    } catch (err) {
+      console.error('[Diego] Carlos error:', err.message);
+    }
+
+    // ─── 4. IMAGEN CINEMÁTICA CON QC LOOP ────────────────────────────────────
+    const { bestResult, attempts } = await this._generateImageWithQC(openai, enrichedBrief, proposal);
+
+    let imageUrl = null;
+    let imageSection = '';
+    let qcSummary = '';
+
+    if (bestResult) {
+      imageUrl = bestResult.imageUrl;
+      const qc = bestResult.qcResult;
+      const statusIcon = qc.approved ? '✅' : '⚠️';
+      const intentLabel = `Intento ${bestResult.attempt}/${attempts.length}`;
+      qcSummary = `${statusIcon} QC: ${qc.score}/10 — ${intentLabel} ${qc.approved ? '(APROBADO)' : '(MEJOR DISPONIBLE)'}`;
+      if (qc.issues?.length) qcSummary += `\nNotas: ${qc.issues.join(' | ')}`;
+
+      imageSection = `
+        <div style="margin: 24px 0; text-align: center;">
+          <img src="${imageUrl}" alt="Concepto visual artículo" style="width: 100%; max-width: 480px; border-radius: 6px; border: 1px solid #eee;" />
+          <p style="font-size: 11px; color: #666; margin-top: 8px; line-height: 1.5; text-align:center;">
+            <strong>Escena cinemática generada</strong> — DALL-E 3 HD · ${intentLabel}<br>
+            ${qc.approved ? '✅ Aprobada por QC visual' : '⚠️ Mejor disponible — revisar antes de usar'}<br>
+            <em>Esta imagen va en la zona inferior del post. El copy, logos y acento geométrico se integran en Figma/Illustrator encima.</em>
+          </p>
+        </div>`;
+    } else {
+      imageSection = `<p style="color:#E07B39;font-size:12px;padding:12px;background:#FFF3EB;border-radius:4px;">⚠️ Imagen no generada. Ejecutar concepto manualmente.</p>`;
+      qcSummary = 'Sin imagen generada';
+    }
+
+    // ─── 5. VALENTINA ──────────────────────────────────────────────────────────
+    console.log('[Diego] Validación Valentina...');
+    let valentinaNote = '(Valentina — pendiente)';
+    try {
+      const ValentinaAgent = require('./valentina.agent');
+      const valentina = new ValentinaAgent();
+      valentinaNote = await valentina.reviewCreativeWork(
+        `POST ARTICLE DIEGO:\n${proposal}\n\nCARLOS:\n${carlosReview}\n\nQC:\n${qcSummary}`,
+        'Post editorial para medio de franquicias',
+        { client_id: 'FRANQUICIASHOY', formato: '1080x1350 portrait' }
+      );
+      console.log('[Diego] ✅ Valentina OK');
+    } catch (err) {
+      console.error('[Diego] Valentina error:', err.message);
+    }
+
+    // ─── 6. EMAIL ────────────────────────────────────────────────────────────
+    const attemptBadges = attempts.map(a => {
+      if (a.error) return `<span style="background:#FFEBEE;color:#C62828;padding:2px 8px;border-radius:10px;font-size:10px;margin-right:4px;">❌ Int.${a.attempt}</span>`;
+      const c = a.qcResult;
+      const color = c.approved ? '#E8F5E9' : c.score >= 5 ? '#FFF8E1' : '#FFEBEE';
+      const textColor = c.approved ? '#2E7D32' : c.score >= 5 ? '#F57F17' : '#C62828';
+      return `<span style="background:${color};color:${textColor};padding:2px 8px;border-radius:10px;font-size:10px;margin-right:4px;">${c.approved ? '✅' : '⚠️'} Int.${a.attempt}: ${c.score}/10</span>`;
+    }).join('');
+
+    // Extraer headline del proposal para el subject
+    const headlineMatch = proposal.match(/## HEADLINE DEL POST\s*([\s\S]+?)(?=##|$)/i);
+    const headline = headlineMatch?.[1]?.trim().substring(0, 60) || brief.tema || 'Post FranquiciasHoy';
+
+    const htmlBody = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: #F5F5F5; color: #2a2a2a; margin: 0; padding: 0; }
+    .container { max-width: 700px; margin: 0 auto; background: #fff; }
+    .header { background: #1B2F5C; padding: 28px 40px 20px; }
+    .logo-line { font-size: 10px; letter-spacing: 5px; color: #E31837; font-weight: 700; text-transform: uppercase; }
+    .from { font-size: 11px; color: #8fa8c8; margin-top: 3px; }
+    h1 { font-size: 19px; color: #fff; font-weight: 700; margin: 14px 0 0; }
+    .body { padding: 28px 40px; }
+    .pill { display: inline-block; background: #FEF0F0; border: 1px solid #FABBBB; color: #C62828; font-size: 10px; padding: 3px 12px; border-radius: 20px; letter-spacing: 1px; margin-right: 6px; margin-bottom: 14px; font-weight: 700; }
+    .pill-blue { background: #EBF3FB; border-color: #B3D1F0; color: #1B2F5C; }
+    .qc-bar { background: #F5F5F5; border-radius: 6px; padding: 10px 14px; margin: 16px 0; font-size: 11px; }
+    .card { border: 1px solid #E8E8E8; border-radius: 6px; margin: 18px 0; overflow: hidden; }
+    .card-hdr { background: #F0F4F8; padding: 9px 14px; font-size: 10px; font-weight: 700; color: #1B2F5C; letter-spacing: 1px; text-transform: uppercase; border-bottom: 2px solid #E31837; }
+    .card-body { padding: 14px; font-size: 13px; line-height: 1.8; color: #333; white-space: pre-wrap; }
+    .footer { background: #F0F4F8; padding: 18px 40px; font-size: 10px; color: #888; border-top: 3px solid #E31837; }
+    h2 { color: #1B2F5C; font-size: 13px; border-left: 3px solid #E31837; padding-left: 10px; margin: 18px 0 6px; font-weight: 700; }
+    .layout-guide { background: #FFFDE7; border: 1px solid #FDD835; border-radius: 6px; padding: 14px; font-size: 12px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="logo-line">FRACTAL MX</div>
+    <div class="from">Post editorial · Diego Ramírez · FranquiciasHoy.com</div>
+    <h1>📰 ${brief.tema || 'Post Artículo FranquiciasHoy'}</h1>
+  </div>
+  <div class="body">
+    <span class="pill">ARTICLE POST</span>
+    <span class="pill pill-blue">GPT-4o + DALL-E 3 HD</span>
+    <span class="pill pill-blue">CARLOS + VALENTINA</span>
+
+    <div class="qc-bar">
+      <strong>QC Pipeline:</strong> ${attemptBadges || '—'}<br>
+      <span style="color:#555;">${qcSummary}</span>
+    </div>
+
+    <div class="layout-guide">
+      <strong>📐 Guía de layout para producción en Figma/Illustrator:</strong><br>
+      Canvas: 1080×1350px · Fondo: blanco superior (#FFFFFF) · Foto: zona inferior 60%<br>
+      Copy: Gotham/Montserrat Bold · Headline: <span style="color:#E31837">#E31837</span> · Sub-copy: <span style="color:#1B2F5C">#1B2F5C</span><br>
+      Logo FranquiciasHoy: arriba derecha · Acento rombo geométrico: abajo derecha · Pill URL: navy o rojo
+    </div>
+
+    ${imageSection}
+
+    <div class="card">
+      <div class="card-hdr">📋 Propuesta Diego — Copy + Concepto</div>
+      <div class="card-body">${proposal.replace(/## /g, '<h2>').replace(/### /g, '<strong>').replace(/\n/g, '<br>')}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-hdr">🎨 Revisión Carlos — Sistema Visual</div>
+      <div class="card-body">${String(carlosReview).replace(/\n/g, '<br>')}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-hdr">✅ Validación Valentina — Art Direction</div>
+      <div class="card-body">${String(valentinaNote).replace(/\n/g, '<br>')}</div>
+    </div>
+  </div>
+  <div class="footer">
+    <strong>Diego Ramírez Salazar</strong> · Senior Graphic Designer — Editorial & Corporate<br>
+    Revisado: Carlos Pérez (Branding) · Valentina Cruz (Art Direction)<br>
+    Fractal MX Virtual Team v4.2 · ${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}<br>
+    <em>Uso interno — activos de producción pendientes de ejecución en Figma.</em>
+  </div>
+</div>
+</html>`;
+
+    await sendEmail({
+      to: brief.emailDestino,
+      subject: `📰 Post FranquiciasHoy — "${headline}" | Diego + Carlos + Valentina`,
+      html: htmlBody,
+      text: `${proposal}\n\n--- CARLOS ---\n${carlosReview}\n\n--- VALENTINA ---\n${valentinaNote}`,
+      fromName: 'Diego Ramírez · Fractal MX'
+    });
+
+    console.log(`[Diego] ══ ARTICLE POST COMPLETO ══ → ${brief.emailDestino}`);
     return proposal;
   }
 
