@@ -125,6 +125,11 @@ server.listen(PORT, async () => {
   const { startProactiveWorker } = require('./workers/proactive.worker');
   startProactiveWorker();
 
+  // Initialize Intelligence Engine (sistemas 4-10)
+  const intelligenceEngine = require('./core/intelligence-engine');
+  intelligenceEngine.initialize();
+  global.intelligenceEngine = intelligenceEngine;
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {
@@ -135,7 +140,7 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker\n`);
+  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas)\n`);
 });
 
 server.on('error', (err) => {

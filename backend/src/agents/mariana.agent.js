@@ -99,6 +99,33 @@ class MarianaAgent extends BaseAgent {
     // 3. Detectar intent
     const intent = await this.detectIntent(message.content || message.text, sender);
 
+    // ── INTELLIGENCE ENGINE: enriquecer contexto antes de responder ────────────
+    let intelligenceContext = {};
+    if (global.intelligenceEngine) {
+      try {
+        intelligenceContext = await global.intelligenceEngine.beforeAgentResponse(
+          this,
+          message.content || message.text || '',
+          {
+            clientName: sender.clientData?.name || null,
+            clientId: sender.clientData?.id || null,
+            agentId: this.id,
+            isNeiky: sender.isNeiky,
+            channel
+          }
+        );
+        // Loggear si hay red flags detectadas
+        if (intelligenceContext.redFlags && intelligenceContext.redFlags.length > 0) {
+          console.log(`[Mariana] 🚩 Red flags detectadas: ${intelligenceContext.redFlags.map(f => f.flag).join(', ')}`);
+        }
+        if (intelligenceContext.greenFlags && intelligenceContext.greenFlags.length > 0) {
+          console.log(`[Mariana] 🟢 Green flags detectadas: ${intelligenceContext.greenFlags.map(f => f.flag).join(', ')}`);
+        }
+      } catch (err) {
+        console.warn('[Mariana] IntelligenceEngine.before error:', err.message);
+      }
+    }
+
     // 4. Procesar según el tipo de remitente
     let response;
     if (sender.isNeiky) {
@@ -107,6 +134,19 @@ class MarianaAgent extends BaseAgent {
       response = await this.respondToClient(message, sender, fullHistory, intent);
     } else {
       response = await this.respondToUnknown(message, channel);
+    }
+
+    // ── INTELLIGENCE ENGINE: post-respuesta (non-blocking) ────────────────────
+    if (response && global.intelligenceEngine) {
+      setImmediate(async () => {
+        try {
+          await global.intelligenceEngine.afterAgentResponse(this, response, {
+            clientName: sender.clientData?.name || null,
+            isNeiky: sender.isNeiky,
+            channel
+          });
+        } catch (err) { /* non-blocking */ }
+      });
     }
 
     // ── ANTI-PROMESAS-VACÍAS: schedular promesas detectadas en la respuesta ───
