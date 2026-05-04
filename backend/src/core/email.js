@@ -1,47 +1,45 @@
 // backend/src/core/email.js
-// Fractal Virtual Team v4.2 — Email delivery via Gmail SMTP
+// Fractal Virtual Team v4.2 — Email delivery via Resend API (HTTP, Railway-compatible)
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
-const nodemailer = require('nodemailer');
-const dns = require('dns');
+const { Resend } = require('resend');
 
-// Railway no soporta IPv6 outbound — forzar IPv4 en toda resolución DNS
-dns.setDefaultResultOrder('ipv4first');
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // STARTTLS (Railway-compatible, evita IPv6 port 465)
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD  // App Password de Google (16 chars)
-  },
-  tls: { rejectUnauthorized: false }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 /**
  * Envía email en nombre del equipo Fractal MX
- * Siempre manda CC a FRACTAL_EMAIL_CC (proyectosfractalmx@gmail.com) si está configurado
+ * Siempre manda CC a FRACTAL_EMAIL_CC si está configurado
  * @param {string} to - Destinatario principal
  * @param {string} subject - Asunto
  * @param {string} html - Cuerpo HTML
  * @param {string} text - Cuerpo plano (fallback)
  * @param {string} fromName - Nombre del agente que envía (ej: "Diego · Fractal MX")
- * @param {string|null} cc - CC adicional (opcional, se suma al FRACTAL_EMAIL_CC)
+ * @param {string|null} cc - CC adicional (opcional)
  */
 async function sendEmail({ to, subject, html, text, fromName = 'Fractal MX', cc = null }) {
-  const from = `"${fromName}" <${process.env.GMAIL_USER}>`;
+  // Resend free tier permite enviar desde onboarding@resend.dev sin dominio verificado
+  const from = process.env.RESEND_FROM_EMAIL || `"${fromName}" <onboarding@resend.dev>`;
 
   // CC siempre incluye proyectosfractalmx si está configurado
-  const ccAddresses = [
-    process.env.FRACTAL_EMAIL_CC,
-    cc
-  ].filter(Boolean).join(', ') || undefined;
+  const ccList = [process.env.FRACTAL_EMAIL_CC, cc].filter(Boolean);
 
   try {
-    const info = await transporter.sendMail({ from, to, cc: ccAddresses, subject, html, text });
-    console.log(`[Email] Enviado a ${to}${ccAddresses ? ` (CC: ${ccAddresses})` : ''} — MessageId: ${info.messageId}`);
-    return { ok: true, messageId: info.messageId };
+    const { data, error } = await resend.emails.send({
+      from,
+      to: [to],
+      cc: ccList.length > 0 ? ccList : undefined,
+      subject,
+      html,
+      text
+    });
+
+    if (error) {
+      console.error('[Email] Error Resend:', error.message);
+      throw new Error(error.message);
+    }
+
+    console.log(`[Email] Enviado a ${to}${ccList.length ? ` (CC: ${ccList.join(', ')})` : ''} — ID: ${data.id}`);
+    return { ok: true, messageId: data.id };
   } catch (err) {
     console.error('[Email] Error:', err.message);
     throw err;
