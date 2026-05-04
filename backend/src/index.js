@@ -36,6 +36,7 @@ app.use('/api/models', require('./routes/models'));
 app.use('/api/assets', require('./routes/assets'));
 app.use('/api/guardian', require('./routes/guardian'));
 app.use('/api/oracle', require('./routes/oracle'));
+app.use('/api/verification', require('./routes/verification'));
 
 // MEGAZORD status endpoint
 app.get('/api/megazord/status', async (req, res) => {
