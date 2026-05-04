@@ -242,3 +242,4 @@ function getVisionService() {
 }
 
 module.exports = { VisionService, getVisionService };
+// vision-layer marker Mon May  4 12:26:08     2026
