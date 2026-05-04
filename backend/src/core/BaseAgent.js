@@ -656,6 +656,38 @@ ${data.notes || 'Sin notas adicionales'}`;
       return null;
     }
   }
+
+  // ─── ORACLE INTEGRATION (Fase 5.7) ─────────────────────────────────────
+  // Any agent extending this BaseAgent can consult ORACLE.
+  async askOracle(question, options = {}) {
+    if (!global.oracle?.isInitialized) {
+      console.warn(`⚠️ [${this.name}] askOracle called but ORACLE not initialized`);
+      return null;
+    }
+    return global.oracle.consult({
+      question,
+      agent: { id: this.id, name: this.name, role: this.role || '' },
+      context: options.context || {},
+      depth: options.depth || 'auto',
+      requireResearch: options.research || false
+    });
+  }
+
+  async quickAsk(question, context = {}) {
+    return this.askOracle(question, { depth: 'quick', context });
+  }
+
+  async oracleAnalyze(question, context = {}) {
+    return this.askOracle(question, { depth: 'standard', context });
+  }
+
+  async deepThink(question, context = {}) {
+    return this.askOracle(question, { depth: 'premium', context });
+  }
+
+  async oracleResearch(topic, context = {}) {
+    return this.askOracle(topic, { research: true, context });
+  }
 }
 
 module.exports = BaseAgent;
