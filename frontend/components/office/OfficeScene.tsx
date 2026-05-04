@@ -286,7 +286,6 @@ export default function OfficeScene() {
         socket.close();
         tickerStops.forEach(stop => stop());
         app.renderer.off('resize', recenter);
-        app.renderer.off('resize', placeGuardians);
         app.destroy(true, { children: true, texture: true });
       };
     })();
