@@ -37,6 +37,8 @@ app.use('/api/assets', require('./routes/assets'));
 app.use('/api/guardian', require('./routes/guardian'));
 app.use('/api/oracle', require('./routes/oracle'));
 app.use('/api/verification', require('./routes/verification'));
+app.use('/api/features', require('./routes/features'));
+app.use('/webhooks', require('./routes/webhooks'));
 
 // MEGAZORD status endpoint
 app.get('/api/megazord/status', async (req, res) => {
@@ -165,6 +167,27 @@ server.listen(PORT, async () => {
   await oracle.initialize();
   global.oracle = oracle;
 
+  // ─── FASE 6: 22 Features ────────────────────────────────────────────────────
+  try {
+    global.briefGenerator = new (require('./features/brief-generator'))();
+    global.quoteBuilder = new (require('./features/quote-builder'))();
+    global.projectTracker = new (require('./features/project-tracker'))();
+    global.clientHealth = new (require('./features/client-health'))();
+    global.deliveryChecklist = new (require('./features/delivery-checklist'))();
+    global.revisionTracker = new (require('./features/revision-tracker'))();
+    global.qcBot = new (require('./features/qc-bot'))();
+    global.notifications = new (require('./features/smart-notifications'))();
+
+    // Routines (cron) — initialized last
+    const RoutineManager = require('./routines');
+    global.routines = new RoutineManager();
+    global.routines.initialize();
+
+    console.log('✅ FASE 6: 22 features + 6 routines activos');
+  } catch (err) {
+    console.error('[Fase 6] init error:', err.message);
+  }
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {
@@ -175,7 +198,7 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida)\n`);
+  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida) + FASE 6 (22 features + 6 routines)\n`);
 });
 
 server.on('error', (err) => {
