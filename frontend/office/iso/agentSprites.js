@@ -24,8 +24,8 @@ export async function loadAgentSpritesheet(slug, preset) {
       const head = await fetch(url, { method: 'HEAD' });
       if (!head.ok) throw new Error('not_found');
 
-      const sheet = await Assets.load(url);
-      const baseTex = sheet?.source ? sheet : sheet?.texture || sheet;
+      // Sprites are pre-processed (transparent bg) by scripts/strip-sprite-bg.js
+      const baseTex = await Assets.load(url);
       const w = baseTex.width;
       const h = baseTex.height;
       const cellW = Math.floor(w / 2);

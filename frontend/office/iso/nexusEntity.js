@@ -57,8 +57,8 @@ export class NexusEntity {
       };
       this.spriteImg = new Sprite(this.stateTextures[NEXUS_STATE.IDLE]);
       this.spriteImg.anchor.set(0.5, 0.5);
-      // Scale so ~140px tall (bigger than agents — it's a machine)
-      const targetH = 140;
+      // Floats outside rooms (machine/HUD entity), keep at ~96px
+      const targetH = 96;
       this.spriteImg.scale.set(targetH / ch);
       this.container.addChildAt(this.spriteImg, 0);
       // Hide procedural

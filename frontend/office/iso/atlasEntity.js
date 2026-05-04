@@ -57,7 +57,7 @@ export class AtlasEntity {
       });
       this.spriteImg = new Sprite(this.stateTextures[ATLAS_STATE.IDLE]);
       this.spriteImg.anchor.set(0.5, 0.5);
-      const targetH = 140;
+      const targetH = 96;
       this.spriteImg.scale.set(targetH / ch);
       this.container.addChildAt(this.spriteImg, 0);
       if (this.proceduralBox) this.proceduralBox.visible = false;

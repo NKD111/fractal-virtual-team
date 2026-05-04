@@ -39,8 +39,8 @@ export class GlitchEntity {
       ];
       this.spriteImg = new Sprite(this.poseTex[0]);
       this.spriteImg.anchor.set(0.5, 1);
-      // Scale to ~70px tall so he fits with the agents
-      const targetH = 70;
+      // Slightly smaller than agents — wandering NPC
+      const targetH = 50;
       const k = targetH / ch;
       this.spriteImg.scale.set(k);
       this.container.addChild(this.spriteImg);
