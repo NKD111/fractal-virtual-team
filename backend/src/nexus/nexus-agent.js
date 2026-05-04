@@ -113,6 +113,7 @@ class NexusAgent {
    */
   async _sendDailyReport() {
     console.log('[NEXUS] Generating daily report...');
+    try { if (global.io) global.io.emit('nexus_reporting', { source: 'daily_report' }); } catch (_) {}
 
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 

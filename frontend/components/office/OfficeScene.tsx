@@ -4,6 +4,7 @@ import { Application, Container, Sprite, Text, TextStyle } from 'pixi.js';
 import { io, Socket } from 'socket.io-client';
 import { gsap } from 'gsap';
 import ChatPanel from './ChatPanel';
+import GuardianPanel from './GuardianPanel';
 
 import { isoToScreen } from '../../office/iso/isoMath';
 import { ROOMS, agentScreenPos, buildRoomPlatform } from '../../office/iso/rooms';
@@ -11,6 +12,8 @@ import { AGENT_PRESETS } from '../../office/agents/presets';
 import { POSE, loadAgentSpritesheet, proceduralCharacter, animateBreathing, animateJump } from '../../office/iso/agentSprites';
 import { OracleEntity, ORACLE_STATE } from '../../office/iso/oracleEntity';
 import { GlitchEntity } from '../../office/iso/glitchEntity';
+import { NexusEntity, NEXUS_STATE } from '../../office/iso/nexusEntity';
+import { AtlasEntity, ATLAS_STATE } from '../../office/iso/atlasEntity';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
@@ -25,6 +28,7 @@ export default function OfficeScene() {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<{ name: string; color: string; role: string } | null>(null);
+  const [guardianMode, setGuardianMode] = useState<'nexus' | 'atlas' | null>(null);
   const [userId, setUserId] = useState<string>('');
   const [stats, setStats] = useState({ activeProjects: 0, agentsOnline: 0, queriesToday: 0 });
   const [cdmxTime, setCdmxTime] = useState('--:--');
@@ -179,6 +183,31 @@ export default function OfficeScene() {
       world.addChild(glitch.container);
       glitch.tryLoadSpritesheet();
 
+      // NEXUS — top-right floating, in screen space (not world)
+      const nexus = new NexusEntity();
+      app.stage.addChild(nexus.container);
+      nexus.tryLoadSpritesheet();
+      nexus.container.on('pointerover', () => nexus.setHoverLabel(true));
+      nexus.container.on('pointerout', () => nexus.setHoverLabel(false));
+      nexus.container.on('pointertap', () => setGuardianMode('nexus'));
+
+      // ATLAS — bottom-right floating, in screen space
+      const atlas = new AtlasEntity();
+      app.stage.addChild(atlas.container);
+      atlas.tryLoadSpritesheet();
+      atlas.container.on('pointerover', () => atlas.setHoverLabel(true));
+      atlas.container.on('pointerout', () => atlas.setHoverLabel(false));
+      atlas.container.on('pointertap', () => setGuardianMode('atlas'));
+
+      // Position NEXUS and ATLAS in screen space; reposition on resize
+      const placeGuardians = () => {
+        const w = app.screen.width, h = app.screen.height;
+        nexus.setBasePosition(w - 100, 140);
+        atlas.setBasePosition(w - 100, h - 140);
+      };
+      placeGuardians();
+      app.renderer.on('resize', placeGuardians);
+
       const recentlyBusy: Set<string> = new Set();
 
       // WebSocket events drive poses
@@ -210,6 +239,14 @@ export default function OfficeScene() {
         setTimeout(() => agents.forEach(a => a.setPose(POSE.IDLE)), 3000);
       });
 
+      // Guardian events
+      socket.on('nexus_alert', () => nexus.setState(NEXUS_STATE.ALERT));
+      socket.on('nexus_active', () => nexus.setState(NEXUS_STATE.ACTIVE));
+      socket.on('nexus_reporting', () => nexus.setState(NEXUS_STATE.REPORTING));
+      socket.on('atlas_diagnosing', () => atlas.setState(ATLAS_STATE.DIAGNOSING));
+      socket.on('atlas_repairing', () => atlas.setState(ATLAS_STATE.REPAIRING));
+      socket.on('atlas_alert', () => atlas.setState(ATLAS_STATE.ALERT));
+
       // Stats
       const fetchStats = async () => {
         try {
@@ -232,6 +269,8 @@ export default function OfficeScene() {
         const dt = ticker.deltaTime;
         oracle.update(dt);
         glitch.update(dt, Array.from(recentlyBusy));
+        nexus.update(dt);
+        atlas.update(dt);
       });
 
       cleanup = () => {
@@ -239,6 +278,7 @@ export default function OfficeScene() {
         socket.close();
         tickerStops.forEach(stop => stop());
         app.renderer.off('resize', recenter);
+        app.renderer.off('resize', placeGuardians);
         app.destroy(true, { children: true, texture: true });
       };
     })();
@@ -272,6 +312,9 @@ export default function OfficeScene() {
 
       {selectedAgent && userId && (
         <ChatPanel agent={selectedAgent} userId={userId} onClose={() => setSelectedAgent(null)} />
+      )}
+      {guardianMode && (
+        <GuardianPanel mode={guardianMode} onClose={() => setGuardianMode(null)} />
       )}
     </div>
   );

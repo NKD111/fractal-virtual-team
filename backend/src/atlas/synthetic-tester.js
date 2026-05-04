@@ -43,6 +43,7 @@ class SyntheticTester {
 
   async _runAllTests() {
     this.isRunning = true;
+    try { if (global.io) global.io.emit('atlas_diagnosing', { source: 'synthetic_tester' }); } catch (_) {}
     try {
       const { data: services, error } = await supabase
         .from('monitored_services')

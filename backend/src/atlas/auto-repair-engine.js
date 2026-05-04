@@ -21,6 +21,7 @@ class AutoRepairEngine {
     }
 
     this.activeRepairs.set(serviceKey, true);
+    try { if (global.io) global.io.emit('atlas_repairing', { service: serviceKey, issue: issueType }); } catch (_) {}
     const startedAt = new Date().toISOString();
 
     try {

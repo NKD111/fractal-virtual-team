@@ -25,6 +25,14 @@ class AlertRouter {
     const severity = alert.severity || 'info';
     const level = SEVERITY_ORDER[severity] ?? 0;
 
+    // Emit guardian event to live clients
+    try {
+      if (global.io) {
+        const evType = level >= SEVERITY_ORDER.error ? 'nexus_alert' : 'nexus_active';
+        global.io.emit(evType, { severity, type: alert.type, message: String(alert.message || '').substring(0, 120) });
+      }
+    } catch (_) {}
+
     // Critical → always notify immediately
     if (level >= SEVERITY_ORDER.error) {
       await this._sendImmediate(alert);
