@@ -7,6 +7,8 @@ import { VoxelHumanoid } from '../../office/agents/VoxelHumanoid';
 import { AGENT_PRESETS, AGENT_POSITIONS } from '../../office/agents/presets';
 import { InterAgentChat } from '../../office/agents/InterAgentChat';
 import { ProjectLane } from '../../office/projects/ProjectLane';
+import { buildWorkspaces } from '../../office/world/AgentDesks';
+import { buildAgentMesh, preloadAllAgents } from '../../office/agents/HumanoidGLB';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
@@ -82,20 +84,26 @@ export default function OfficeScene() {
     oracleCore.position.set(0, 6, 0);
     scene.add(oracleCore);
 
-    // Build agents
+    // Build workspaces (desks, chairs, monitors, plants…) and agents
     const agents: AgentRecord[] = [];
-    Object.entries(AGENT_POSITIONS).forEach(([slug, pos]) => {
-      const preset = (AGENT_PRESETS as any)[slug];
-      if (!preset) return;
-      const humanoid = new VoxelHumanoid(preset);
-      const mesh = humanoid.build();
-      mesh.position.set(pos.x, 0, pos.z);
-      mesh.userData.agentSlug = slug;
-      mesh.userData.agentName = preset.name;
-      humanoid.setUserData(slug);
-      scene.add(mesh);
-      agents.push({ slug, preset, mesh });
-    });
+    preloadAllAgents();
+    buildWorkspaces(scene).then(async ({ humanoidPositions }) => {
+      for (const [slug, preset] of Object.entries(AGENT_PRESETS) as [string, any][]) {
+        try {
+          const mesh = await buildAgentMesh(slug, preset);
+          const ws = humanoidPositions[slug] || (AGENT_POSITIONS as any)[slug] || { x: 0, y: 0, z: 0, rotY: 0 };
+          mesh.position.x = ws.x;
+          mesh.position.z = ws.z;
+          if (typeof ws.rotY === 'number') mesh.rotation.y = ws.rotY;
+          mesh.userData.agentSlug = slug;
+          mesh.userData.agentName = preset.name;
+          scene.add(mesh);
+          agents.push({ slug, preset, mesh });
+        } catch (err: any) {
+          console.warn('[OfficeScene] failed to build', slug, err.message);
+        }
+      }
+    }).catch((err) => console.warn('[OfficeScene] buildWorkspaces error:', err.message));
 
     // Inter-agent chat + project lanes
     const interChat = new InterAgentChat(scene, camera);
