@@ -10,6 +10,18 @@ const axios = require('axios');
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const VISION_MODEL = 'claude-sonnet-4-6';
 
+// Strip markdown code fences (```json ... ``` or ``` ... ```) before JSON.parse
+function parseJsonLoose(text) {
+  if (!text) return null;
+  let cleaned = String(text).trim();
+  // Strip leading ```json or ```
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '');
+  // Strip trailing ```
+  cleaned = cleaned.replace(/\s*```\s*$/, '');
+  try { return JSON.parse(cleaned); }
+  catch { return null; }
+}
+
 class VisionService {
   constructor() {
     this.browser = new BrowserManager();
@@ -77,7 +89,12 @@ class VisionService {
     let base64 = imageBase64;
     try {
       if (imageUrl && !imageBase64) {
-        const r = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 15000 });
+        const r = await axios.get(imageUrl, {
+          responseType: 'arraybuffer',
+          timeout: 15000,
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FractalMX-Vision/1.0)' },
+          maxRedirects: 5
+        });
         const buf = Buffer.from(r.data);
         base64 = await this.processor.optimize(buf);
       } else if (imageBase64) {
@@ -117,7 +134,7 @@ class VisionService {
       max_tokens: 2000,
       system: `Eres el sistema de análisis visual de Fractal MX. Agente: ${agentInfo.name} (${agentInfo.role}).
 Compara los dos diseños analizados y da feedback específico y accionable.
-Responde SOLO en JSON válido sin markdown. En español mexicano.`,
+Responde SOLO con JSON puro — sin markdown, sin code-fences, sin texto antes o después. En español mexicano.`,
       messages: [{
         role: 'user',
         content: `Comparando A vs B (tipo: ${comparisonType})
@@ -134,11 +151,9 @@ Responde JSON: {
 }`
       }]
     });
-    try {
-      return { ...JSON.parse(response.content[0].text), _a_summary: a.style?.aesthetic, _b_summary: b.style?.aesthetic };
-    } catch {
-      return { raw: response.content[0].text };
-    }
+    const parsed = parseJsonLoose(response.content[0].text);
+    if (parsed) return { ...parsed, _a_summary: a.style?.aesthetic, _b_summary: b.style?.aesthetic };
+    return { raw: response.content[0].text };
   }
 
   // ── core analysis with Claude Vision ────────────────────────────────────────
@@ -182,9 +197,7 @@ Estructura JSON:
       }]
     });
 
-    let analysis;
-    try { analysis = JSON.parse(response.content[0].text); }
-    catch { analysis = { raw: response.content[0].text }; }
+    const analysis = parseJsonLoose(response.content[0].text) || { raw: response.content[0].text };
 
     return {
       ...analysis,

@@ -20,9 +20,9 @@ class VisionCache {
   }
 
   async set(url, analysis) {
-    if (!url || !analysis) return;
+    if (!url || !analysis) return { ok: false, reason: 'missing args' };
     try {
-      await supabase.from('vision_cache').upsert({
+      const { error } = await supabase.from('vision_cache').upsert({
         source_url: url,
         source_type: 'url',
         analysis,
@@ -32,8 +32,14 @@ class VisionCache {
         analysis_model: analysis.analysis_model || 'claude-sonnet-4-6',
         expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
       }, { onConflict: 'source_url' });
+      if (error) {
+        console.warn('[VisionCache] set error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      return { ok: true };
     } catch (err) {
-      console.warn('[VisionCache] set error:', err.message);
+      console.warn('[VisionCache] set exception:', err.message);
+      return { ok: false, error: err.message };
     }
   }
 

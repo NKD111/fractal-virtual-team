@@ -98,9 +98,10 @@ async function test_V6_cache_roundtrip() {
   const url = `https://test.local/cache_${Date.now()}`;
   const sample = { overview: 'test', style: { aesthetic: 'test' }, colors: { palette: ['#abcdef'] }, keywords: ['x'], analyzed_by: 'verifier' };
   try {
-    await cache.set(url, sample);
-    checks.write_ok = true;
-    await sleep(500);
+    const setResult = await cache.set(url, sample);
+    checks.write_ok = setResult?.ok === true;
+    if (!checks.write_ok) checks._set_error = setResult?.error;
+    await sleep(800);
     const got = await cache.get(url);
     checks.read_ok = !!got;
     checks.returns_same_data = got?.overview === 'test';
