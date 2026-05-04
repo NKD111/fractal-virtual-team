@@ -92,12 +92,11 @@ class NexusAtlasCoordinator {
     const { service_key, consecutive_failures = 1 } = event;
 
     // Look up service importance
-    const { data: service } = await supabase
-      .from('monitored_services')
-      .select('importance_level')
-      .eq('service_key', service_key)
-      .single()
-      .catch(() => ({ data: null }));
+    let service = null;
+    try {
+      const { data } = await supabase.from('monitored_services').select('importance_level').eq('service_key', service_key).single();
+      service = data;
+    } catch (_) {}
 
     const decision = await this.nexus.evaluateIssue({
       serviceKey: service_key,

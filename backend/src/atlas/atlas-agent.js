@@ -73,25 +73,21 @@ class AtlasAgent {
   }
 
   async getStatus() {
-    const { count: totalTests } = await supabase
-      .from('synthetic_tests')
-      .select('*', { count: 'exact', head: true })
-      .gte('tested_at', new Date(Date.now() - 60 * 60 * 1000).toISOString())
-      .catch(() => ({ count: 0 }));
-
-    const { count: alerts } = await supabase
-      .from('predictive_alerts')
-      .select('*', { count: 'exact', head: true })
-      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-      .catch(() => ({ count: 0 }));
+    let totalTests = 0, alerts = 0;
+    try {
+      const r1 = await supabase.from('synthetic_tests').select('*', { count: 'exact', head: true }).gte('tested_at', new Date(Date.now() - 60 * 60 * 1000).toISOString());
+      totalTests = r1.count || 0;
+      const r2 = await supabase.from('predictive_alerts').select('*', { count: 'exact', head: true }).gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+      alerts = r2.count || 0;
+    } catch (_) {}
 
     return {
       agent: this.name,
       role: this.role,
       initialized: this._initialized,
       started_at: this.startedAt,
-      synthetic_tests_last_hour: totalTests || 0,
-      predictive_alerts_last_24h: alerts || 0,
+      synthetic_tests_last_hour: totalTests,
+      predictive_alerts_last_24h: alerts,
       active_repairs: this.autoRepairEngine.getActiveRepairs(),
       last_test_results: this.syntheticTester.getLastResults()
     };

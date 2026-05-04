@@ -93,13 +93,16 @@ class SystemGuardian {
     ]);
 
     // Count healthy services
-    const { data: services } = await supabase
-      .from('monitored_services')
-      .select('current_status')
-      .eq('is_active', true)
-      .catch(() => ({ data: [] }));
+    let services = [];
+    try {
+      const { data } = await supabase
+        .from('monitored_services')
+        .select('current_status')
+        .eq('is_active', true);
+      services = data || [];
+    } catch (_) {}
 
-    const statusCounts = (services || []).reduce((acc, s) => {
+    const statusCounts = services.reduce((acc, s) => {
       acc[s.current_status] = (acc[s.current_status] || 0) + 1;
       return acc;
     }, {});
@@ -110,7 +113,7 @@ class SystemGuardian {
       nexus: nexusStatus.status === 'fulfilled' ? nexusStatus.value : { error: nexusStatus.reason?.message },
       atlas: atlasStatus.status === 'fulfilled' ? atlasStatus.value : { error: atlasStatus.reason?.message },
       services: statusCounts,
-      total_services: services?.length || 0
+      total_services: services.length
     };
   }
 }

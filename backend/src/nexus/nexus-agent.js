@@ -193,17 +193,13 @@ class NexusAgent {
   }
 
   async getStatus() {
-    const { count: subsCount } = await supabase
-      .from('service_subscriptions')
-      .select('*', { count: 'exact', head: true })
-      .eq('current_status', 'active')
-      .catch(() => ({ count: 0 }));
-
-    const { count: unresolvedAlerts } = await supabase
-      .from('financial_alerts')
-      .select('*', { count: 'exact', head: true })
-      .eq('resolved', false)
-      .catch(() => ({ count: 0 }));
+    let subsCount = 0, unresolvedAlerts = 0;
+    try {
+      const r1 = await supabase.from('service_subscriptions').select('*', { count: 'exact', head: true }).eq('current_status', 'active');
+      subsCount = r1.count || 0;
+      const r2 = await supabase.from('financial_alerts').select('*', { count: 'exact', head: true }).eq('resolved', false);
+      unresolvedAlerts = r2.count || 0;
+    } catch (_) {}
 
     return {
       agent: this.name,
@@ -211,8 +207,8 @@ class NexusAgent {
       initialized: this._initialized,
       started_at: this.startedAt,
       alerts_today: this.alertRouter.getTodayCount(),
-      active_subscriptions: subsCount || 0,
-      unresolved_financial_alerts: unresolvedAlerts || 0
+      active_subscriptions: subsCount,
+      unresolved_financial_alerts: unresolvedAlerts
     };
   }
 }
