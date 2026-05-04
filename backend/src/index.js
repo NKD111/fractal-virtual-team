@@ -112,7 +112,11 @@ server.listen(PORT, async () => {
   const { startResourcesWorker } = require('./workers/resources.worker');
   startResourcesWorker();
 
-  console.log(`\n✅ Sistema listo — 10 agentes activos\n`);
+  // Start promise worker (ejecuta promesas de Mariana cuando vence el tiempo)
+  const { startPromiseWorker } = require('./workers/promise.worker');
+  startPromiseWorker();
+
+  console.log(`\n✅ Sistema listo — 10 agentes activos + promise tracker activo\n`);
 });
 
 server.on('error', (err) => {

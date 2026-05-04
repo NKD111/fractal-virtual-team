@@ -135,4 +135,4 @@ async function initAllAgents(io) {
   console.log('[Orchestrator] All agents ready.');
 }
 
-module.exports = { processIncoming, processAgentTask, initAllAgents, routeMessage };
+module.exports = { processIncoming, processAgentTask, initAllAgents, routeMessage, getAgent };

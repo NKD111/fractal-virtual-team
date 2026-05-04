@@ -63,6 +63,19 @@ class MarianaAgent extends BaseAgent {
     // 1. Identificar quién escribe
     const sender = await this.identifySender(message.from, channel);
 
+    // ── ANTI-PROMESAS-VACÍAS: flush promesas vencidas ANTES de responder ──────
+    // Si Mariana prometió algo antes y ya venció el tiempo, ejecuta YA
+    // y el resultado llega proactivamente por WhatsApp/Socket antes de esta respuesta
+    if (sender.isNeiky && message.from) {
+      try {
+        const promiseTracker = require('../core/promise-tracker');
+        const flushed = await promiseTracker.flushDuePromises(message.from);
+        if (flushed) console.log(`[Mariana] Promesas vencidas ejecutadas:\n${flushed}`);
+      } catch (err) {
+        // Si el módulo no está listo, no bloqueamos
+      }
+    }
+
     // 2. Cargar TODO el historial cross-channel
     const fullHistory = await this.loadCrossChannelHistory(sender);
 
@@ -77,6 +90,25 @@ class MarianaAgent extends BaseAgent {
       response = await this.respondToClient(message, sender, fullHistory, intent);
     } else {
       response = await this.respondToUnknown(message, channel);
+    }
+
+    // ── ANTI-PROMESAS-VACÍAS: schedular promesas detectadas en la respuesta ───
+    // Si Mariana dijo "te aviso en 5 min" o "voy a preguntar a Diego",
+    // crear job real que ejecuta la acción y manda mensaje proactivo
+    if (sender.isNeiky && response) {
+      setImmediate(async () => {
+        try {
+          const promiseTracker = require('../core/promise-tracker');
+          await promiseTracker.detectAndSchedule(response, {
+            phone: message.from,
+            channel,
+            originalMessage: message.content || message.text,
+            userId: sender.neikyClientId
+          });
+        } catch (err) {
+          console.warn('[Mariana] PromiseTracker error:', err.message);
+        }
+      });
     }
 
     // 5. Guardar en memoria UNIFICADA
