@@ -182,7 +182,7 @@ La cuenta @feriadefranquicias en Instagram (https://www.instagram.com/feriadefra
 - Qué funciona bien y qué se puede mejorar editorialmente
 
 ═══ LO QUE YA SÉ DE FIF ═══
-Trabajo FIF / VANEXPO desde hace tiempo con Fractal MX. El Festival de la Industria del Futuro (FIF) Ciudad de México es un evento de tecnología, innovación e industria. Tiene una identidad visual de vanguardia — tipografías geométricas, paleta oscura con acentos de color eléctrico (cian/magenta/amarillo), lenguaje futurista pero accesible.
+Trabajo FIF / VANEXPO desde hace tiempo con Fractal MX. FIF significa Feria Internacional de Franquicias Ciudad de México — el evento más importante de franquicias en México. Conecta a franquiciantes, franquiciatarios e inversionistas. Audiencia: emprendedores y empresarios. Identidad visual: profesional, dinámica, aspiracional.
 
 TIPOGRAFÍA OFICIAL: Gotham Font Family — usar Gotham Bold para headlines, Gotham Medium para subheads, Gotham Book para cuerpo. Esta es la familia tipográfica de la marca y no se sustituye.
 
@@ -245,7 +245,7 @@ Sé específico. Esto es para ejecutar, no para inspirar.`;
     if (process.env.OPENAI_API_KEY) {
       try {
         console.log('[Diego] Generando imagen con DALL-E 3...');
-        const dallePrompt = `Professional event announcement poster for "FIF Ciudad de México" — Festival de la Industria del Futuro, next edition. Dark near-black background (#0a0a0a). Large bold "FIF" text in white at top. "CIUDAD DE MÉXICO" in electric cyan below, wide letter spacing. Center: geometric circuit/grid glowing lines suggesting future technology and innovation industry, in cyan and electric yellow. "PRÓXIMA EDICIÓN" at bottom in white. Magenta accent horizontal lines. Clean Swiss grid layout. Gotham Bold typeface style. Square 1:1 format for Instagram. Sharp professional typography. Futuristic refined aesthetic. No gradients on text. Premium event identity design.`;
+        const dallePrompt = `Professional franchise expo announcement poster for "FIF Ciudad de México" — Feria Internacional de Franquicias, next edition. Clean bold design inspired by @feriadefranquicias Instagram visual style. Professional color palette. Large bold "FIF" logotype prominent. "FERIA INTERNACIONAL DE FRANQUICIAS" supporting text. "CIUDAD DE MÉXICO" location text. "PRÓXIMA EDICIÓN" call to action. Gotham Bold typeface style. Square 1:1 format for Instagram feed. Corporate professional aesthetic. Dynamic business event energy. Clean grid layout. Premium franchise industry identity design.`;
 
         const imgResponse = await openai.images.generate({
           model: 'dall-e-3',
