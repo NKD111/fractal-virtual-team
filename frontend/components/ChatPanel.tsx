@@ -27,11 +27,13 @@ export default function ChatPanel({ agent, socket }: ChatPanelProps) {
   useEffect(() => {
     if (!socket) return;
     socket.on('message_response', (data: any) => {
-      if (data.response) {
+      // Backend puede enviar string directo o { response: string }
+      const responseText = typeof data === 'string' ? data : data?.response;
+      if (responseText) {
         setMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'assistant',
-          content: data.response,
+          content: responseText,
           timestamp: new Date()
         }]);
       }

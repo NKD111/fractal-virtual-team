@@ -65,8 +65,8 @@ io.on('connection', (socket) => {
         // Cliente moderno: usa ack (garantizado, no duplicar con event)
         ackCallback({ ok: true, ...payload });
       } else {
-        // Cliente legacy sin ack: usar evento
-        io.to(socketId).emit('message_response', payload.response || payload);
+        // Cliente legacy sin ack: usar evento (siempre enviar objeto { response })
+        io.to(socketId).emit('message_response', { response: payload.response || payload });
       }
     };
     const respondError = (msg) => {
