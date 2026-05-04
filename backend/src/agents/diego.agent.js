@@ -119,36 +119,43 @@ Piensa en trabajo que envejezca bien — atemporal sobre trendy.`;
    */
   _buildDallePrompt(brief, attempt = 1, previousIssues = []) {
     const avoidNote = previousIssues.length > 0
-      ? `\n\nINTENTO ${attempt} — CORRECCIONES ESPECÍFICAS: ${previousIssues.join(' | ')}`
+      ? `\n\nATTEMPT ${attempt} SPECIFIC FIXES REQUIRED: ${previousIssues.join(' | ')}`
       : '';
 
-    // Cada intento usa un ángulo compositivo diferente
+    // FIF = Feria Internacional de Franquicias — corporate B2B trade show
+    // Visual identity: executive, geometric, architectural, premium business
+    // NOT botanical/wedding — think: Bloomberg summit, luxury business conference, Forbes 500 event
     const compositions = [
-      // Intento 1: Diagonal orgánica elegante
-      `Composición diagonal: elementos botánicos en esquina superior-derecha fluyendo hacia inferior-izquierda. Gran espacio negativo central-superior para titular futuro.`,
-      // Intento 2: Simetría central con marco
-      `Composición centrada: marco geométrico delgado en oro con elementos orgánicos en las cuatro esquinas. Centro completamente limpio para texto.`,
-      // Intento 3: Minimalismo radical
-      `Composición minimalista extrema: un solo elemento botánico en escala grande, trazo fino, posicionado en el tercio inferior. Dos tercios superiores vacíos.`
+      // Intento 1: Franja diagonal geométrica premium
+      `Single poster design. A bold deep navy diagonal band cuts from upper-left to lower-right, occupying roughly one-third of the composition. The band has a subtle linen texture. One thin gold line runs precisely parallel to the band edge. Upper-right and lower-left areas remain bright white with very subtle warm paper grain. Small scattered geometric gold accent marks — tiny squares and single dots — float in the white zones, sparse and deliberate. Generous empty white space in center for future typography overlay.`,
+
+      // Intento 2: Marco arquitectónico minimalista
+      `Single poster design. Minimal architectural frame: four thin gold lines form an elegant rectangular border inset 6% from each edge, with clean mitered corners. In the upper-right corner of the frame, a small geometric emblem — three concentric thin gold squares rotating slightly, like an abstract growth or expansion symbol. The interior is entirely clean white with faint warm paper texture. Bottom-left corner has a solid deep navy triangle accent, sharp and geometric. Balanced, corporate, executive.`,
+
+      // Intento 3: Banda lateral + acento dorado
+      `Single poster design. Left edge: a narrow vertical deep navy column, exactly 12% of width, clean and solid. From it, three evenly-spaced thin horizontal gold lines extend rightward into the white field, fading before reaching center. Right side: completely clean white with subtle warm linen paper texture. Lower-right corner: a small stacked geometric motif — thin navy rectangle over thinner gold rectangle — like an abstract podium or award. Entire composition breathes with white space.`
     ];
 
     const composition = compositions[Math.min(attempt - 1, 2)];
 
-    return `Premium editorial design concept art. Portrait orientation 4:5 ratio. ${composition}
+    return `Professional corporate event poster — single vertical poster design ONLY, one card, not multiple. Portrait orientation tall format. ${composition}
 
-FONDO: Blanco puro con textura sutil de papel de algodón premium — grano muy fino y elegante, como papel de acuarela de 300gsm. El blanco ocupa mínimo 65% de la composición.
+BACKGROUND: Premium off-white, warm paper texture — subtle linen or cotton grain, very fine. NOT botanical paper. Corporate stationery feel. White occupies at least 70% of composition.
 
-ELEMENTOS GRÁFICOS (solo formas, cero texto):
-- Líneas botánicas ultra-finas en azul marino profundo (#1B3A5C): siluetas de hojas, ramas curvas, flores esquemáticas
-- Acentos geométricos mínimos en oro cálido (#C4973A): líneas rectas muy delgadas, pequeños cuadros o puntos
-- Sin gradientes agresivos — solo tintas planas elegantes
-- Elementos flotantes con mucho aire entre ellos
+COLOR PALETTE (strict):
+- Deep navy blue: solid, rich, executive
+- Warm gold / champagne gold: thin lines, small accents only — elegant not flashy
+- White/off-white: dominant background
+- NO green, no teal, no coral, no pastels
 
-ESTILO DE REFERENCIA: Invitación de gala de alto nivel. Catálogo de Sotheby's. Revista Monocle interior. Massimo Vignelli meets ilustración botánica victoriana.
+VISUAL LANGUAGE: Corporate luxury. Business summit. Executive conference. Think Bloomberg, Davos, Forbes summit branding. Clean geometric shapes, architectural lines, professional grade. Premium business event — franchise industry trade show for entrepreneurs and investors.
 
-FORMATO: Vertical, composición tipo póster editorial de evento premium.
-
-PROHIBIDO ABSOLUTAMENTE: ninguna letra, ningún número, ninguna palabra, ningún símbolo tipográfico, ningún logo, ningún texto de ningún tipo en ninguna parte de la imagen.${avoidNote}`;
+ABSOLUTE PROHIBITIONS:
+- NO flowers, NO leaves, NO botanical elements, NO plants, NO organic curves
+- NO text, NO letters, NO numbers, NO symbols, NO logos, NO watermarks
+- NO multiple panels or cards — ONE single poster only
+- NO gradients that look cheap or digital — only subtle textures
+- NO clipart, NO wedding aesthetic, NO decorative flourishes${avoidNote}`;
   }
 
   /**
@@ -309,20 +316,24 @@ ${socialContext}
 FIF = Feria Internacional de Franquicias Ciudad de México. El evento más importante de franquicias en México. Conecta franquiciantes, franquiciatarios e inversionistas. Audiencia: emprendedores y empresarios establecidos. Posicionamiento: profesional, aspiracional, dinámico.
 
 IDENTIDAD VISUAL ACTUAL @feriadefranquicias:
-- Paleta dominante: azul marino + blanco + acentos dorados/plateados
+- Paleta dominante: azul marino profundo + blanco + acentos dorados
 - Tipografía: Gotham Font Family (Bold headlines, Medium subheads, Book body)
-- Estilo: corporativo-premium, geométrico, alto contraste
+- Estilo: CORPORATIVO-EJECUTIVO, geométrico, limpio, alto contraste — tipo summit empresarial, Bloomberg, Forbes
 - Formatos habituales: 1080x1350px (portrait feed Instagram/LinkedIn)
-- Fondos: blancos o muy claros, con textura sutil premium
-- Elementos: orgánicos (líneas botánicas, formas naturales) + geometría limpia
+- Fondos: blancos o muy claros, textura premium sutil, sin flores ni botánica
+- Elementos: GEOMÉTRICOS y arquitectónicos — líneas rectas, marcos finos, ángulos diagonales, formas abstractas de crecimiento/expansión
+- NO es evento de bodas ni gala cultural — es FERIA DE NEGOCIOS B2B para franquiciantes e inversionistas
+- Referentes correctos: WEF Davos, Bloomberg BusinessWeek, Expo Santa Fe CDMX, Forbes Summit MX
 
 ═══ ESTÁNDARES DE ARTE FIF (NO NEGOCIABLES) ═══
 1. Formato: 1080x1350px (relación 4:5, portrait)
-2. Fondo: blanco o marfil con textura de papel premium
-3. Elementos decorativos: orgánicos y elegantes (botánica esquemática, líneas naturales)
-4. Tipografía: Gotham Bold para titular, Gotham Medium para info secundaria
+2. Fondo: blanco o marfil con textura de papel/lino premium — limpio, ejecutivo
+3. Elementos decorativos: GEOMÉTRICOS y arquitectónicos — líneas rectas, diagonales, marcos finos, formas angulares
+   ❌ PROHIBIDO: flores, hojas, plantas, elementos botánicos, orgánicos o curvos
+4. Tipografía: Gotham Bold para titular, Gotham Medium para info secundaria (solo en post-producción)
 5. CERO texto en la imagen generada por IA — el copy se integra en post-producción
 6. Paleta: azul marino (#1B3A5C) + oro cálido (#C4973A) + blanco (#FFFFFF)
+7. Vibe correcto: summit empresarial premium, feria de negocios ejecutiva, Bloomberg/Forbes/Davos — NO boda, NO galería de arte, NO evento cultural
 
 ═══ TU MISIÓN ═══
 Genera una propuesta editorial EJECUTABLE para el anuncio de próxima edición FIF CDMX.
