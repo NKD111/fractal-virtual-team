@@ -132,6 +132,9 @@ export default function OfficeScene() {
           setPose = (p: number) => { spriteImg.texture = sheet.textures[p]; };
         } else {
           const proc = proceduralCharacter(preset);
+          // Procedural characters are small (~50px). Scale up so they're visible
+          // against the big floating platforms. Real PNGs use their own scale.
+          proc.container.scale.set(1.6);
           root.addChild(proc.container);
           setPose = proc.setPose;
         }
