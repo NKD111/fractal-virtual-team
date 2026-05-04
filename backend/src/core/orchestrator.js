@@ -62,7 +62,7 @@ function normalizePhone(str) {
 }
 
 // Main message processor
-async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = null }) {
+async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = null, agentSlug = null }) {
   console.log(`[Orchestrator] New message from ${from} via ${channel}: ${text?.substring(0, 80)}`);
 
   try {
@@ -80,7 +80,11 @@ async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = nu
     console.log(`[Orchestrator] isNeiky=${isNeiky} | from=${from} | fromNorm=${fromNorm} | neikyRef.slice(-10)=${neikyRef.slice(-10)}`);
 
     // Route to appropriate agent — Neiky SIEMPRE va a Mariana primero
-    const targetSlug = isNeiky ? 'mariana' : routeMessage(text);
+    // Si viene agentSlug explícito desde web Y es Neiky, respetar selección (excepto routing de keywords)
+    const ALL_SLUGS_SET = new Set(ALL_SLUGS);
+    const targetSlug = isNeiky
+      ? 'mariana' // Neiky siempre a Mariana como hub primario
+      : (agentSlug && ALL_SLUGS_SET.has(agentSlug) ? agentSlug : routeMessage(text));
     const agent = getAgent(targetSlug);
 
     // Set Socket.io if available

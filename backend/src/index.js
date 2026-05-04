@@ -35,6 +35,17 @@ app.use('/api/financial', require('./routes/financial'));
 app.use('/api/models', require('./routes/models'));
 app.use('/api/assets', require('./routes/assets'));
 
+// MEGAZORD status endpoint
+app.get('/api/megazord/status', async (req, res) => {
+  try {
+    if (!global.megazord) return res.json({ initialized: false });
+    const status = await global.megazord.getOrganismStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/', (req, res) => {
   res.json({
     name: 'Fractal Virtual Team v4.2',
@@ -79,11 +90,14 @@ io.on('connection', (socket) => {
 
     try {
       const { processIncoming } = require('./core/orchestrator');
-      console.log(`[Socket] Processing message from ${data.from}: "${(data.text||'').substring(0,60)}"`);
+      // web_neiky = Neiky en dashboard → siempre identificado correctamente
+      const fromId = data.from || 'web_neiky';
+      console.log(`[Socket] Processing message from ${fromId}: "${(data.text||'').substring(0,60)}"`);
       const result = await processIncoming({
-        from: data.from || 'web_user',
+        from: fromId,
         text: data.text,
-        channel: 'web'
+        channel: 'web',
+        agentSlug: data.agentSlug // respeta agente seleccionado en dashboard
       });
       console.log(`[Socket] Response ready for ${socketId}: "${String(result).substring(0,60)}"`);
       respond({ response: result });
@@ -130,6 +144,12 @@ server.listen(PORT, async () => {
   intelligenceEngine.initialize();
   global.intelligenceEngine = intelligenceEngine;
 
+  // ─── MEGAZORD: Sistema Nervioso Colectivo (Fase 5) ──────────────────────────
+  const { getMegazord } = require('./core/megazord-orchestrator');
+  const megazord = getMegazord();
+  await megazord.initialize();
+  global.megazord = megazord;
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {
@@ -140,7 +160,7 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas)\n`);
+  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas)\n`);
 });
 
 server.on('error', (err) => {

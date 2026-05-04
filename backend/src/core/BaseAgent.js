@@ -56,6 +56,56 @@ class BaseAgent {
 
     // Socket.io para office visualization
     this.io = null;
+
+    // MEGAZORD: lazy reference (inicializado después del boot)
+    this._megazord = null;
+  }
+
+  get megazord() {
+    if (!this._megazord) this._megazord = global.megazord || null;
+    return this._megazord;
+  }
+
+  /**
+   * Consultar memoria colectiva del equipo
+   */
+  async askCollectiveMemory(question, context = {}) {
+    if (!this.megazord) return null;
+    return this.megazord.queryMemory(question, this, context);
+  }
+
+  /**
+   * Contribuir nueva memoria al conocimiento colectivo
+   */
+  async contributeToCollectiveMemory({ category, topic, content, context = {}, clientSpecific = null, tags = [] }) {
+    if (!this.megazord) return null;
+    return this.megazord.contributeMemory({
+      agent: { id: this.id, name: this.name },
+      category, topic, content, context, clientSpecific, tags
+    });
+  }
+
+  /**
+   * Emitir evento al bus del equipo
+   */
+  async emitTeamEvent(channel, event) {
+    if (!this.megazord) return null;
+    return this.megazord.emitEvent(channel, { ...event, emitted_by: this.id || this.name });
+  }
+
+  /**
+   * Solicitar input del equipo via huddle
+   */
+  async needsTeamInput(topic, decisionNeeded, options = []) {
+    if (!this.megazord) return null;
+    return this.megazord.huddles.convokeHuddle({
+      topic,
+      decisionNeeded,
+      triggerReason: `${this.name}_request`,
+      participants: ['mariana', 'sofia', 'diana'].filter(s => s !== (this.name || '').toLowerCase()),
+      context: { initiated_by: this.name },
+      options
+    });
   }
 
   /**
