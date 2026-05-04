@@ -39,6 +39,7 @@ app.use('/api/oracle', require('./routes/oracle'));
 app.use('/api/verification', require('./routes/verification'));
 app.use('/api/features', require('./routes/features'));
 app.use('/api/vision', require('./routes/vision'));
+app.use('/api', require('./routes/unified'));
 app.use('/webhooks', require('./routes/webhooks'));
 
 // MEGAZORD status endpoint

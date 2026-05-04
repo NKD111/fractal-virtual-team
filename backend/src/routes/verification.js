@@ -8,6 +8,7 @@ const { runPromisesVerification } = require('../tests/promises-verification');
 const { runFase6Stress } = require('../tests/fase6-stress');
 const { runVisionStress } = require('../tests/vision-stress');
 const { runVisionAgentsStress } = require('../tests/vision-agents');
+const { runUnifiedContextStress } = require('../tests/unified-context-stress');
 
 // POST /api/verification/run — runs the full suite (5–60 seconds)
 router.post('/run', async (req, res) => {
@@ -53,6 +54,16 @@ router.post('/vision', async (req, res) => {
 router.post('/vision-agents', async (req, res) => {
   try {
     const report = await runVisionAgentsStress();
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
+// POST /api/verification/unified — Fase 7 Unified Context stress
+router.post('/unified', async (req, res) => {
+  try {
+    const report = await runUnifiedContextStress();
     res.json(report);
   } catch (err) {
     res.status(500).json({ error: err.message, stack: err.stack });
