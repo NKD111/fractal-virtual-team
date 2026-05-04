@@ -55,7 +55,7 @@ async function test_V4_analyze_image_url() {
     // 1x1 transparent PNG would be too small. Use a real public image.
     // Use a small known image. We rely on Anthropic Vision returning structured JSON.
     const result = await global.visionService.analyzeImage({
-      imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Logo_2013_Google.png/320px-Logo_2013_Google.png',
+      imageUrl: 'https://www.gstatic.com/webp/gallery/1.jpg',
       agent: { id: null, name: 'tester', role: 'verification' },
       focus: 'general'
     });
