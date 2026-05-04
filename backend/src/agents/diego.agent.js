@@ -937,6 +937,33 @@ Responde constructivamente. Son iguales, buscan lo mejor para el cliente.`;
 
     return this.think(complementPrompt, { clientId: clientBrief.client_id });
   }
+
+  // ─── VISION (Fase 6.5) ─────────────────────────────────────────────────
+  // Diego reviews brand consistency: website vs (optional) brand guide.
+  async reviewBrandConsistency({ websiteUrl, brandGuideUrl = null }) {
+    if (!websiteUrl) throw new Error('reviewBrandConsistency: websiteUrl required');
+    console.log(`📐 DIEGO: revisando consistencia de marca para ${websiteUrl}...`);
+
+    const [website, brandGuide] = await Promise.all([
+      this.see(websiteUrl, 'branding'),
+      brandGuideUrl ? this.see(brandGuideUrl, 'branding') : Promise.resolve(null)
+    ]);
+
+    if (!website || website.error) {
+      return { error: true, message: website?.message || 'website_analysis_failed' };
+    }
+
+    if (brandGuide && !brandGuide.error) {
+      const comparison = await this.compareDesigns(websiteUrl, brandGuideUrl, 'branding');
+      return {
+        website_analysis: website,
+        brand_guide_analysis: brandGuide,
+        consistency_report: comparison
+      };
+    }
+
+    return { website_analysis: website, brand_guide_analysis: null, consistency_report: null };
+  }
 }
 
 module.exports = DiegoAgent;

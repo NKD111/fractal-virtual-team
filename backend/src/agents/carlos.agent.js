@@ -151,6 +151,42 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
 
     return this.think(debatePrompt);
   }
+
+  // ─── VISION (Fase 6.5) ─────────────────────────────────────────────────
+  // Carlos analyzes a client reference URL and produces an actionable design brief.
+  async analyzeClientReference({ url, projectId = null }) {
+    if (!url) throw new Error('analyzeClientReference: url required');
+    console.log(`🎨 CARLOS: analizando referencia visual ${url}...`);
+
+    const visual = await this.see(url, 'design');
+    if (!visual || visual.error) return { error: true, message: visual?.message || 'no_analysis' };
+
+    const briefQuestion = `Analicé visualmente la referencia del cliente.
+
+Hallazgos:
+- Estilo: ${visual.style?.aesthetic || 'sin definir'}
+- Mood: ${visual.style?.mood || 'sin definir'}
+- Colores: ${(visual.colors?.palette || []).join(', ')}
+- Tipografía primaria: ${visual.typography?.primary_font || 'sin identificar'}
+- Composición: ${visual.composition?.layout || 'sin descripción'}
+- Keywords: ${(visual.keywords || []).join(', ')}
+
+¿Qué decisiones de diseño debería tomar para este proyecto basándome en estas referencias?
+Sé específico con recomendaciones accionables (paleta exacta, tipos, layout). Máximo 6 bullets.`;
+
+    const brief = await this.askOracle(briefQuestion, {
+      depth: 'standard',
+      context: { project_id: projectId, vision_url: url }
+    });
+
+    return {
+      visual_analysis: visual,
+      design_brief: brief?.answer || null,
+      color_palette: visual.colors,
+      typography_recommendations: visual.typography,
+      keywords: visual.keywords
+    };
+  }
 }
 
 module.exports = CarlosAgent;

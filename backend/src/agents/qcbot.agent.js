@@ -188,6 +188,54 @@ Output: lista de issues o "✅ Sin issues encontrados"`;
         });
     }
   }
+
+  // ─── VISION (Fase 6.5) ─────────────────────────────────────────────────
+  // QC-Bot performs visual QC review by comparing a deliverable to a reference.
+  async visualQCReview({ deliverableImageUrl, referenceUrl = null, projectId = null, briefId = null }) {
+    if (!deliverableImageUrl) throw new Error('visualQCReview: deliverableImageUrl required');
+    console.log(`🔍 QC-BOT: revisión visual de entregable...`);
+
+    const deliverableAnalysis = await this.analyzeImage(deliverableImageUrl, 'qc');
+    if (!deliverableAnalysis || deliverableAnalysis.error) {
+      return { passed: false, error: true, message: deliverableAnalysis?.message || 'analyze_failed' };
+    }
+
+    let comparison = null;
+    if (referenceUrl) {
+      comparison = await this.compareDesigns(deliverableImageUrl, referenceUrl, 'qc');
+    }
+
+    const visualScore = comparison?.similarity_score ?? null;
+    const technicalIssues = deliverableAnalysis?.technical?.issues || [];
+    const passed = (visualScore === null || visualScore >= 70) && technicalIssues.length === 0;
+
+    const result = {
+      passed,
+      visual_score: visualScore,
+      style_match: comparison?.style_match || null,
+      issues_found: [
+        ...technicalIssues,
+        ...((comparison?.differences) || [])
+      ],
+      recommendations: comparison?.recommendations || deliverableAnalysis?.creative_direction?.weaknesses || [],
+      verdict: comparison?.verdict || deliverableAnalysis?.creative_direction?.recommendation || null
+    };
+
+    // Log via shared supabase
+    try {
+      const { supabase } = require('../core/supabase');
+      await supabase.from('system_events').insert({
+        event_type: passed ? 'qc_visual_passed' : 'qc_visual_failed',
+        severity: passed ? 'info' : 'warning',
+        service_key: 'qc-bot',
+        description: `QC Visual ${passed ? 'APROBADO' : 'RECHAZADO'} — score=${visualScore ?? 'n/a'}`,
+        details: { project_id: projectId, brief_id: briefId, deliverable_url: deliverableImageUrl, result },
+        metadata: { project_id: projectId, brief_id: briefId }
+      });
+    } catch (_) {}
+
+    return result;
+  }
 }
 
 module.exports = QCBotAgent;

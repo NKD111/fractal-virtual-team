@@ -133,6 +133,50 @@ Tu feedback + el de QC-Bot = revisión completa antes de cliente.`;
 
     return this.think(feedbackPrompt);
   }
+
+  // ─── VISION (Fase 6.5) ─────────────────────────────────────────────────
+  // Valentina synthesizes art direction from a list of reference URLs + brief.
+  async directionFromReferences({ referenceUrls = [], projectBrief = '' }) {
+    if (!Array.isArray(referenceUrls) || referenceUrls.length === 0) {
+      throw new Error('directionFromReferences: referenceUrls (array) required');
+    }
+    console.log(`🎬 VALENTINA: creando dirección de arte desde ${referenceUrls.length} referencias...`);
+
+    const analyses = await Promise.all(
+      referenceUrls.slice(0, 6).map(url => this.see(url, 'style').catch(() => null))
+    );
+    const valid = analyses.filter(a => a && !a.error);
+    if (valid.length === 0) return { error: true, message: 'no_valid_references' };
+
+    const refsSummary = valid.map((a, i) => `Referencia ${i + 1}:
+- Estilo: ${a.style?.aesthetic || '—'}
+- Mood: ${a.style?.mood || '—'}
+- Colores: ${(a.colors?.palette || []).slice(0, 5).join(', ')}
+- Keywords: ${(a.keywords || []).slice(0, 6).join(', ')}`).join('\n\n');
+
+    const direction = await this.deepThink(
+      `Analicé ${valid.length} referencias visuales para este proyecto.
+
+Brief del proyecto: ${projectBrief || '(sin brief — sintetiza dirección genérica desde las referencias)'}
+
+${refsSummary}
+
+Crea una dirección de arte coherente que:
+1. Tome lo mejor de cada referencia
+2. Se adapte al brief del proyecto
+3. Sea ejecutable por el equipo (paleta exacta, tipografías recomendadas, mood, do's/don'ts)
+4. Incluya: mood board verbal, paleta hex, tipografías, tono visual
+
+Máximo 400 palabras.`,
+      { context: { references_count: valid.length } }
+    );
+
+    return {
+      references_analyzed: valid,
+      analyses_failed: analyses.length - valid.length,
+      art_direction: direction?.answer || null
+    };
+  }
 }
 
 module.exports = ValentinaAgent;

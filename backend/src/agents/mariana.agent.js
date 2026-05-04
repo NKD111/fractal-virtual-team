@@ -707,6 +707,43 @@ Saludo profesional, identifica al remitente, máximo 3 líneas:`;
   async processMessage({ from, text, channel = 'whatsapp', mediaUrl = null, clientName = null }) {
     return this.handleMessage({ from, content: text, text, mediaUrl }, channel);
   }
+
+  // ─── VISION (Fase 6.5) ─────────────────────────────────────────────────
+  // Mariana extracts a brief from a client-provided reference URL.
+  // Auto-detects style/colors/mood and generates 2-3 smart follow-up questions.
+  async extractBriefFromReference({ contactPhone = null, referenceUrl, conversationId = null }) {
+    if (!referenceUrl) throw new Error('extractBriefFromReference: referenceUrl required');
+    console.log(`📱 MARIANA: extrayendo brief de referencia visual ${referenceUrl}...`);
+
+    const visual = await this.see(referenceUrl, 'general');
+    if (!visual || visual.error) return { error: true, message: visual?.message || 'no_analysis' };
+
+    const smartQuestions = await this.quickAsk(
+      `El cliente mandó esta referencia: ${referenceUrl}
+
+Lo que vi en ella:
+- Estilo: ${visual.style?.aesthetic || 'sin definir'}
+- Mood: ${visual.style?.mood || 'sin definir'}
+- Colores dominantes: ${(visual.colors?.palette || []).slice(0, 5).join(', ')}
+- Keywords: ${(visual.keywords || []).slice(0, 6).join(', ')}
+
+¿Qué 2-3 preguntas inteligentes le haría al cliente para completar el brief, sabiendo ya lo que vi?
+EVITA preguntar lo obvio que ya está en la imagen.
+Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en formato lista (- ...).`,
+      { contact_phone: contactPhone, conversation_id: conversationId }
+    );
+
+    return {
+      visual_reference: visual,
+      smart_questions: smartQuestions?.answer || null,
+      auto_detected: {
+        style: visual.style?.aesthetic || null,
+        mood: visual.style?.mood || null,
+        colors: visual.colors?.palette || [],
+        keywords: visual.keywords || []
+      }
+    };
+  }
 }
 
 module.exports = MarianaAgent;
