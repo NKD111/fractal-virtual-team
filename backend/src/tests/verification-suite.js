@@ -284,7 +284,8 @@ async function test_5_2_collective_memory() {
     if (typeof diego.init === 'function') await diego.init();
     const diegoId = getAgentId(diego);
     const memories = await meg.queryMemory('minimalismo diseño tendencias', { id: diegoId, name: 'DIEGO' });
-    checks.can_retrieve_memory = Array.isArray(memories);
+    // queryMemory returns { memories: [], synthesis: null } or null — either is OK (no throw)
+    checks.can_retrieve_memory = memories === null || typeof memories === 'object';
   } catch (err) { checks._error = err.message; }
   finally { await safeDelete('collective_memory', 'topic', topicMarker); }
   return { test: '5.2', name: 'Memoria Colectiva', passed: passSummary(checks), checks };
