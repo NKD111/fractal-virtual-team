@@ -148,6 +148,38 @@ class BaseAgent {
     this.io = io;
     return this;
   }
+
+  // ─── ORACLE INTEGRATION ──────────────────────────────────────────────
+  // Any agent can consult ORACLE — auto-routes to Haiku/Sonnet/Opus
+  async askOracle(question, options = {}) {
+    if (!global.oracle?.isInitialized) {
+      console.warn(`⚠️ [${this.slug}] askOracle called but ORACLE not initialized`);
+      return null;
+    }
+    return global.oracle.consult({
+      question,
+      agent: this,
+      context: options.context || {},
+      depth: options.depth || 'auto',
+      requireResearch: options.research || false
+    });
+  }
+
+  async quickAsk(question, context = {}) {
+    return this.askOracle(question, { depth: 'quick', context });
+  }
+
+  async oracleAnalyze(question, context = {}) {
+    return this.askOracle(question, { depth: 'standard', context });
+  }
+
+  async deepThink(question, context = {}) {
+    return this.askOracle(question, { depth: 'premium', context });
+  }
+
+  async oracleResearch(topic, context = {}) {
+    return this.askOracle(topic, { research: true, context });
+  }
 }
 
 module.exports = BaseAgent;

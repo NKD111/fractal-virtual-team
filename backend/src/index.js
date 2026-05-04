@@ -35,6 +35,7 @@ app.use('/api/financial', require('./routes/financial'));
 app.use('/api/models', require('./routes/models'));
 app.use('/api/assets', require('./routes/assets'));
 app.use('/api/guardian', require('./routes/guardian'));
+app.use('/api/oracle', require('./routes/oracle'));
 
 // MEGAZORD status endpoint
 app.get('/api/megazord/status', async (req, res) => {
@@ -157,6 +158,12 @@ server.listen(PORT, async () => {
   await guardian.initialize();
   global.guardian = guardian;
 
+  // ─── ORACLE: Sistema de Inteligencia Compartida (Fase 5.7) ──────────────────
+  const { getOracle } = require('./oracle/oracle');
+  const oracle = getOracle();
+  await oracle.initialize();
+  global.oracle = oracle;
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {
@@ -167,7 +174,7 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS + ATLAS (Guardian 24/7)\n`);
+  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida)\n`);
 });
 
 server.on('error', (err) => {
