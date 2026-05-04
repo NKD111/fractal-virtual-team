@@ -38,6 +38,7 @@ app.use('/api/guardian', require('./routes/guardian'));
 app.use('/api/oracle', require('./routes/oracle'));
 app.use('/api/verification', require('./routes/verification'));
 app.use('/api/features', require('./routes/features'));
+app.use('/api/vision', require('./routes/vision'));
 app.use('/webhooks', require('./routes/webhooks'));
 
 // MEGAZORD status endpoint
@@ -167,6 +168,16 @@ server.listen(PORT, async () => {
   await oracle.initialize();
   global.oracle = oracle;
 
+  // ─── VISION LAYER (Fase 6.5) ────────────────────────────────────────────────
+  try {
+    const { getVisionService } = require('./vision/vision-service');
+    const vision = getVisionService();
+    await vision.initialize();
+    global.visionService = vision;
+  } catch (err) {
+    console.warn('[Vision] init error (non-fatal):', err.message);
+  }
+
   // ─── FASE 6: 22 Features ────────────────────────────────────────────────────
   try {
     global.briefGenerator = new (require('./features/brief-generator'))();
@@ -198,7 +209,12 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida) + FASE 6 (22 features + 6 routines)\n`);
+  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida) + FASE 6 (22 features + 6 routines) + VISION LAYER (Fase 6.5)\n`);
+
+  // Cleanup on shutdown
+  process.on('SIGTERM', async () => {
+    try { await global.visionService?.shutdown(); } catch (_) {}
+  });
 });
 
 server.on('error', (err) => {

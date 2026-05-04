@@ -688,6 +688,49 @@ ${data.notes || 'Sin notas adicionales'}`;
   async oracleResearch(topic, context = {}) {
     return this.askOracle(topic, { research: true, context });
   }
+
+  // ─── VISION INTEGRATION (Fase 6.5) ────────────────────────────────────
+  // Any agent extending this BaseAgent can SEE URLs and images.
+  async see(url, focus = 'general') {
+    if (!global.visionService?.isInitialized) {
+      console.warn(`⚠️ [${this.name}] see() — Vision Layer not initialized`);
+      return null;
+    }
+    return global.visionService.analyzeURL({
+      url,
+      agent: { id: this.id, name: this.name, role: this.role || '' },
+      focus
+    });
+  }
+
+  async analyzeImage(imageUrlOrBase64, focus = 'design') {
+    if (!global.visionService?.isInitialized) return null;
+    const isUrl = typeof imageUrlOrBase64 === 'string' && imageUrlOrBase64.startsWith('http');
+    return global.visionService.analyzeImage({
+      imageUrl: isUrl ? imageUrlOrBase64 : null,
+      imageBase64: !isUrl ? imageUrlOrBase64 : null,
+      agent: { id: this.id, name: this.name, role: this.role || '' },
+      focus
+    });
+  }
+
+  async compareDesigns(sourceA, sourceB, type = 'style') {
+    if (!global.visionService?.isInitialized) return null;
+    return global.visionService.compareDesigns({
+      sourceA, sourceB,
+      agent: { id: this.id, name: this.name, role: this.role || '' },
+      comparisonType: type
+    });
+  }
+
+  async seeAndThink(url, question) {
+    const visual = await this.see(url, 'general');
+    if (!visual || visual.error) return null;
+    return this.askOracle(
+      `Analicé visualmente: ${url}\n\nLo que vi: ${JSON.stringify(visual).substring(0, 2000)}\n\nPregunta: ${question}`,
+      { depth: 'standard', context: { visual_analysis: visual } }
+    );
+  }
 }
 
 module.exports = BaseAgent;
