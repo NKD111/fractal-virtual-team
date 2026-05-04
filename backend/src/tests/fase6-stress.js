@@ -39,16 +39,14 @@ async function createTestProject(clientId, opts = {}) {
 }
 
 async function createTestConversation(clientId) {
-  // Find Mariana's UUID
   const { data: agent } = await supabase.from('agents').select('id').ilike('name', 'mariana').limit(1).maybeSingle();
-  const { data: conv } = await supabase.from('conversations').insert({
+  const { data: conv, error } = await supabase.from('conversations').insert({
     client_id: clientId,
     agent_id: agent?.id || null,
-    channel: 'whatsapp',
-    contact_phone: `+5255TEST${Math.floor(Math.random() * 1e6)}`
+    channel: 'whatsapp'
   }).select().single();
+  if (error) throw new Error(`createTestConversation failed: ${error.message}`);
   if (conv) {
-    // Insert a few messages
     await supabase.from('messages').insert([
       { conversation_id: conv.id, role: 'user', content: 'Hola, necesito un video reel para promocionar mi negocio de joyería en Instagram.' },
       { conversation_id: conv.id, role: 'assistant', content: '¡Qué padre! Cuéntame más, ¿qué estilo buscas? ¿Tienes referencias?' },
