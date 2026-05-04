@@ -4,11 +4,22 @@
 const express = require('express');
 const router = express.Router();
 const { runFullVerification } = require('../tests/verification-suite');
+const { runPromisesVerification } = require('../tests/promises-verification');
 
 // POST /api/verification/run — runs the full suite (5–60 seconds)
 router.post('/run', async (req, res) => {
   try {
     const report = await runFullVerification();
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
+// POST /api/verification/promises — focused test of Mariana's anti-empty-promises system
+router.post('/promises', async (req, res) => {
+  try {
+    const report = await runPromisesVerification();
     res.json(report);
   } catch (err) {
     res.status(500).json({ error: err.message, stack: err.stack });
