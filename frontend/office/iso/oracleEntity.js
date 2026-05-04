@@ -48,6 +48,9 @@ export class OracleEntity {
       };
       this.coreSprite = new Sprite(this.stateTextures[ORACLE_STATE.IDLE]);
       this.coreSprite.anchor.set(0.5, 0.5);
+      // Source sprite is ~600px tall; cap visible size to ~110px
+      const targetH = 110;
+      this.coreSprite.scale.set(targetH / ch);
       this.container.addChild(this.coreSprite);
       // Hide procedural core
       if (this.proceduralCore) this.proceduralCore.visible = false;
