@@ -3,13 +3,20 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Railway no soporta IPv6 outbound — forzar IPv4 en toda resolución DNS
+dns.setDefaultResultOrder('ipv4first');
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // STARTTLS (Railway-compatible, evita IPv6 port 465)
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD  // App Password de Google (16 chars)
-  }
+  },
+  tls: { rejectUnauthorized: false }
 });
 
 /**
