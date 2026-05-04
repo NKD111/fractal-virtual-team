@@ -33,3 +33,4 @@ backend/certs/*.cer
 # Personal
 todo.md
 notes/
+.claude/settings.local.json

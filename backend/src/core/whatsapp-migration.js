@@ -59,8 +59,8 @@ class WhatsAppMigration {
     const { data: mariana } = await this.supabase
       .from('agents')
       .select('id')
-      .eq('name', 'MARIANA')
-      .single();
+      .ilike('name', 'mariana')
+      .maybeSingle();
 
     if (!mariana) throw new Error('MARIANA no encontrada en base de datos');
     console.log(`✅ Mariana encontrada: ${mariana.id}`);
