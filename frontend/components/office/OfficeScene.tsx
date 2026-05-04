@@ -157,6 +157,7 @@ export default function OfficeScene() {
         root.x = pos.x;
         root.y = pos.y;
         root.zIndex = pos.x + pos.y * 1000;
+        console.log(`[agent] ${slug} mode=${sheet.hasReal ? 'REAL' : 'PROC'} pos=(${Math.round(pos.x)},${Math.round(pos.y)})`);
 
         // Hover label
         const labelStyle = new TextStyle({

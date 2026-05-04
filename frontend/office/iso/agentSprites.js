@@ -22,10 +22,14 @@ export async function loadAgentSpritesheet(slug, preset) {
       const url = `${SPRITE_PATH}${slug}.png`;
       // Probe with HEAD to avoid noisy console errors when sprite missing
       const head = await fetch(url, { method: 'HEAD' });
-      if (!head.ok) throw new Error('not_found');
+      if (!head.ok) {
+        console.warn(`[sprites] ${slug} HEAD failed:`, head.status);
+        throw new Error('not_found');
+      }
 
       // Sprites are pre-processed (transparent bg) by scripts/strip-sprite-bg.js
       const baseTex = await Assets.load(url);
+      console.log(`[sprites] ${slug} loaded ${baseTex.width}x${baseTex.height}`);
       const w = baseTex.width;
       const h = baseTex.height;
       const cellW = Math.floor(w / 2);
@@ -39,8 +43,8 @@ export async function loadAgentSpritesheet(slug, preset) {
         return tex;
       });
       return { textures, hasReal: true, cellW, cellH };
-    } catch (_) {
-      // Procedural fallback: render 4 versions to off-screen via Graphics
+    } catch (e) {
+      console.warn(`[sprites] ${slug} → procedural fallback:`, e?.message || e);
       return { textures: buildProceduralPoses(preset), hasReal: false, cellW: 64, cellH: 96 };
     }
   })();
