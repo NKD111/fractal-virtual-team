@@ -556,6 +556,56 @@ ${data.notes || 'Sin notas adicionales'}`;
   async delegateTo(targetSlug, message, taskId = null) {
     return this.sendMessageTo(targetSlug.toUpperCase(), message, { taskId });
   }
+
+  /**
+   * Envía una pregunta a Neiky Y la trackea automáticamente para follow-up.
+   * TODOS los agentes deben usar este método cuando hacen preguntas a Neiky
+   * para que el sistema de seguimiento inteligente funcione.
+   *
+   * @param {string} message - La pregunta a enviar a Neiky
+   * @param {object} context - { clientName, projectName, what, topic, channel, phone }
+   * @returns {string} trackingId si fue trackeada, null si no (casual)
+   */
+  async sendQuestionToNeiky(message, context = {}) {
+    // 1. Enviar por el canal apropiado
+    const phone = process.env.NEIKY_WHATSAPP || process.env.NEIKY_PHONE || '+5215534189583';
+    const channel = context.channel || 'whatsapp';
+
+    if (channel === 'whatsapp') {
+      try {
+        const { sendTwilioMessage } = require('./whatsapp');
+        await sendTwilioMessage(phone, message);
+        console.log(`[${this.name}] Pregunta enviada a Neiky por WhatsApp`);
+      } catch (err) {
+        console.warn(`[${this.name}] WhatsApp falló:`, err.message);
+        if (global.io) {
+          global.io.emit('proactive_message', {
+            from: this.name,
+            type: 'question',
+            message,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+    } else if (global.io) {
+      global.io.emit('proactive_message', {
+        from: this.name,
+        type: 'question',
+        message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // 2. Trackear para follow-up automático
+    try {
+      const responseTracker = require('./response-tracker');
+      const trackingId = await responseTracker.trackQuestion(this, message, context);
+      return trackingId;
+    } catch (err) {
+      console.warn(`[${this.name}] No se pudo trackear pregunta:`, err.message);
+      return null;
+    }
+  }
 }
 
 module.exports = BaseAgent;

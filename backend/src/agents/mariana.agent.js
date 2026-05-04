@@ -64,16 +64,33 @@ class MarianaAgent extends BaseAgent {
     const sender = await this.identifySender(message.from, channel);
 
     // ── ANTI-PROMESAS-VACÍAS: flush promesas vencidas ANTES de responder ──────
-    // Si Mariana prometió algo antes y ya venció el tiempo, ejecuta YA
-    // y el resultado llega proactivamente por WhatsApp/Socket antes de esta respuesta
     if (sender.isNeiky && message.from) {
       try {
         const promiseTracker = require('../core/promise-tracker');
         const flushed = await promiseTracker.flushDuePromises(message.from);
         if (flushed) console.log(`[Mariana] Promesas vencidas ejecutadas:\n${flushed}`);
-      } catch (err) {
-        // Si el módulo no está listo, no bloqueamos
-      }
+      } catch (err) { /* no bloquear */ }
+    }
+
+    // ── RESPONSE TRACKER: verificar si Neiky responde a preguntas pendientes ─
+    if (sender.isNeiky) {
+      const msgText = message.content || message.text || '';
+      setImmediate(async () => {
+        try {
+          const responseTracker = require('../core/response-tracker');
+          // ¿Es un comando de control? ("pausa reminders", "¿qué tienes pendiente?")
+          const cmdResponse = await responseTracker.processControlCommand(msgText);
+          if (cmdResponse) {
+            // Inyectar en el canal apropiado (respuesta extra)
+            if (global.io) global.io.emit('proactive_message', { from: 'MARIANA', message: cmdResponse });
+            return;
+          }
+          // Detectar si el mensaje responde a alguna pregunta abierta
+          await responseTracker.checkIfAnswers(msgText);
+        } catch (err) {
+          console.warn('[Mariana] ResponseTracker.checkIfAnswers error:', err.message);
+        }
+      });
     }
 
     // 2. Cargar TODO el historial cross-channel
@@ -93,8 +110,6 @@ class MarianaAgent extends BaseAgent {
     }
 
     // ── ANTI-PROMESAS-VACÍAS: schedular promesas detectadas en la respuesta ───
-    // Si Mariana dijo "te aviso en 5 min" o "voy a preguntar a Diego",
-    // crear job real que ejecuta la acción y manda mensaje proactivo
     if (sender.isNeiky && response) {
       setImmediate(async () => {
         try {
@@ -107,6 +122,17 @@ class MarianaAgent extends BaseAgent {
           });
         } catch (err) {
           console.warn('[Mariana] PromiseTracker error:', err.message);
+        }
+
+        // ── PROACTIVE SCHEDULER: analizar si se necesita follow-up automático ─
+        try {
+          const { analyzeForFollowUp } = require('../core/proactive-scheduler');
+          await analyzeForFollowUp(response, message.content || message.text || '', {
+            clientName: sender.clientData?.name || null,
+            projectName: null
+          });
+        } catch (err) {
+          console.warn('[Mariana] analyzeForFollowUp error:', err.message);
         }
       });
     }

@@ -116,7 +116,25 @@ server.listen(PORT, async () => {
   const { startPromiseWorker } = require('./workers/promise.worker');
   startPromiseWorker();
 
-  console.log(`\n✅ Sistema listo — 10 agentes activos + promise tracker activo\n`);
+  // Start proactive scheduler (check-ins, follow-ups, alertas proactivas)
+  const { startProactiveScheduler } = require('./core/proactive-scheduler');
+  startProactiveScheduler();
+
+  // Start proactive BullMQ worker (si hay Redis disponible)
+  const { startProactiveWorker } = require('./workers/proactive.worker');
+  startProactiveWorker();
+
+  // Start response tracker reminder checker (cada 15 min)
+  const responseTracker = require('./core/response-tracker');
+  setInterval(async () => {
+    try {
+      await responseTracker.checkPendingReminders();
+    } catch (err) {
+      console.error('[ResponseTracker] Reminder check error:', err.message);
+    }
+  }, 15 * 60 * 1000);
+
+  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker\n`);
 });
 
 server.on('error', (err) => {
