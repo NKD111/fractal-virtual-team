@@ -121,8 +121,15 @@ export default function OfficeScene() {
       const agents: AgentRecord[] = [];
       const tickerStops: Array<() => void> = [];
 
-      for (const [slug, preset] of Object.entries(AGENT_PRESETS) as [string, any][]) {
-        const sheet = await loadAgentSpritesheet(slug, preset);
+      // Load all sprite sheets in parallel (was serialized → painfully slow)
+      const presetEntries = Object.entries(AGENT_PRESETS) as [string, any][];
+      const sheets = await Promise.all(
+        presetEntries.map(([slug, preset]) => loadAgentSpritesheet(slug, preset).catch(() => ({ hasReal: false, textures: null })))
+      );
+
+      for (let i = 0; i < presetEntries.length; i++) {
+        const [slug, preset] = presetEntries[i];
+        const sheet = sheets[i];
         const root = new Container();
         root.eventMode = 'static';
         root.cursor = 'pointer';
