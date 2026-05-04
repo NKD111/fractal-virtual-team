@@ -105,7 +105,9 @@ Responde constructivamente. Son iguales, buscan lo mejor para el cliente.`;
       'https://www.instagram.com/fifcdmx/',
       'https://fifcdmx.com',
       'https://www.vanexpo.mx/fif',
-      'https://www.instagram.com/vanexpomx/'
+      'https://www.instagram.com/vanexpomx/',
+      'https://www.instagram.com/feriadefranquicias/',
+      'https://feriadefranquicias.com.mx'
     ];
 
     const findings = [];
@@ -170,21 +172,34 @@ DEADLINE ENTREGA: ${brief.deadline}
 ═══ RESEARCH REAL DE REDES SOCIALES FIF (obtenido ahora mismo) ═══
 ${socialContext}
 
+═══ REFERENCIA VISUAL PRINCIPAL ═══
+La cuenta @feriadefranquicias en Instagram (https://www.instagram.com/feriadefranquicias/) es la referencia visual directa del cliente. Es el look and feel actual que debemos estudiar, respetar y ELEVAR. No copiar — evolucionar. Analiza:
+- Paleta cromática dominante (fondos, primarios, acentos)
+- Estilo tipográfico (jerarquía, pesos, tratamiento del texto)
+- Composición y layout general de sus posts
+- Uso de fotografía vs. ilustración vs. elementos gráficos puros
+- Tono visual general (formal/dinámico, oscuro/claro, geométrico/orgánico)
+- Qué funciona bien y qué se puede mejorar editorialmente
+
 ═══ LO QUE YA SÉ DE FIF ═══
 Trabajo FIF / VANEXPO desde hace tiempo con Fractal MX. El Festival de la Industria del Futuro (FIF) Ciudad de México es un evento de tecnología, innovación e industria. Tiene una identidad visual de vanguardia — tipografías geométricas, paleta oscura con acentos de color eléctrico (cian/magenta/amarillo), lenguaje futurista pero accesible.
 
 TIPOGRAFÍA OFICIAL: Gotham Font Family — usar Gotham Bold para headlines, Gotham Medium para subheads, Gotham Book para cuerpo. Esta es la familia tipográfica de la marca y no se sustituye.
 
 ═══ MI MISIÓN ═══
-1. Hacer el research de la identidad visual actual de FIF CDMX (redes sociales, ediciones anteriores)
-2. Proponer un arte para el anuncio de la próxima edición
-3. Ser específico — tipografía real, paleta con hex codes, layout, jerarquía, copy sugerido
+1. Analizar la identidad visual actual de @feriadefranquicias — qué está bien, qué puede subir de nivel
+2. Proponer un arte para el anuncio de la próxima edición FIF CDMX que RESPETE el look and feel existente pero lo eleve
+3. Ser específico — tipografía real, paleta con hex codes exactos tomados de su identidad actual, layout, jerarquía, copy sugerido
 4. El arte debe ser para formato feed de Instagram/LinkedIn (1:1 o 4:5)
+5. Justificar CADA decisión en relación a la identidad visual de referencia
 
 Genera una propuesta de arte COMPLETA, detallada y lista para ejecutar. Incluye:
 
-## RESEARCH & CONTEXTO FIF CDMX
-(lo que sé del evento y su identidad visual)
+## RESEARCH & ANÁLISIS VISUAL @feriadefranquicias
+(análisis del look and feel actual: paleta, tipografía, composición, qué elevar)
+
+## CONTEXTO FIF CDMX
+(evento, audiencia, posicionamiento)
 
 ## CONCEPTO CREATIVO
 (la gran idea, no más de 1 línea poderosa)
