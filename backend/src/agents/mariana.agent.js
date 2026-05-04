@@ -362,26 +362,37 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
 
   /**
    * Detecta si el mensaje necesita acción de un agente y lo ejecuta en background
+   * Ahora usa ProjectClassifier para clasificar inteligentemente antes de delegar
    */
   async _checkAndDelegate(content, marianaResponse, sender) {
     const lower = content.toLowerCase();
 
-    // ── TAREA DE DISEÑO con email ─────────────────────────────────────────────
-    const isDesignTask = ['arte ', 'diseño', 'pieza', 'arte para', 'propuesta', 'creativo', 'grafico', 'gráfico', 'banner', 'flyer', 'poster', 'anuncio'].some(k => lower.includes(k));
-    const mentionsDiego = lower.includes('diego') || lower.includes('diseñador');
-    const mentionsFIF = lower.includes('fif') || lower.includes('vanexpo') || lower.includes('feria de franquicias') || lower.includes('feria internacional');
     const mentionsArticle = (lower.includes('articulo') || lower.includes('artículo') || lower.includes('post') || lower.includes('nota')) &&
                             (lower.includes('franquiciashoy') || lower.includes('franquicias hoy') || lower.includes('medio') || lower.includes('revista'));
+    const mentionsFIF = lower.includes('fif') || lower.includes('vanexpo') || lower.includes('feria de franquicias') || lower.includes('feria internacional');
+    const isDesignTask = ['arte ', 'diseño', 'pieza', 'arte para', 'propuesta', 'creativo', 'grafico', 'gráfico', 'banner', 'flyer', 'poster', 'anuncio', 'lona', 'cartel', 'logo'].some(k => lower.includes(k));
+    const mentionsDiego = lower.includes('diego') || lower.includes('diseñador');
 
-    // Extraer email del mensaje si se menciona explícitamente
+    if (!mentionsArticle && !mentionsFIF && !isDesignTask && !mentionsDiego) return;
+
     const emailMatch = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
     const emailDestino = emailMatch?.[0] || process.env.NEIKY_EMAIL || 'nakedgeometry19@gmail.com';
     const deadlineMatch = content.match(/(\d{1,2}:\d{2}|antes de las \d|mañana|hoy)/i);
     const deadline = deadlineMatch?.[0] || 'Hoy';
 
+    // ── Clasificar el proyecto ───────────────────────────────────────────────
+    let classification = null;
+    try {
+      const projectClassifier = require('../services/workflows/project-classifier');
+      classification = projectClassifier.classify(content);
+      console.log(`[Mariana] Proyecto clasificado: ${classification.workflow.type} | Modelo: ${classification.imageModel} | Diseñador: ${classification.designer}`);
+    } catch (err) {
+      console.warn('[Mariana] ProjectClassifier error:', err.message);
+    }
+
+    // ── Article post FranquiciasHoy ──────────────────────────────────────────
     if (mentionsArticle) {
-      // ── PIPELINE: Post artículo FranquiciasHoy ──────────────────────────────
-      console.log(`[Mariana] Delegando article post a Diego → ${emailDestino}`);
+      console.log(`[Mariana] → Article post pipeline → ${emailDestino}`);
       setImmediate(async () => {
         try {
           const DiegoAgent = require('./diego.agent');
@@ -389,32 +400,37 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
           await diego.generateArticlePost({
             tema: content.substring(0, 200),
             descripcion: content.substring(0, 500),
-            emailDestino,
-            deadline
+            emailDestino, deadline,
+            classification
           });
-          console.log(`[Mariana] Diego entregó article post a ${emailDestino} ✓`);
-        } catch (err) {
-          console.error('[Mariana] Error article post:', err.message);
-        }
+        } catch (err) { console.error('[Mariana] Article post error:', err.message); }
       });
-    } else if (isDesignTask || mentionsDiego || mentionsFIF) {
-      // ── PIPELINE: Arte FIF / diseño genérico ────────────────────────────────
-      console.log(`[Mariana] Delegando tarea de diseño a Diego → ${emailDestino}`);
+      return;
+    }
+
+    // ── FIF / diseño general ─────────────────────────────────────────────────
+    if (mentionsFIF || isDesignTask || mentionsDiego) {
+      // Detectar si necesita assets del cliente
+      const needsClientAssets = classification?.assetRequirements?.length > 0;
+      if (needsClientAssets && classification.assetRequirements.length > 0) {
+        console.log(`[Mariana] Proyecto necesita assets del cliente: ${classification.assetRequirements.join(', ')}`);
+        // El request de assets ya se manejó en respondToNeiky si era necesario
+        // Solo loguear — Mariana ya mencionó en su respuesta si necesita materiales
+      }
+
+      console.log(`[Mariana] → FIF/Design pipeline → ${emailDestino}`);
       setImmediate(async () => {
         try {
           const DiegoAgent = require('./diego.agent');
           const diego = new DiegoAgent();
           await diego.generateFIFProposal({
-            evento: mentionsFIF ? 'FIF Ciudad de México — Próxima Edición' : 'Proyecto de diseño Fractal MX',
+            evento: mentionsFIF ? 'FIF Ciudad de México — Próxima Edición' : (classification?.workflow?.type === 'print_professional' ? 'Pieza de Impresión' : 'Proyecto de diseño Fractal MX'),
             descripcion: content.substring(0, 500),
-            contexto: 'Agencia de marketing digital premium. Identidad: moderna, audaz, profesional. Redes: Instagram, LinkedIn.',
-            emailDestino,
-            deadline
+            contexto: 'Agencia de marketing digital premium. Identidad: moderna, audaz, profesional.',
+            emailDestino, deadline,
+            classification
           });
-          console.log(`[Mariana] Diego entregó propuesta FIF a ${emailDestino} ✓`);
-        } catch (err) {
-          console.error('[Mariana] Error delegando a Diego:', err.message);
-        }
+        } catch (err) { console.error('[Mariana] FIF pipeline error:', err.message); }
       });
     }
   }

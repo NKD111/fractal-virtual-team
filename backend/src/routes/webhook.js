@@ -119,4 +119,31 @@ router.get('/health', (req, res) => {
   });
 });
 
+// ─── GMAIL PUSH NOTIFICATIONS (Google Pub/Sub) ────────────────────────────────
+// Setup: https://developers.google.com/gmail/api/guides/push
+// When configured, Google sends POST here when proyectosfractalmx@gmail.com gets new email
+
+router.post('/gmail', async (req, res) => {
+  res.status(200).send(); // ACK immediately
+
+  try {
+    const data = req.body?.message?.data;
+    if (!data) return;
+
+    const decoded = JSON.parse(Buffer.from(data, 'base64').toString());
+    const { emailAddress, historyId } = decoded;
+
+    console.log(`[Webhook Gmail] Push notification — ${emailAddress} historyId: ${historyId}`);
+
+    if (emailAddress !== (process.env.PROYECTOS_GMAIL || 'proyectosfractalmx@gmail.com')) return;
+
+    // Trigger resource check
+    const { checkResources } = require('../workers/resources.worker');
+    await checkResources();
+
+  } catch (err) {
+    console.error('[Webhook Gmail] Error:', err.message);
+  }
+});
+
 module.exports = router;

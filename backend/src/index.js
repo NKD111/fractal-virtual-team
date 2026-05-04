@@ -42,9 +42,12 @@ app.get('/', (req, res) => {
     endpoints: {
       webhook_meta: 'POST /webhook/meta',
       webhook_twilio: 'POST /webhook/twilio',
+      webhook_gmail: 'POST /webhook/gmail',
       agents: 'GET /api/agents',
       dashboard: 'GET /api/dashboard',
-      health: 'GET /webhook/health'
+      health: 'GET /webhook/health',
+      models: 'GET /api/models/status',
+      classify: 'POST /api/models/classify'
     }
   });
 });
@@ -104,6 +107,11 @@ server.listen(PORT, async () => {
   console.log(`🔗 Webhook Twilio: POST /webhook/twilio`);
 
   await initAllAgents(io);
+
+  // Start resources worker (checks Gmail for client assets every 5 min)
+  const { startResourcesWorker } = require('./workers/resources.worker');
+  startResourcesWorker();
+
   console.log(`\n✅ Sistema listo — 10 agentes activos\n`);
 });
 
