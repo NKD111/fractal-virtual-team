@@ -36,9 +36,27 @@ const supabase = createClient(
 
 // ─── Patrones de promesas ─────────────────────────────────────────────────────
 const PROMISE_PATTERNS = [
-  // Tiempo explícito: "te aviso en 5 minutos", "dame 10 min"
+  // Tiempo explícito orden A: "te aviso en 5 minutos"
   {
     regex: /(?:te aviso|te confirmo|te digo|regreso|vuelvo|escribo).*?en\s+(\d+)\s*(min(?:utos?)?|hora(?:s?)?)/i,
+    type: 'timed_update',
+    extractDelay: (m) => parseTime(m[1], m[2])
+  },
+  // Tiempo explícito orden B: "en 5 minutos te aviso" (orden invertido que usa Mariana frecuentemente)
+  {
+    regex: /en\s+(\d+)\s*(min(?:utos?)?|hora(?:s?)?)\s+(?:te aviso|te confirmo|te digo|regreso|vuelvo|te escribo|aviso)/i,
+    type: 'timed_update',
+    extractDelay: (m) => parseTime(m[1], m[2])
+  },
+  // Tiempo con "dentro de": "dentro de 5 minutos te aviso"
+  {
+    regex: /dentro\s+de\s+(\d+)\s*(min(?:utos?)?|hora(?:s?)?)/i,
+    type: 'timed_update',
+    extractDelay: (m) => parseTime(m[1], m[2])
+  },
+  // Timer puesto / "pongo mi timer": "timer puesto para X min"
+  {
+    regex: /timer\s+(?:puesto|listo|marcado).*?(\d+)\s*(min(?:utos?)?|hora(?:s?)?)/i,
     type: 'timed_update',
     extractDelay: (m) => parseTime(m[1], m[2])
   },
