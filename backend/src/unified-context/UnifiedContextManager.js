@@ -25,13 +25,12 @@ class UnifiedContextManager {
           .maybeSingle();
         user = data;
       } else if (channel === 'web') {
-        // web: identifier is either users.id (UUID) or users.web_session
-        const { data } = await supabase
-          .from('users')
-          .select('*')
-          .or(`id.eq.${identifier},web_session.eq.${identifier}`)
-          .limit(1)
-          .maybeSingle();
+        // web: identifier is either users.id (UUID) or users.web_session (free string)
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(identifier));
+        const q = supabase.from('users').select('*');
+        const { data } = isUuid
+          ? await q.eq('id', identifier).limit(1).maybeSingle()
+          : await q.eq('web_session', identifier).limit(1).maybeSingle();
         user = data;
       } else if (channel === 'email') {
         const { data } = await supabase
