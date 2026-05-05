@@ -96,14 +96,18 @@ export default function OfficeScene() {
       recenter();
       app.renderer.on('resize', recenter);
 
-      // BACKGROUND: pre-rendered LAYOUT image replaces procedural platforms
+      // BACKGROUND: pre-rendered LAYOUT image replaces procedural platforms.
+      // NOTE: the source image has characters baked in. Lowered alpha so the
+      // live sprites (which render on top) don't fight visually with the
+      // drawn versions of themselves.
       try {
         const bgTex = await Assets.load('/assets/sprites/LAYOUT.png');
         const bg = new Sprite(bgTex);
         bg.anchor.set(0.5, 0.5);
         bg.x = 0;
-        bg.y = 80; // empirical: image was rendered with world centered slightly above middle
-        bg.scale.set(0.5); // image is 1790x956 @ ~2x DPR — half-scale to logical units
+        bg.y = 60;
+        bg.scale.set(0.55);
+        bg.alpha = 0.45; // ghosted so live chars dominate; bg provides ambience
         bg.zIndex = -10000;
         bg.eventMode = 'static';
         bg.cursor = 'grab';
