@@ -38,13 +38,13 @@ class DailyStandup {
     await this.saveStandupToDB(standups, summary);
 
     // 5. WhatsApp a Neiky
-    const sent = await this.sendToNeiky(summary);
+    const { sent, error: waError } = await this.sendToNeiky(summary);
 
     // 6. Broadcast al Office View (chat bubbles staggered)
     this.broadcastToOffice(standups);
 
     console.log(`✅ Daily Standup completado (whatsapp_sent=${sent})`);
-    return { standups, summary, whatsapp_sent: sent };
+    return { standups, summary, whatsapp_sent: sent, whatsapp_error: waError || null };
   }
 
   async generateTeamStandups(context) {
@@ -153,13 +153,30 @@ Tono: profesional pero cercano. Máximo 5 puntos clave. Emojis con moderación.`
       `🌅 *Buenos días Neiky!*\n\n` +
       `${summary}\n\n` +
       `— Mariana 🤖 | Fractal MX`;
+
+    // Try Meta WhatsApp first (production primary channel)
     try {
       await notifyNeiky(message);
-      console.log('  ✓ WhatsApp enviado a Neiky');
-      return true;
-    } catch (err) {
-      console.error('  ✗ WhatsApp a Neiky falló:', err.message);
-      return false;
+      console.log('  ✓ WhatsApp enviado via Meta');
+      return { sent: true };
+    } catch (metaErr) {
+      console.error('  ✗ Meta WA falló:', metaErr.response?.data || metaErr.message);
+
+      // Fallback: Twilio Sandbox (works without 24h-window restriction in sandbox)
+      try {
+        const { sendTwilioMessage } = require('../core/whatsapp');
+        const phone = process.env.NEIKY_WHATSAPP || '+525534189583';
+        await sendTwilioMessage(phone, message);
+        console.log('  ✓ WhatsApp enviado via Twilio fallback');
+        return { sent: true, via: 'twilio' };
+      } catch (twErr) {
+        const detail = twErr.response?.data || twErr.message;
+        console.error('  ✗ Twilio fallback también falló:', detail);
+        return {
+          sent: false,
+          error: `meta: ${metaErr.message} | twilio: ${twErr.message}`
+        };
+      }
     }
   }
 
