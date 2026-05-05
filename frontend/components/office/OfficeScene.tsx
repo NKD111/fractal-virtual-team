@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Application, Container, Sprite, Text, TextStyle, Graphics } from 'pixi.js';
+import { Application, Container, Sprite, Text, TextStyle, Graphics, Assets } from 'pixi.js';
 import { io, Socket } from 'socket.io-client';
 import { gsap } from 'gsap';
 import ChatPanel from './ChatPanel';
@@ -87,24 +87,61 @@ export default function OfficeScene() {
       world.sortableChildren = true;
       app.stage.addChild(world);
 
+      // Camera offset (mutated by pan-drag)
+      let camX = 0, camY = 0;
       const recenter = () => {
-        world.x = app.screen.width / 2;
-        world.y = app.screen.height / 2;
+        world.x = app.screen.width / 2 + camX;
+        world.y = app.screen.height / 2 + camY;
       };
       recenter();
       app.renderer.on('resize', recenter);
 
-      // Floating platforms (rooms)
-      Object.keys(ROOMS).forEach((key) => {
-        const p = buildRoomPlatform(key);
-        if (p) {
-          p.zIndex = -1000;
-          world.addChild(p);
-          p.on('pointertap', () => {
-            gsap.fromTo(p, { alpha: 0.5 }, { alpha: 1, duration: 0.6 });
-          });
+      // BACKGROUND: pre-rendered LAYOUT image replaces procedural platforms
+      try {
+        const bgTex = await Assets.load('/assets/sprites/LAYOUT.png');
+        const bg = new Sprite(bgTex);
+        bg.anchor.set(0.5, 0.5);
+        bg.x = 0;
+        bg.y = 80; // empirical: image was rendered with world centered slightly above middle
+        bg.scale.set(0.5); // image is 1790x956 @ ~2x DPR — half-scale to logical units
+        bg.zIndex = -10000;
+        bg.eventMode = 'static';
+        bg.cursor = 'grab';
+        world.addChild(bg);
+      } catch (e) {
+        console.warn('[bg] LAYOUT.png load failed, falling back to procedural platforms:', e);
+        Object.keys(ROOMS).forEach((key) => {
+          const p = buildRoomPlatform(key);
+          if (p) {
+            p.zIndex = -1000;
+            world.addChild(p);
+          }
+        });
+      }
+
+      // Pan-drag camera: drag anywhere on the empty background to pan the world
+      let dragging = false;
+      let dragStartX = 0, dragStartY = 0, camStartX = 0, camStartY = 0;
+      app.stage.eventMode = 'static';
+      app.stage.hitArea = app.screen;
+      app.stage.on('pointerdown', (e) => {
+        // Only start drag if the click target is the stage/world/bg, not an entity
+        const tgt: any = e.target;
+        if (!tgt || tgt === app.stage || tgt.label === 'world' || tgt.zIndex === -10000) {
+          dragging = true;
+          dragStartX = e.global.x; dragStartY = e.global.y;
+          camStartX = camX; camStartY = camY;
         }
       });
+      app.stage.on('pointermove', (e) => {
+        if (!dragging) return;
+        camX = camStartX + (e.global.x - dragStartX);
+        camY = camStartY + (e.global.y - dragStartY);
+        recenter();
+      });
+      const endDrag = () => { dragging = false; };
+      app.stage.on('pointerup', endDrag);
+      app.stage.on('pointerupoutside', endDrag);
 
       // ORACLE
       const oracle = new OracleEntity();
