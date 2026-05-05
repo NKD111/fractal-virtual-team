@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Application, Container, Sprite, Text, TextStyle, Graphics, Assets } from 'pixi.js';
+import { Application, Container, Sprite, Text, TextStyle, Graphics, Assets, Texture } from 'pixi.js';
 import { io, Socket } from 'socket.io-client';
 import { gsap } from 'gsap';
 import ChatPanel from './ChatPanel';
@@ -153,32 +153,69 @@ export default function OfficeScene() {
       recenter();
       app.renderer.on('resize', recenter);
 
-      // BACKGROUND: LAYOUT v1 (the original — clean office, no surrounding
-      // city block). Restored after LAYOUT 2 looked disproportionate vs
-      // characters. Saved agent positions in localStorage stay aligned.
+      // BACKGROUND: animated video version of LAYOUT v1. Same scene as the
+      // PNG, just animated. Falls back to the PNG if video fails to load.
+      // Same scale + position as PNG so existing agent positions still align.
+      const VIDEO_URL = '/assets/sprites/LAYOUT.mp4';
+      const PNG_URL   = '/assets/sprites/LAYOUT.png';
+      const BG_SCALE  = 0.42;
+      let bgLoaded = false;
       try {
-        const bgTex = await Assets.load('/assets/sprites/LAYOUT.png');
-        // Enable mipmaps + linear filter for smooth downscaling. Without
-        // these, a large source rendered small ends up aliased / pixelated.
-        try {
-          (bgTex.source as any).autoGenerateMipmaps = true;
-          (bgTex.source as any).style = {
-            ...(bgTex.source as any).style,
-            scaleMode: 'linear',
-            mipmapFilter: 'linear'
-          };
-          (bgTex.source as any).updateMipmaps?.();
-        } catch {}
+        const videoEl = document.createElement('video');
+        videoEl.src = VIDEO_URL;
+        videoEl.muted = true;        // required for autoplay in most browsers
+        videoEl.loop = true;
+        videoEl.autoplay = true;
+        videoEl.playsInline = true;
+        videoEl.crossOrigin = 'anonymous';
+        videoEl.preload = 'auto';
+        await new Promise<void>((resolve, reject) => {
+          videoEl.addEventListener('loadeddata', () => resolve(), { once: true });
+          videoEl.addEventListener('error', () => reject(new Error('video load error')), { once: true });
+          // Some browsers don't fire loadeddata reliably — fallback timeout
+          setTimeout(() => resolve(), 4000);
+        });
+        try { await videoEl.play(); } catch { /* autoplay may be blocked; will retry on first user gesture */ }
+        const bgTex = Texture.from(videoEl);
         const bg = new Sprite(bgTex);
         bg.anchor.set(0.5, 0.5);
         bg.x = 0;
         bg.y = 0;
-        bg.scale.set(0.42);
+        bg.scale.set(BG_SCALE);
         bg.alpha = 1.0;
         bg.zIndex = -10000;
         bg.eventMode = 'static';
         bg.cursor = 'grab';
         world.addChild(bg);
+        bgLoaded = true;
+        // If autoplay was blocked, resume on first interaction
+        const resume = () => { videoEl.play().catch(() => {}); window.removeEventListener('pointerdown', resume); };
+        if (videoEl.paused) window.addEventListener('pointerdown', resume);
+        // Expose so we can tweak scale from console: window.__bg.scale.set(0.5)
+        (window as any).__bg = bg;
+        (window as any).__bgVideo = videoEl;
+      } catch (videoErr) {
+        console.warn('[bg] video failed, falling back to PNG:', (videoErr as Error).message);
+      }
+
+      // Image fallback (or supplement if video failed)
+      if (!bgLoaded) try {
+        const bgTex = await Assets.load(PNG_URL);
+        try {
+          (bgTex.source as any).autoGenerateMipmaps = true;
+          (bgTex.source as any).style = {
+            ...(bgTex.source as any).style,
+            scaleMode: 'linear', mipmapFilter: 'linear'
+          };
+          (bgTex.source as any).updateMipmaps?.();
+        } catch {}
+        const bg = new Sprite(bgTex);
+        bg.anchor.set(0.5, 0.5);
+        bg.x = 0; bg.y = 0; bg.scale.set(BG_SCALE);
+        bg.alpha = 1.0; bg.zIndex = -10000;
+        bg.eventMode = 'static'; bg.cursor = 'grab';
+        world.addChild(bg);
+        (window as any).__bg = bg;
       } catch (e) {
         console.warn('[bg] LAYOUT.png load failed, falling back to procedural platforms:', e);
         Object.keys(ROOMS).forEach((key) => {
@@ -587,12 +624,16 @@ export default function OfficeScene() {
 
       // WebSocket events drive poses
       const socket: Socket = io(API_URL, { transports: ['websocket', 'polling'] });
+      socket.on('connect', () => console.log('[socket] connected', socket.id));
+      socket.on('disconnect', (r: any) => console.log('[socket] disconnect', r));
       socket.on('chat_bubble', (ev: any) => {
-        if (ev?.agent && ev?.text) showBubble(ev.agent, ev.text, 5000);
+        console.log('[socket] chat_bubble', ev);
+        if (ev?.agent && ev?.text) showBubble(ev.agent, ev.text);
       });
       // Daily standup broadcasts as 'agent_standup' (per Fase 8.5 spec)
       socket.on('agent_standup', (ev: any) => {
-        if (ev?.agent && ev?.message) showBubble(ev.agent, ev.message, 5000);
+        console.log('[socket] agent_standup', ev);
+        if (ev?.agent && ev?.message) showBubble(ev.agent, ev.message);
       });
       socket.on('agent_event', (ev: any) => {
         const a = agents.find(x => x.slug === ev.agent);
