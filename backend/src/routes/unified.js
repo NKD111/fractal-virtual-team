@@ -617,18 +617,21 @@ router.post('/voice/synth', async (req, res) => {
     const { data: cached } = await supabase.from('voice_cache').select('audio_url').eq('text_hash', hash).maybeSingle();
     if (cached?.audio_url) return res.json({ audio_url: cached.audio_url, cached: true });
 
-    // Voice IDs por agente — defaults a "Rachel" (Mariana). Configurable vía env.
+    // Voice IDs por agente — IDs from ElevenLabs free-tier premade voices (Nov 2025).
+    // Las voces de Voice Library (Rachel, Domi, etc) ya NO están disponibles via API en free tier.
+    // Configurable vía env si el usuario hace voice cloning más adelante.
     const voiceMap = {
-      mariana:   process.env.ELEVENLABS_VOICE_MARIANA   || '21m00Tcm4TlvDq8ikWAM',
-      diana:     process.env.ELEVENLABS_VOICE_DIANA     || 'AZnzlk1XvdvUeBnXmlld',
-      sofia:     process.env.ELEVENLABS_VOICE_SOFIA     || 'EXAVITQu4vr4xnSDxMaL',
-      valentina: process.env.ELEVENLABS_VOICE_VALENTINA || 'ThT5KcBeYPX3keUQqHPh',
-      carlos:    process.env.ELEVENLABS_VOICE_CARLOS    || 'pNInz6obpgDQGcFmaJgB',
-      diego:     process.env.ELEVENLABS_VOICE_DIEGO     || 'VR6AewLTigWG4xSOukaG',
-      lucas:     process.env.ELEVENLABS_VOICE_LUCAS     || 'TxGEqnHWrfWFTfGW9XjX',
-      max:       process.env.ELEVENLABS_VOICE_MAX       || 'yoZ06aMxZJJ28mfd3POQ',
-      alex:      process.env.ELEVENLABS_VOICE_ALEX      || 'JBFqnCBsd6RMkjVDRZzb',
-      roberto:   process.env.ELEVENLABS_VOICE_ROBERTO   || 'pqHfZKP75CvOlQylNhV4'
+      mariana:   process.env.ELEVENLABS_VOICE_MARIANA   || 'EXAVITQu4vr4xnSDxMaL', // Sarah — mature, reassuring, female lead
+      diana:     process.env.ELEVENLABS_VOICE_DIANA     || 'FGY2WhTYpPnrIDTdsKH5', // Laura — enthusiast, quirky, female client mgr
+      sofia:     process.env.ELEVENLABS_VOICE_SOFIA     || 'Xb7hH8MSUJpSbSDYk0k2', // Alice — clear engaging educator, female PM
+      valentina: process.env.ELEVENLABS_VOICE_VALENTINA || 'XrExE9yKIg1WjnnlVkGX', // Matilda — knowledgeable, female creative dir
+      qcbot:     process.env.ELEVENLABS_VOICE_QCBOT     || 'SAz9YHcvj6GT2YYXdXww', // River — neutral, calm, informative
+      carlos:    process.env.ELEVENLABS_VOICE_CARLOS    || 'pNInz6obpgDQGcFmaJgB', // Adam — dominant, firm, male designer
+      diego:     process.env.ELEVENLABS_VOICE_DIEGO     || 'bIHbv24MWmeRgasZH58o', // Will — chill, relaxed, male designer
+      lucas:     process.env.ELEVENLABS_VOICE_LUCAS     || 'onwK4e9ZLuTAKqWW03F9', // Daniel — steady broadcaster, analytics
+      max:       process.env.ELEVENLABS_VOICE_MAX       || 'nPczCjzI2devNBz1zQrb', // Brian — deep resonant, technical
+      alex:      process.env.ELEVENLABS_VOICE_ALEX      || 'cjVigY5qzO86Huf0OWal', // Eric — smooth trustworthy, copy
+      roberto:   process.env.ELEVENLABS_VOICE_ROBERTO   || 'pqHfZKP75CvOlQylNhV4'  // Bill — wise mature, CFO
     };
     const voiceId = voiceMap[agent_slug] || voiceMap.mariana;
 
