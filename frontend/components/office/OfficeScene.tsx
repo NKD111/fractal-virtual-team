@@ -179,18 +179,75 @@ export default function OfficeScene() {
       app.stage.on('pointerup', endDrag);
       app.stage.on('pointerupoutside', endDrag);
 
+      // Saved overrides from edit-mode dragging (localStorage)
+      // Loaded EARLY so Oracle/NEXUS/ATLAS can use them too
+      const savedPositions: Record<string, { x: number; y: number }> = (() => {
+        try { return JSON.parse(localStorage.getItem('fractal-agent-positions') || '{}'); } catch { return {}; }
+      })();
+
+      // Track all draggable entities (agents + Oracle/NEXUS/ATLAS) so the
+      // persist + dump functions cover everything in one place.
+      const draggables: Array<{ slug: string; container: Container }> = [];
+
+      // Helper: make any container draggable in edit mode + persist.
+      const makeDraggable = (slug: string, container: Container) => {
+        let dragging = false;
+        let dragStartGX = 0, dragStartGY = 0, startX = 0, startY = 0;
+        container.on('pointerdown', (ev: any) => {
+          if (!editModeRef.current) return;
+          dragging = true;
+          ev.stopPropagation?.();
+          dragStartGX = ev.global.x; dragStartGY = ev.global.y;
+          startX = container.x; startY = container.y;
+          container.cursor = 'grabbing';
+        });
+        container.on('globalpointermove', (ev: any) => {
+          if (!dragging || !editModeRef.current) return;
+          container.x = startX + (ev.global.x - dragStartGX);
+          container.y = startY + (ev.global.y - dragStartGY);
+          container.zIndex = Math.round(container.y) + 1000;
+        });
+        const stop = () => {
+          if (!dragging) return;
+          dragging = false;
+          container.cursor = 'pointer';
+          persistAll();
+          console.log(`[edit] ${slug} → (${Math.round(container.x)}, ${Math.round(container.y)})`);
+        };
+        container.on('pointerup', stop);
+        container.on('pointerupoutside', stop);
+        draggables.push({ slug, container });
+      };
+
+      const persistAll = () => {
+        const all: Record<string, { x: number; y: number }> = {};
+        for (const d of draggables) all[d.slug] = { x: Math.round(d.container.x), y: Math.round(d.container.y) };
+        try { localStorage.setItem('fractal-agent-positions', JSON.stringify(all)); } catch {}
+      };
+      (window as any).__dumpAgentPlacements = () => {
+        const lines = draggables.map(d =>
+          `  ${d.slug.padEnd(10)} { x: ${Math.round(d.container.x)}, y: ${Math.round(d.container.y)} },`);
+        const out = `// positions (paste to OfficeScene / rooms.js)\nconst SAVED = {\n${lines.join('\n')}\n};`;
+        console.log(out);
+        return out;
+      };
+
       // ORACLE
       const oracle = new OracleEntity();
       const oracleRoom = ROOMS.oracle_tower;
-      const oracleCenter = isoToScreen(oracleRoom.gx + oracleRoom.sx / 2, oracleRoom.gy + oracleRoom.sy / 2);
-      oracle.container.x = oracleCenter.x;
-      oracle.setBaseY(oracleCenter.y - 8);
-      oracle.container.zIndex = Math.round(oracleCenter.y) + 1000;
+      const oracleDefault = isoToScreen(oracleRoom.gx + oracleRoom.sx / 2, oracleRoom.gy + oracleRoom.sy / 2);
+      const oraclePos = savedPositions['oracle'] || { x: oracleDefault.x, y: oracleDefault.y - 8 };
+      oracle.container.x = oraclePos.x;
+      oracle.setBaseY(oraclePos.y);
+      oracle.container.zIndex = Math.round(oraclePos.y) + 1000;
+      oracle.container.eventMode = 'static';
       world.addChild(oracle.container);
       oracle.tryLoadSpritesheet();
       oracle.container.on('pointertap', () => {
+        if (editModeRef.current) return;
         setSelectedAgent({ name: 'oracle', color: '#B14FFF', role: 'Inteligencia Compartida' });
       });
+      makeDraggable('oracle', oracle.container);
 
       // Agents
       const agents: AgentRecord[] = [];
@@ -201,25 +258,6 @@ export default function OfficeScene() {
       const sheets = await Promise.all(
         presetEntries.map(([slug, preset]) => loadAgentSpritesheet(slug, preset).catch(() => ({ hasReal: false, textures: null })))
       );
-
-      // Saved overrides from edit-mode dragging (localStorage)
-      const savedPositions: Record<string, { x: number; y: number }> = (() => {
-        try { return JSON.parse(localStorage.getItem('fractal-agent-positions') || '{}'); } catch { return {}; }
-      })();
-      const persistPositions = () => {
-        const all: Record<string, { x: number; y: number }> = {};
-        for (const a of agents) all[a.slug] = { x: Math.round(a.container.x), y: Math.round(a.container.y) };
-        try { localStorage.setItem('fractal-agent-positions', JSON.stringify(all)); } catch {}
-      };
-      // Expose helper so user can dump current placements from console
-      (window as any).__dumpAgentPlacements = () => {
-        const lines = agents.map(a =>
-          `  ${a.slug.padEnd(10)} { x: ${Math.round(a.container.x)}, y: ${Math.round(a.container.y)} },`);
-        const out = `// agent positions (paste into AGENT_PLACEMENT or rooms.js)\nconst SAVED = {\n${lines.join('\n')}\n};`;
-        console.log(out);
-        return out;
-      };
-
       console.log('[OfficeScene] sheets loaded:', sheets.map((s, i) => `${presetEntries[i][0]}=${s?.hasReal ? 'REAL' : 'PROC'}`));
       for (let i = 0; i < presetEntries.length; i++) {
         const [slug, preset] = presetEntries[i];
@@ -316,36 +354,8 @@ export default function OfficeScene() {
           });
         });
 
-        // Drag-to-place (only fires in editMode). Stops the camera-pan handler
-        // by being on the agent's container which is hit BEFORE app.stage.
-        let agentDragging = false;
-        let dragStartGX = 0, dragStartGY = 0, agentStartX = 0, agentStartY = 0;
-        root.on('pointerdown', (ev: any) => {
-          if (!editModeRef.current) return;
-          agentDragging = true;
-          ev.stopPropagation?.();
-          dragStartGX = ev.global.x; dragStartGY = ev.global.y;
-          agentStartX = root.x; agentStartY = root.y;
-          root.cursor = 'grabbing';
-          gsap.to(root.scale, { x: 1.12, y: 1.12, duration: 0.1 });
-        });
-        root.on('globalpointermove', (ev: any) => {
-          if (!agentDragging || !editModeRef.current) return;
-          // Convert global pixel delta into world-space delta (world isn't scaled today, so 1:1)
-          root.x = agentStartX + (ev.global.x - dragStartGX);
-          root.y = agentStartY + (ev.global.y - dragStartGY);
-          root.zIndex = Math.round(root.y) + 1000;
-        });
-        const stopAgentDrag = () => {
-          if (!agentDragging) return;
-          agentDragging = false;
-          root.cursor = 'grab';
-          gsap.to(root.scale, { x: 1, y: 1, duration: 0.15 });
-          persistPositions();
-          console.log(`[edit] ${slug} → (${Math.round(root.x)}, ${Math.round(root.y)})`);
-        };
-        root.on('pointerup', stopAgentDrag);
-        root.on('pointerupoutside', stopAgentDrag);
+        // Drag-to-place via shared helper (covers Oracle/NEXUS/ATLAS too)
+        makeDraggable(slug, root);
 
         world.addChild(root);
         // Note: GSAP idle anim runs on the sprite directly (above), so it
@@ -360,29 +370,37 @@ export default function OfficeScene() {
       world.addChild(glitch.container);
       glitch.tryLoadSpritesheet();
 
-      // NEXUS — independent entity floating in empty WEST quadrant, no platform under it
+      // NEXUS — independent entity. Default west quadrant; saved overrides win.
       const nexus = new NexusEntity();
       world.addChild(nexus.container);
       nexus.tryLoadSpritesheet();
       nexus.container.on('pointerover', () => nexus.setHoverLabel(true));
       nexus.container.on('pointerout', () => nexus.setHoverLabel(false));
-      nexus.container.on('pointertap', () => setGuardianMode('nexus'));
-      // Far west of Creative Studio, mid-height
-      const nexusPos = isoToScreen(-11, 1);
+      nexus.container.on('pointertap', () => {
+        if (editModeRef.current) return;
+        setGuardianMode('nexus');
+      });
+      const nexusDefault = isoToScreen(-11, 1);
+      const nexusPos = savedPositions['nexus'] || { x: nexusDefault.x, y: nexusDefault.y };
       nexus.setBasePosition(nexusPos.x, nexusPos.y);
       nexus.container.zIndex = Math.round(nexusPos.y) + 1000;
+      makeDraggable('nexus', nexus.container);
 
-      // ATLAS — independent entity floating in empty EAST quadrant, no platform under it
+      // ATLAS — independent entity. Default east; saved overrides win.
       const atlas = new AtlasEntity();
       world.addChild(atlas.container);
       atlas.tryLoadSpritesheet();
       atlas.container.on('pointerover', () => atlas.setHoverLabel(true));
       atlas.container.on('pointerout', () => atlas.setHoverLabel(false));
-      atlas.container.on('pointertap', () => setGuardianMode('atlas'));
-      // Inside the Lounge area painted on the bg (image ~1700,700 → world ~252,36)
-      const atlasPos = isoToScreen(8, -3);
+      atlas.container.on('pointertap', () => {
+        if (editModeRef.current) return;
+        setGuardianMode('atlas');
+      });
+      const atlasDefault = isoToScreen(8, -3);
+      const atlasPos = savedPositions['atlas'] || { x: atlasDefault.x, y: atlasDefault.y };
       atlas.setBasePosition(atlasPos.x, atlasPos.y);
       atlas.container.zIndex = Math.round(atlasPos.y) + 1000;
+      makeDraggable('atlas', atlas.container);
 
       const recentlyBusy: Set<string> = new Set();
 
