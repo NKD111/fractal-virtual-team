@@ -31,17 +31,22 @@ export class GlitchEntity {
       const sheet = await Assets.load('/assets/sprites/glitch.png');
       const base = sheet?.source ? sheet : sheet?.texture || sheet;
       const w = base.width, h = base.height;
-      // glitch.png is a 2x2-ish cluster (sitting / running / teleport / laying / adult).
-      // We extract the running puppy from top-right (column 1, row 0) as the main pose.
-      const cw = Math.floor(w / 2), ch = Math.floor(h / 2);
+      // glitch.png (512x512) is a 5-pose cluster, NOT a clean grid. The naive
+      // 2x2 split bleeds the center "teleport" puppy's head into our crop.
+      // Tightly box the top-right "running" puppy: x≈275..495, y≈8..200.
+      // Convert to ratios so it scales if PNG dimensions change.
+      const fx = Math.round(w * (275 / 512));
+      const fy = Math.round(h * (8   / 512));
+      const fw = Math.round(w * ((495 - 275) / 512));
+      const fh = Math.round(h * ((200 - 8)   / 512));
       this.poseTex = [
-        new Texture({ source: base.source, frame: new Rectangle(cw, 0, cw, ch) })   // running pose
+        new Texture({ source: base.source, frame: new Rectangle(fx, fy, fw, fh) })
       ];
       this.spriteImg = new Sprite(this.poseTex[0]);
       this.spriteImg.anchor.set(0.5, 1);
       // Slightly smaller than agents — wandering NPC
-      const targetH = 50;
-      const k = targetH / ch;
+      const targetH = 42;
+      const k = targetH / fh;
       this.spriteImg.scale.set(k);
       this.container.addChild(this.spriteImg);
       if (this.procedural) this.procedural.visible = false;
