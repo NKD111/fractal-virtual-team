@@ -187,12 +187,15 @@ function parseHex(s) {
   return parseInt(c, 16);
 }
 
-/** Animate breathing on a sprite/container. Returns a stop function. */
+/** Animate breathing on a sprite/container. Returns a stop function.
+ *  Pixi v8: ticker callback receives the Ticker instance, not a delta number.
+ *  Use ticker.deltaTime (in frames) instead. */
 export function animateBreathing(target, ticker) {
   let t = Math.random() * Math.PI * 2;
   const baseY = target.scale.y;
-  const fn = (delta) => {
-    t += delta * 0.04;
+  const fn = (tk) => {
+    const dt = (tk && typeof tk.deltaTime === 'number') ? tk.deltaTime : 1;
+    t += dt * 0.04;
     target.scale.y = baseY + Math.sin(t) * 0.015;
   };
   ticker.add(fn);
@@ -203,8 +206,9 @@ export function animateBreathing(target, ticker) {
 export function animateJump(target, ticker, durationMs = 600) {
   const baseY = target.position.y;
   let t = 0;
-  const fn = (delta) => {
-    t += delta * 16.67; // approx ms
+  const fn = (tk) => {
+    const dt = (tk && typeof tk.deltaMS === 'number') ? tk.deltaMS : 16.67;
+    t += dt;
     if (t >= durationMs) {
       target.position.y = baseY;
       ticker.remove(fn);
