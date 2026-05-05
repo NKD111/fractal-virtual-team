@@ -47,11 +47,12 @@ export class NexusEntity {
       const sheet = await Assets.load('/assets/sprites/nexus.png');
       const base = sheet?.source ? sheet : sheet?.texture || sheet;
       const w = base.width, h = base.height;
-      // PNG (512x512) is 1x4 horizontal. Each monitor occupies the centered
-      // vertical band y=60..380 (320px tall). Crop tightly around it.
+      // PNG (512x512) is 1x4 horizontal. Each monitor (with antenna+wheels)
+      // occupies y=10..330 of the cell. Use the full panel for a chunky look
+      // that matches ATLAS visual weight.
       const cw = Math.floor(w / 4);
-      const fy = Math.round(h * (60 / 512));
-      const ch = Math.round(h * ((380 - 60) / 512));
+      const fy = Math.round(h * (10 / 512));
+      const ch = Math.round(h * ((330 - 10) / 512));
 
       this.stateTextures = {
         [NEXUS_STATE.IDLE]:      new Texture({ source: base.source, frame: new Rectangle(0,    fy, cw, ch) }),
@@ -61,8 +62,8 @@ export class NexusEntity {
       };
       this.spriteImg = new Sprite(this.stateTextures[NEXUS_STATE.IDLE]);
       this.spriteImg.anchor.set(0.5, 1); // anchor at feet, like agents
-      // Sized like Oracle (~72px), it's a small floating monitor
-      const targetH = 72;
+      // Match ATLAS presence — 88px tall, similar visual weight to the robot
+      const targetH = 88;
       this.spriteImg.scale.set(targetH / ch);
       this.container.addChildAt(this.spriteImg, 0);
       if (this.proceduralBox) this.proceduralBox.visible = false;

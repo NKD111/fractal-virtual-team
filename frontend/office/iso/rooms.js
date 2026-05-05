@@ -145,15 +145,35 @@ export function inRoomScreenPos(roomKey, cellX, cellY) {
   return { x: origin.x + local.x, y: origin.y + local.y };
 }
 
-/** Where each agent stands inside their room (default: center). */
+/** Where each agent stands inside their room.
+ *  - Single agent: centered, slightly toward the front (cellY = sy*0.55).
+ *  - Multiple agents: distributed in 2D so they don't crowd a single row. */
 export function agentScreenPos(slug) {
   const roomKey = AGENT_ROOM[slug];
   if (!roomKey) return { x: 0, y: 0 };
   const room = ROOMS[roomKey];
-  // Distribute multiple agents in the same room
-  const idx = (room.agents || []).indexOf(slug);
-  const total = (room.agents || []).length;
-  const cellX = (room.sx / 2) + ((idx - (total - 1) / 2) * 1.2);
-  const cellY = room.sy / 2;
+  const agents = room.agents || [];
+  const idx = agents.indexOf(slug);
+  const total = agents.length;
+
+  if (total <= 1) {
+    return inRoomScreenPos(roomKey, room.sx / 2, room.sy / 2);
+  }
+
+  // Distribute in a small grid: 2 columns when 3-4 agents, else single row.
+  if (total <= 2) {
+    const spread = Math.min(1.6, room.sx * 0.45);
+    const cellX = room.sx / 2 + (idx === 0 ? -spread / 2 : spread / 2);
+    const cellY = room.sy / 2;
+    return inRoomScreenPos(roomKey, cellX, cellY);
+  }
+
+  // 3-4 agents: 2x2 layout with margin
+  const col = idx % 2;        // 0 or 1
+  const row = Math.floor(idx / 2); // 0 or 1
+  const marginX = room.sx * 0.22;
+  const marginY = room.sy * 0.22;
+  const cellX = marginX + col * (room.sx - 2 * marginX);
+  const cellY = marginY + row * (room.sy - 2 * marginY);
   return inRoomScreenPos(roomKey, cellX, cellY);
 }

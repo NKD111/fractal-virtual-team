@@ -219,25 +219,27 @@ export default function OfficeScene() {
       world.addChild(glitch.container);
       glitch.tryLoadSpritesheet();
 
-      // NEXUS — world entity, top-right of Oracle tower
+      // NEXUS — independent entity floating in empty WEST quadrant, no platform under it
       const nexus = new NexusEntity();
       world.addChild(nexus.container);
       nexus.tryLoadSpritesheet();
       nexus.container.on('pointerover', () => nexus.setHoverLabel(true));
       nexus.container.on('pointerout', () => nexus.setHoverLabel(false));
       nexus.container.on('pointertap', () => setGuardianMode('nexus'));
-      const nexusPos = isoToScreen(oracleRoom.gx + oracleRoom.sx + 1.5, oracleRoom.gy + 0.5);
+      // Far west of Creative Studio, mid-height
+      const nexusPos = isoToScreen(-11, 1);
       nexus.setBasePosition(nexusPos.x, nexusPos.y);
       nexus.container.zIndex = Math.round(nexusPos.y) + 1000;
 
-      // ATLAS — world entity, bottom-right of Oracle tower
+      // ATLAS — independent entity floating in empty EAST quadrant, no platform under it
       const atlas = new AtlasEntity();
       world.addChild(atlas.container);
       atlas.tryLoadSpritesheet();
       atlas.container.on('pointerover', () => atlas.setHoverLabel(true));
       atlas.container.on('pointerout', () => atlas.setHoverLabel(false));
       atlas.container.on('pointertap', () => setGuardianMode('atlas'));
-      const atlasPos = isoToScreen(oracleRoom.gx + oracleRoom.sx + 1.5, oracleRoom.gy + oracleRoom.sy + 0.5);
+      // Far east of Analytics, mid-height (mirror of NEXUS)
+      const atlasPos = isoToScreen(14, 4);
       atlas.setBasePosition(atlasPos.x, atlasPos.y);
       atlas.container.zIndex = Math.round(atlasPos.y) + 1000;
 
