@@ -51,8 +51,9 @@ export const ROOMS = {
     agents: ['qcbot']
   },
   oracle_tower: {
-    // Aligned to painted portal in CLIENT RELATIONS bg (image ~1450,320 → world ~147,-123)
-    gx: -3, gy: -8, sx: 3, sy: 3,
+    // Aligned to painted portal in CLIENT RELATIONS bg (visual offset from
+    // previous attempt: live was 55px left + 60px up of painted)
+    gx: 0, gy: -7, sx: 3, sy: 3,
     label: 'ORACLE', color: 0xB14FFF,
     agents: ['oracle'], isOracle: true
   }

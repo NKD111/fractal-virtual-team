@@ -19,7 +19,7 @@ export class GlitchEntity {
     this.targetRoom = null;
     this._lerpT = 1; // 0..1 between current and target
     this.lastMoveAt = Date.now();
-    this.nextMoveIn = 30000 + Math.random() * 30000;
+    this.nextMoveIn = 7000 + Math.random() * 8000;
     this.busyAgent = null;     // slug of agent he's "following"
     this._t = 0;
     this._teleportFlash = 0;   // 0..1 anim
@@ -77,7 +77,7 @@ export class GlitchEntity {
     if (!ROOMS[roomKey] || roomKey === this.currentRoom || this._walking) return;
     this._walking = true;
     this.lastMoveAt = Date.now();
-    this.nextMoveIn = 18000 + Math.random() * 12000;
+    this.nextMoveIn = 7000 + Math.random() * 8000;
 
     const toRoom = ROOMS[roomKey];
     const target = isoToScreen(toRoom.gx + toRoom.sx / 2, toRoom.gy + toRoom.sy / 2);
