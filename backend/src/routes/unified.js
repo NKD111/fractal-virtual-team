@@ -121,6 +121,56 @@ router.post('/creative-jam/run', async (req, res) => {
   }
 });
 
+// POST /api/task/:id/confirm — confirma el pitch para arrancar la entrega final
+//   body opcional: { feedback: string }
+router.post('/task/:id/confirm', async (req, res) => {
+  try {
+    const taskId = String(req.params.id);
+    const feedback = String(req.body?.feedback || '').trim();
+    const { resumeTask } = require('../routines/task-runner');
+    // fire-and-forget — el frontend ya escucha eventos
+    resumeTask({ taskId, feedback, source: 'web-confirm' })
+      .catch(err => console.error('resumeTask:', err.message));
+    res.json({ accepted: true, taskId, feedback_len: feedback.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/task/:id/confirm-page — pequeña UI de confirmación (link del email)
+router.get('/task/:id/confirm-page', async (req, res) => {
+  const taskId = String(req.params.id);
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Confirmar tarea</title>
+<style>body{font-family:system-ui,sans-serif;background:#0a0a14;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}
+.box{background:#fff;color:#1a1a14;border-radius:12px;padding:32px;max-width:520px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,0.5);}
+h1{color:#B14FFF;margin:0 0 8px;font-size:22px;}
+textarea{width:100%;min-height:120px;padding:12px;border:2px solid #ddd;border-radius:8px;font-family:inherit;font-size:14px;resize:vertical;box-sizing:border-box;}
+button{background:#B14FFF;color:#fff;border:none;padding:12px 28px;border-radius:24px;font-size:14px;font-weight:600;cursor:pointer;margin-top:12px;}
+button:hover{background:#9333ea;}
+.ok{background:#dcfce7;border:1px solid #16a34a;color:#15803d;padding:14px;border-radius:8px;margin-top:14px;display:none;}
+</style></head>
+<body><div class="box">
+<h1>Confirmar entrega</h1>
+<p style="color:#666;font-size:13px;">Task <code>${taskId}</code></p>
+<p>Escribe tu OK / ajustes / preguntas. Si dejas vacío, el agente arranca con el plan tal cual lo propuso.</p>
+<textarea id="fb" placeholder="OK adelante / cámbialo así / agrega esto…"></textarea>
+<button id="go">Confirmar y arrancar entrega →</button>
+<div class="ok" id="ok">✅ Recibido. El agente está trabajando — recibirás el correo final en unos minutos.</div>
+<script>
+document.getElementById('go').addEventListener('click', async () => {
+  const fb = document.getElementById('fb').value;
+  const r = await fetch('/api/task/${taskId}/confirm', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ feedback: fb })
+  });
+  if (r.ok) document.getElementById('ok').style.display = 'block';
+  else alert('Error: ' + (await r.text()));
+});
+</script></div></body></html>`;
+  res.set('Content-Type', 'text/html').send(html);
+});
+
 // GET /api/tasks — lista de tareas con su status y entregables (cumplidas vs prometidas)
 router.get('/tasks', async (req, res) => {
   try {

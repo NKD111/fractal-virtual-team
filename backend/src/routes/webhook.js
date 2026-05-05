@@ -146,4 +146,43 @@ router.post('/gmail', async (req, res) => {
   }
 });
 
+// ─── EMAIL INBOUND (Resend / Mailgun / generic) ───────────────────────────
+// Cuando el usuario responde a un email de pitch [FX-<taskId>], parseamos
+// el subject, extraemos el cuerpo y disparamos resumeTask.
+//
+// Resend inbound payload shape (cuando se configura inbound webhook):
+//   { from, to, subject, text, html, ... }
+// Mailgun shape similar pero con 'stripped-text'.
+// Genérico: aceptamos cualquier { subject, text|body, from }.
+router.post('/email-inbound', async (req, res) => {
+  res.status(200).send('ok'); // ack inmediato
+
+  try {
+    const body = req.body || {};
+    // Try multiple field names from common providers
+    const subject = body.subject || body.Subject || body.headers?.subject || '';
+    const rawText = body['stripped-text'] || body.text || body.body || body.plain || body.html || '';
+    const from = body.from || body.From || body.sender || 'unknown';
+
+    console.log(`[Webhook Email] Inbound from=${from} subject="${subject?.slice(0, 80)}"`);
+
+    const { parseTaskIdFromSubject, extractReplyBody, resumeTask } = require('../routines/task-runner');
+    const taskId = parseTaskIdFromSubject(subject);
+    if (!taskId) {
+      console.log('[Webhook Email] No [FX-taskId] tag in subject, ignoring');
+      return;
+    }
+
+    const feedback = extractReplyBody(rawText);
+    console.log(`[Webhook Email] Resuming task ${taskId} with feedback: "${feedback.slice(0, 60)}…"`);
+
+    // fire-and-forget
+    resumeTask({ taskId, feedback, source: 'email-reply' })
+      .catch(err => console.error('[Webhook Email] resumeTask failed:', err.message));
+
+  } catch (err) {
+    console.error('[Webhook Email] Error:', err.message);
+  }
+});
+
 module.exports = router;
