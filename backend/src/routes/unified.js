@@ -121,6 +121,19 @@ router.post('/creative-jam/run', async (req, res) => {
   }
 });
 
+// GET /api/tasks — lista de tareas con su status y entregables (cumplidas vs prometidas)
+router.get('/tasks', async (req, res) => {
+  try {
+    const limit = Math.min(50, parseInt(req.query?.limit, 10) || 20);
+    const { data } = await supabase
+      .from('tasks')
+      .select('id, source, message, brief, agent_assigned, supervisor, status, promised, delivered, image_url, email_id, created_at, completed_at')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    res.json({ tasks: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // POST /api/task/dispatch — pipeline visual de tarea
 //   1. Mariana clasifica (qué agente)
 //   2. Emite eventos para que el Office View anime una bolita
