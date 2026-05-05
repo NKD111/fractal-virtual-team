@@ -14,6 +14,7 @@ import { OracleEntity, ORACLE_STATE } from '../../office/iso/oracleEntity';
 import { GlitchEntity } from '../../office/iso/glitchEntity';
 import { NexusEntity, NEXUS_STATE } from '../../office/iso/nexusEntity';
 import { AtlasEntity, ATLAS_STATE } from '../../office/iso/atlasEntity';
+import { burst, dashedLine } from '../../office/iso/particles';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
@@ -264,13 +265,47 @@ export default function OfficeScene() {
       socket.on('oracle_query', (ev: any) => {
         oracle.setState(ORACLE_STATE.THINKING);
         const consultor = agents.find(a => a.slug === ev.agent);
-        if (consultor) oracle.beamTo(consultor.container.x, consultor.container.y - 32);
+        if (consultor) {
+          consultor.setPose(POSE.THINKING);
+          oracle.beamTo(consultor.container.x, consultor.container.y - 32);
+          // Dashed magenta line from consultor to Oracle
+          dashedLine(world, consultor.container.x, consultor.container.y - 28,
+                     oracle.container.x, oracle.container.y - 8,
+                     { color: 0xb14fff });
+          setTimeout(() => consultor.setPose(POSE.IDLE), 2500);
+        }
       });
-      socket.on('project_complete', () => {
-        agents.forEach(a => animateJump(a.container, app.ticker, 600));
+      socket.on('oracle_response', () => {
+        oracle.setState(ORACLE_STATE.BROADCASTING);
+        setTimeout(() => oracle.setState(ORACLE_STATE.IDLE), 2000);
+      });
+      socket.on('new_message', () => {
+        const mariana = agents.find(a => a.slug === 'mariana');
+        if (mariana) {
+          mariana.setPose(POSE.WORKING);
+          setTimeout(() => mariana.setPose(POSE.IDLE), 2500);
+        }
+      });
+      socket.on('project_complete', (ev: any) => {
+        const owner = ev?.agent ? agents.find(a => a.slug === ev.agent) : null;
+        if (owner) {
+          owner.setPose(POSE.HAPPY);
+          animateJump(owner.container, app.ticker, 600);
+          // Confetti at owner's position
+          burst(world, owner.container.x, owner.container.y - 28, { count: 14, spread: 60 });
+          setTimeout(() => owner.setPose(POSE.IDLE), 3000);
+        } else {
+          agents.forEach(a => animateJump(a.container, app.ticker, 600));
+        }
       });
       socket.on('quote_accepted', () => {
         agents.forEach(a => { a.setPose(POSE.HAPPY); animateJump(a.container, app.ticker, 800); });
+        // Big confetti from each room center
+        for (const key of Object.keys(ROOMS)) {
+          const room = (ROOMS as any)[key];
+          const c = isoToScreen(room.gx + room.sx / 2, room.gy + room.sy / 2);
+          burst(world, c.x, c.y - 20, { count: 12, spread: 70, duration: 1.6 });
+        }
         setTimeout(() => agents.forEach(a => a.setPose(POSE.IDLE)), 3000);
       });
 

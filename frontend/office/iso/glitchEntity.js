@@ -4,8 +4,10 @@
 // the most recent activity.
 
 import { Container, Graphics, Sprite, Texture, Assets, Rectangle } from 'pixi.js';
+import { gsap } from 'gsap';
 import { ROOMS, AGENT_ROOM, inRoomScreenPos } from './rooms';
 import { isoToScreen } from './isoMath';
+import { teleportSparkle } from './particles';
 
 export class GlitchEntity {
   constructor() {
@@ -69,14 +71,37 @@ export class GlitchEntity {
     this.container.addChild(c);
   }
 
-  /** Set target room directly (used externally by event handlers). */
+  /** Set target room directly. Uses GSAP teleport-out → relocate → teleport-in
+   *  with golden sparkle particles at both ends. */
   goTo(roomKey) {
     if (!ROOMS[roomKey] || roomKey === this.currentRoom) return;
-    this.targetRoom = roomKey;
-    this._lerpT = 0;
-    this._teleportFlash = 1;
     this.lastMoveAt = Date.now();
     this.nextMoveIn = 30000 + Math.random() * 30000;
+    this._lerpT = 1; // disable old position-lerp animation
+
+    const fromRoom = ROOMS[this.currentRoom];
+    const toRoom = ROOMS[roomKey];
+    const fromCenter = isoToScreen(fromRoom.gx + fromRoom.sx / 2, fromRoom.gy + fromRoom.sy / 2);
+    const toCenter   = isoToScreen(toRoom.gx + toRoom.sx / 2, toRoom.gy + toRoom.sy / 2);
+
+    // Sparkle at depart point (relative to container's parent)
+    const parent = this.container.parent;
+    if (parent) teleportSparkle(parent, this.container.x, this.container.y - 12);
+
+    // Out: alpha 0 + scale 0.5 in 0.3s
+    gsap.to(this.container, {
+      alpha: 0, duration: 0.3, ease: 'power2.in',
+      onComplete: () => {
+        this.container.x = toCenter.x + 28;
+        this.container.y = toCenter.y + 12;
+        this.currentRoom = roomKey;
+        if (parent) teleportSparkle(parent, this.container.x, this.container.y - 12);
+        gsap.to(this.container, { alpha: 1, duration: 0.3, ease: 'power2.out' });
+      }
+    });
+    gsap.to(this.container.scale, { x: 0.5, y: 0.5, duration: 0.3, ease: 'power2.in',
+      onComplete: () => { gsap.to(this.container.scale, { x: 1, y: 1, duration: 0.3, ease: 'back.out(2)' }); }
+    });
   }
 
   /** Pick a busy agent (random by default) and move to their room. */
@@ -119,15 +144,7 @@ export class GlitchEntity {
       }
     }
 
-    // Teleport flash decay
-    if (this._teleportFlash > 0) {
-      this._teleportFlash = Math.max(0, this._teleportFlash - dt * 0.04);
-      this.container.alpha = 0.4 + Math.random() * 0.6;
-      this.container.scale.x = 1 + (Math.random() - 0.5) * 0.4;
-    } else {
-      this.container.alpha = 1;
-      this.container.scale.x = 1;
-    }
+    // Teleport visuals are now GSAP-driven — no per-frame jitter here.
 
     // Idle micro-bobbing
     if (this.procedural?.visible) this.procedural.position.y = Math.sin(this._t * 0.12) * 0.6;

@@ -157,10 +157,10 @@ export function agentScreenPos(slug) {
   const total = agents.length;
 
   if (total <= 1) {
-    // Feet anchored at (cellX, cellY); push slightly forward so the body
-    // visually fills the lower half of the diamond instead of sitting on the
-    // top half (which makes the agent look like they're on the upper edge).
-    return inRoomScreenPos(roomKey, room.sx / 2, room.sy * 0.65);
+    // Feet near the BOTTOM of the diamond so the body sits visually inside
+    // the room (sprite is 56px tall, small rooms have ~96px diamond height
+    // with feet-at-center the body extends above the diamond top edge).
+    return inRoomScreenPos(roomKey, room.sx / 2, room.sy * 0.85);
   }
 
   // Distribute in a small grid: 2 columns when 3-4 agents, else single row.

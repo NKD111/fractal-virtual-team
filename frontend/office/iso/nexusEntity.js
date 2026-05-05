@@ -62,9 +62,8 @@ export class NexusEntity {
       };
       this.spriteImg = new Sprite(this.stateTextures[NEXUS_STATE.IDLE]);
       this.spriteImg.anchor.set(0.5, 1); // anchor at feet, like agents
-      // Each NEXUS panel is intrinsically tall-narrow (aspect ~1:2). Use a
-      // larger targetH so visual presence matches ATLAS (102x72).
-      const targetH = 110;
+      // User spec: NEXUS at 96px tall.
+      const targetH = 96;
       this.spriteImg.scale.set(targetH / ch);
       this.container.addChildAt(this.spriteImg, 0);
       if (this.proceduralBox) this.proceduralBox.visible = false;
