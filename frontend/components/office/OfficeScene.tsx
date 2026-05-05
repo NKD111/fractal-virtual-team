@@ -15,6 +15,7 @@ import { GlitchEntity } from '../../office/iso/glitchEntity';
 import { NexusEntity, NEXUS_STATE } from '../../office/iso/nexusEntity';
 import { AtlasEntity, ATLAS_STATE } from '../../office/iso/atlasEntity';
 import { burst, dashedLine } from '../../office/iso/particles';
+import { audio } from '../../office/audio/audioManager';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
@@ -58,6 +59,18 @@ export default function OfficeScene() {
     tick();
     const id = setInterval(tick, 30000);
     return () => clearInterval(id);
+  }, []);
+
+  // ── Audio init + mute UI state ────────────────────────────────────────────
+  const [muted, setMuted] = useState(false);
+  useEffect(() => {
+    audio.init();
+    setMuted(audio.isMuted());
+    const off = audio.onMuteChange(setMuted);
+    // Ambient starts on first user interaction (browser autoplay policy)
+    const startOnce = () => { audio.startAmbient(); window.removeEventListener('pointerdown', startOnce); };
+    window.addEventListener('pointerdown', startOnce);
+    return () => { off(); window.removeEventListener('pointerdown', startOnce); };
   }, []);
 
   // ── Pixi scene setup ───────────────────────────────────────────────────────
@@ -184,22 +197,8 @@ export default function OfficeScene() {
         shadow.ellipse(0, -2, 16, 5).fill({ color: 0x000000, alpha: 0.45 });
         root.addChild(shadow);
 
-        // Procedural isometric desk + monitor in front of agent
-        const presetColor = parseInt(String(preset.color).replace('#', ''), 16);
-        const desk = new Graphics();
-        // Iso desk top: a flat 50x14 diamond
-        desk.poly([0, -7, 25, 0, 0, 7, -25, 0]).fill({ color: 0x3d2817 });
-        desk.poly([0, -7, 25, 0, 0, 7, -25, 0]).stroke({ color: 0x1a1a14, width: 1 });
-        // Monitor base
-        desk.rect(-3, -8, 6, 3).fill(0x1a1a1a);
-        // Monitor screen with agent color glow
-        desk.rect(-9, -22, 18, 14).fill(0x0f0f17);
-        desk.rect(-9, -22, 18, 14).stroke({ color: presetColor, width: 1, alpha: 0.85 });
-        desk.rect(-7, -20, 14, 10).fill({ color: presetColor, alpha: 0.25 });
-        // Position desk slightly in front of feet (toward viewer = positive y)
-        desk.position.set(14, 6);
-        desk.zIndex = -1; // behind sprite within root
-        root.addChild(desk);
+        // Note: procedural desks/monitors removed — the BG image already has
+        // decorated desks for every workstation. Live characters render clean.
 
         let breathTarget: any = null;
         if (sheet.hasReal && sheet.textures) {
@@ -297,8 +296,8 @@ export default function OfficeScene() {
       atlas.container.on('pointerover', () => atlas.setHoverLabel(true));
       atlas.container.on('pointerout', () => atlas.setHoverLabel(false));
       atlas.container.on('pointertap', () => setGuardianMode('atlas'));
-      // Far east of Analytics, mid-height (mirror of NEXUS)
-      const atlasPos = isoToScreen(14, 4);
+      // East of bg, in visible viewport — floats next to Analytics/Lounge area
+      const atlasPos = isoToScreen(11, -5);
       atlas.setBasePosition(atlasPos.x, atlasPos.y);
       atlas.container.zIndex = Math.round(atlasPos.y) + 1000;
 
@@ -321,6 +320,7 @@ export default function OfficeScene() {
         setTimeout(() => { from?.setPose(POSE.IDLE); to?.setPose(POSE.IDLE); }, 2000);
       });
       socket.on('oracle_query', (ev: any) => {
+        audio.play('oracle');
         oracle.setState(ORACLE_STATE.THINKING);
         const consultor = agents.find(a => a.slug === ev.agent);
         if (consultor) {
@@ -338,6 +338,7 @@ export default function OfficeScene() {
         setTimeout(() => oracle.setState(ORACLE_STATE.IDLE), 2000);
       });
       socket.on('new_message', () => {
+        audio.play('notification');
         const mariana = agents.find(a => a.slug === 'mariana');
         if (mariana) {
           mariana.setPose(POSE.WORKING);
@@ -345,6 +346,7 @@ export default function OfficeScene() {
         }
       });
       socket.on('project_complete', (ev: any) => {
+        audio.play('success');
         const owner = ev?.agent ? agents.find(a => a.slug === ev.agent) : null;
         if (owner) {
           owner.setPose(POSE.HAPPY);
@@ -357,6 +359,7 @@ export default function OfficeScene() {
         }
       });
       socket.on('quote_accepted', () => {
+        audio.play('success');
         agents.forEach(a => { a.setPose(POSE.HAPPY); animateJump(a.container, app.ticker, 800); });
         // Big confetti from each room center
         for (const key of Object.keys(ROOMS)) {
@@ -433,9 +436,25 @@ export default function OfficeScene() {
         </div>
       </div>
 
-      <div style={{ position: 'absolute', bottom: 16, left: 16, color: '#666', fontFamily: 'system-ui, monospace', fontSize: 11 }}>
+      <div style={{ position: 'absolute', bottom: 16, left: 60, color: '#666', fontFamily: 'system-ui, monospace', fontSize: 11 }}>
         Click un personaje para chatear · ORACLE en el centro · 👻 Glitch deambula
       </div>
+
+      {/* Mute button */}
+      <button
+        onClick={() => audio.toggleMute()}
+        title={muted ? 'Activar audio' : 'Silenciar'}
+        style={{
+          position: 'absolute', bottom: 12, left: 12,
+          width: 36, height: 36, borderRadius: 18,
+          background: 'rgba(15,15,25,0.85)',
+          border: '1px solid rgba(177,79,255,0.4)',
+          color: '#fff', fontSize: 16, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          backdropFilter: 'blur(8px)'
+        }}>
+        {muted ? '🔇' : '🔊'}
+      </button>
 
       {selectedAgent && userId && (
         <ChatPanel agent={selectedAgent} userId={userId} onClose={() => setSelectedAgent(null)} />

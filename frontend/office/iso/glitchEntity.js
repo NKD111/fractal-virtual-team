@@ -71,53 +71,60 @@ export class GlitchEntity {
     this.container.addChild(c);
   }
 
-  /** Set target room directly. Uses GSAP teleport-out → relocate → teleport-in
-   *  with golden sparkle particles at both ends. */
+  /** Walk smoothly to target room. Speed ~2px/frame at 60fps = ~120px/s.
+   *  Vertical bob during walk simulates running. */
   goTo(roomKey) {
-    if (!ROOMS[roomKey] || roomKey === this.currentRoom) return;
+    if (!ROOMS[roomKey] || roomKey === this.currentRoom || this._walking) return;
+    this._walking = true;
     this.lastMoveAt = Date.now();
-    this.nextMoveIn = 30000 + Math.random() * 30000;
-    this._lerpT = 1; // disable old position-lerp animation
+    this.nextMoveIn = 18000 + Math.random() * 12000;
 
-    const fromRoom = ROOMS[this.currentRoom];
     const toRoom = ROOMS[roomKey];
-    const fromCenter = isoToScreen(fromRoom.gx + fromRoom.sx / 2, fromRoom.gy + fromRoom.sy / 2);
-    const toCenter   = isoToScreen(toRoom.gx + toRoom.sx / 2, toRoom.gy + toRoom.sy / 2);
+    const target = isoToScreen(toRoom.gx + toRoom.sx / 2, toRoom.gy + toRoom.sy / 2);
+    const dst = { x: target.x + 28, y: target.y + 12 };
+    const dist = Math.hypot(dst.x - this.container.x, dst.y - this.container.y);
+    const speedPxPerSec = 120;
+    const dur = Math.max(0.5, dist / speedPxPerSec);
 
-    // Sparkle at depart point (relative to container's parent)
-    const parent = this.container.parent;
-    if (parent) teleportSparkle(parent, this.container.x, this.container.y - 12);
-
-    // Out: alpha 0 + scale 0.5 in 0.3s
-    gsap.to(this.container, {
-      alpha: 0, duration: 0.3, ease: 'power2.in',
-      onComplete: () => {
-        this.container.x = toCenter.x + 28;
-        this.container.y = toCenter.y + 12;
-        this.currentRoom = roomKey;
-        if (parent) teleportSparkle(parent, this.container.x, this.container.y - 12);
-        gsap.to(this.container, { alpha: 1, duration: 0.3, ease: 'power2.out' });
-      }
+    // Run bob via scale.y (not y position, so it doesn't fight movement)
+    const bob = gsap.to(this.container.scale, {
+      y: 1.08, x: 0.94,
+      duration: 0.18,
+      ease: 'sine.inOut',
+      yoyo: true,
+      repeat: -1
     });
-    gsap.to(this.container.scale, { x: 0.5, y: 0.5, duration: 0.3, ease: 'power2.in',
-      onComplete: () => { gsap.to(this.container.scale, { x: 1, y: 1, duration: 0.3, ease: 'back.out(2)' }); }
+
+    // Move smoothly to target room
+    gsap.to(this.container, {
+      x: dst.x,
+      y: dst.y,
+      duration: dur,
+      ease: 'sine.inOut',
+      onComplete: () => {
+        bob.kill();
+        this.container.scale.set(1);
+        this.currentRoom = roomKey;
+        this._walking = false;
+      }
     });
   }
 
-  /** Pick a busy agent (random by default) and move to their room. */
+  /** Walk along a fixed patrol route, biased toward whichever agent is busy. */
   followBusyAgent(busyAgents = []) {
-    if (busyAgents.length === 0) {
-      // Random room
-      const keys = Object.keys(ROOMS).filter(k => k !== this.currentRoom && !ROOMS[k].isOracle);
-      const next = keys[Math.floor(Math.random() * keys.length)];
-      this.busyAgent = null;
-      this.goTo(next);
-      return;
+    // If a specific agent is busy, prefer them
+    if (busyAgents.length > 0) {
+      const target = busyAgents[Math.floor(Math.random() * busyAgents.length)];
+      this.busyAgent = target;
+      const roomKey = AGENT_ROOM[target];
+      if (roomKey && roomKey !== this.currentRoom) { this.goTo(roomKey); return; }
     }
-    const target = busyAgents[Math.floor(Math.random() * busyAgents.length)];
-    this.busyAgent = target;
-    const roomKey = AGENT_ROOM[target];
-    if (roomKey) this.goTo(roomKey);
+    // Otherwise patrol: Hub Central -> Content -> Finance -> Creative Studio -> repeat
+    const route = ['hub_central', 'content_room', 'finance_office', 'creative_studio'];
+    const idx = route.indexOf(this.currentRoom);
+    const next = route[(idx + 1) % route.length];
+    this.busyAgent = null;
+    if (next !== this.currentRoom) this.goTo(next);
   }
 
   update(dt, busyAgents) {

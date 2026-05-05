@@ -2,6 +2,7 @@
 // ORACLE in the center of the office — animated, with state machine.
 
 import { Container, Graphics, Sprite, Texture, Assets, Rectangle } from 'pixi.js';
+import { gsap } from 'gsap';
 
 export const ORACLE_STATE = {
   IDLE: 'idle',
@@ -29,6 +30,21 @@ export class OracleEntity {
 
     // Active beams (light lines to consultant agents)
     this.beams = [];
+
+    // Ambient orbit particles — 4 small purple dots
+    this.orbitParticles = [];
+    for (let i = 0; i < 4; i++) {
+      const p = new Graphics();
+      p.circle(0, 0, 2).fill(0xb14fff);
+      p.alpha = 0.7;
+      this.container.addChild(p);
+      const phase = (i / 4) * Math.PI * 2;
+      const radius = 28 + (i % 2) * 8;
+      const speed = 2.4 + Math.random() * 0.6;
+      this.orbitParticles.push({ g: p, phase, radius, speed, baseAlpha: 0.5 + Math.random() * 0.4 });
+      // gentle alpha pulse
+      gsap.to(p, { alpha: 0.2, duration: 1.5 + Math.random(), yoyo: true, repeat: -1, ease: 'sine.inOut', delay: i * 0.4 });
+    }
   }
 
   async tryLoadSpritesheet() {
@@ -114,6 +130,13 @@ export class OracleEntity {
     // Procedural core spin
     if (this.proceduralCore?.visible) {
       this.proceduralCore.rotation = this._t * 0.01;
+    }
+
+    // Update orbit particles (positions, alpha pulsed via GSAP separately)
+    for (const op of this.orbitParticles) {
+      const ang = op.phase + this._t * 0.02 * op.speed;
+      op.g.x = Math.cos(ang) * op.radius;
+      op.g.y = Math.sin(ang) * op.radius * 0.55; // squished orbit (iso projection)
     }
 
     // Animate beams
