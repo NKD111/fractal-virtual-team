@@ -72,6 +72,28 @@ router.post('/standup/run', async (req, res) => {
   }
 });
 
+// POST /api/creative-jam/run — multi-agent collaboration para identidad 2027.
+// 5 creativos brainstormean, Valentina sintetiza 2 propuestas, Diego genera
+// imágenes IA, Sofia revisa viabilidad, Mariana aprueba, email final con TODO.
+router.post('/creative-jam/run', async (req, res) => {
+  try {
+    const gapMs = Math.max(3000, Math.min(15000, parseInt(req.body?.gapMs, 10) || 7000));
+    const userEmail = String(req.body?.email || 'nakedgeometry19@gmail.com').trim();
+    const { runCreativeJam } = require('../routines/creative-jam');
+    runCreativeJam({ userEmail, gapMs }).catch(err => console.error('creative-jam:', err.message));
+    const estSec = (5 + 3 + 1 + 2 + 2 + 1) * gapMs / 1000 + 60; // ~brainstorm + sintesis + imágenes
+    res.json({
+      started: true,
+      gapMs,
+      email_target: userEmail,
+      estimated_duration_sec: Math.round(estSec),
+      hint: 'Abre el Office View — verás a los 5 creativos rebotando ideas y luego Valentina cierra. Email final llega cuando termina.'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/task/dispatch — pipeline visual de tarea
 //   1. Mariana clasifica (qué agente)
 //   2. Emite eventos para que el Office View anime una bolita
