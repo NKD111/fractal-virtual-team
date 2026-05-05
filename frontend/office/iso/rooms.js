@@ -5,50 +5,53 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { isoToScreen, TILE_W, TILE_H } from './isoMath';
 
-// Room layout: gridX, gridY, sizeX (tiles), sizeY (tiles), label, color, agents
+// Room layout: gridX, gridY, sizeX (tiles), sizeY (tiles), label, color, agents.
+// NOTE: gx/gy remapped to align with painted rooms in /assets/sprites/LAYOUT.png
+// (2200x1228 @ scale 0.42, anchored at world 0,0). Each room's CENTER lands
+// inside its corresponding painted room.
 export const ROOMS = {
   hub_central: {
-    gx: 0, gy: 0, sx: 4, sy: 4,
+    gx: -2, gy: -2, sx: 4, sy: 4,
     label: 'HUB CENTRAL', color: 0xFF6B9D,
     agents: ['mariana']
   },
   client_relations: {
-    gx: 5, gy: -1, sx: 3, sy: 3,
+    gx: -3, gy: -7, sx: 3, sy: 3,
     label: 'CLIENT RELATIONS', color: 0x9B59B6,
     agents: ['diana']
   },
   creative_studio: {
-    gx: -7, gy: 0, sx: 5, sy: 4,
+    gx: -9, gy: -4, sx: 5, sy: 4,
     label: 'CREATIVE STUDIO', color: 0xFF6B35,
     agents: ['carlos', 'diego', 'max', 'valentina']
   },
   content_room: {
-    gx: -1, gy: 5, sx: 3, sy: 3,
+    gx: -3, gy: 2, sx: 3, sy: 3,
     label: 'CONTENT', color: 0x3498DB,
     agents: ['alex']
   },
   pm_corner: {
-    gx: 5, gy: 4, sx: 3, sy: 3,
-    label: 'PM CORNER', color: 0x27AE60,
+    gx: 2, gy: 2, sx: 3, sy: 3,
+    label: 'BUILD', color: 0x27AE60,
     agents: ['sofia']
   },
   analytics_room: {
-    gx: 9, gy: 1, sx: 3, sy: 3,
+    gx: 8, gy: -2, sx: 3, sy: 3,
     label: 'ANALYTICS', color: 0xF39C12,
     agents: ['lucas']
   },
   finance_office: {
-    gx: -7, gy: 5, sx: 3, sy: 3,
+    gx: -9, gy: 2, sx: 3, sy: 3,
     label: 'FINANCE', color: 0x16A085,
     agents: ['roberto']
   },
   qc_station: {
-    gx: 1, gy: 9, sx: 2, sy: 2,
+    gx: -1, gy: 8, sx: 2, sy: 2,
     label: 'QC', color: 0x7F8C8D,
     agents: ['qcbot']
   },
   oracle_tower: {
-    gx: 0, gy: -5, sx: 3, sy: 3,
+    gx: -3, gy: -7, sx: 3, sy: 3,
     label: 'ORACLE', color: 0xB14FFF,
     agents: ['oracle'], isOracle: true
   }
