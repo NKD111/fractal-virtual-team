@@ -72,6 +72,37 @@ router.post('/standup/run', async (req, res) => {
   }
 });
 
+// POST /api/group-chat/run — conversación grupal con HILO coherente.
+// Un agente arranca un tema, los demás van encadenando respuestas (Claude
+// lee el transcript de la charla y genera réplicas conectadas).
+//
+// Body:
+//   topics?: número de temas (default 2)
+//   repliesPerTopic?: respuestas por tema después del kicker (default 8)
+//   gapMs?: tiempo entre líneas (default 8000)
+//   theme?: tema forzado en texto libre, ej "series de anime"
+router.post('/group-chat/run', async (req, res) => {
+  try {
+    const topics = Math.max(1, Math.min(5, parseInt(req.body?.topics, 10) || 2));
+    const repliesPerTopic = Math.max(3, Math.min(20, parseInt(req.body?.repliesPerTopic, 10) || 8));
+    const gapMs = Math.max(3000, Math.min(15000, parseInt(req.body?.gapMs, 10) || 8000));
+    const theme = req.body?.theme ? String(req.body.theme).trim() : null;
+    const { runGroupChat } = require('../routines/group-chat');
+    runGroupChat({ topics, repliesPerTopic, gapMs, theme }).catch(err => console.error('group-chat:', err.message));
+    const totalLines = topics * (1 + repliesPerTopic);
+    const estSec = (totalLines * gapMs + topics * gapMs * 1.5) / 1000;
+    res.json({
+      started: true,
+      topics, repliesPerTopic, gapMs, theme,
+      total_lines: totalLines,
+      estimated_duration_sec: Math.round(estSec),
+      hint: 'Abre el Office View — verás un agente arrancar el hilo y los demás encadenarse.'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/intro-chat/run — los 11 agentes se presentan, hablan de gustos y
 // reaccionan entre sí durante ~5 min. Cada línea se broadcastea como
 // chat_bubble al Office View. Devuelve inmediatamente; corre en background.
