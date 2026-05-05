@@ -47,15 +47,17 @@ export class NexusEntity {
       const sheet = await Assets.load('/assets/sprites/nexus.png');
       const base = sheet?.source ? sheet : sheet?.texture || sheet;
       const w = base.width, h = base.height;
-      // PNG is 1x4 horizontal with content in upper 60%. Crop unused bottom 40%.
+      // PNG (512x512) is 1x4 horizontal. Each monitor occupies the centered
+      // vertical band y=60..380 (320px tall). Crop tightly around it.
       const cw = Math.floor(w / 4);
-      const ch = Math.floor(h * 0.62);
+      const fy = Math.round(h * (60 / 512));
+      const ch = Math.round(h * ((380 - 60) / 512));
 
       this.stateTextures = {
-        [NEXUS_STATE.IDLE]:      new Texture({ source: base.source, frame: new Rectangle(0,    0, cw, ch) }),
-        [NEXUS_STATE.ACTIVE]:    new Texture({ source: base.source, frame: new Rectangle(cw,   0, cw, ch) }),
-        [NEXUS_STATE.ALERT]:     new Texture({ source: base.source, frame: new Rectangle(cw*2, 0, cw, ch) }),
-        [NEXUS_STATE.REPORTING]: new Texture({ source: base.source, frame: new Rectangle(cw*3, 0, cw, ch) })
+        [NEXUS_STATE.IDLE]:      new Texture({ source: base.source, frame: new Rectangle(0,    fy, cw, ch) }),
+        [NEXUS_STATE.ACTIVE]:    new Texture({ source: base.source, frame: new Rectangle(cw,   fy, cw, ch) }),
+        [NEXUS_STATE.ALERT]:     new Texture({ source: base.source, frame: new Rectangle(cw*2, fy, cw, ch) }),
+        [NEXUS_STATE.REPORTING]: new Texture({ source: base.source, frame: new Rectangle(cw*3, fy, cw, ch) })
       };
       this.spriteImg = new Sprite(this.stateTextures[NEXUS_STATE.IDLE]);
       this.spriteImg.anchor.set(0.5, 1); // anchor at feet, like agents

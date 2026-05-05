@@ -65,7 +65,7 @@ export class AtlasEntity {
       });
       this.spriteImg = new Sprite(this.stateTextures[ATLAS_STATE.IDLE]);
       this.spriteImg.anchor.set(0.5, 1); // anchor at feet, like agents
-      const targetH = 80;
+      const targetH = 72;
       this.spriteImg.scale.set(targetH / ch);
       this.container.addChildAt(this.spriteImg, 0);
       if (this.proceduralBox) this.proceduralBox.visible = false;

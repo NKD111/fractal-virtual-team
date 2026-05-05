@@ -134,11 +134,11 @@ export class GlitchEntity {
   }
 
   setBasePosition(x, y) {
-    this._baseOffsetX = 0; this._baseOffsetY = 0;
-    this.container.x = x; this.container.y = y;
-    // Snap to current room center
+    // Sit slightly off-center so we don't overlap whichever agent owns this room.
+    this._baseOffsetX = 28; this._baseOffsetY = 12;
     const room = ROOMS[this.currentRoom];
     const c = isoToScreen(room.gx + room.sx / 2, room.gy + room.sy / 2);
-    this.container.x = c.x; this.container.y = c.y;
+    this.container.x = c.x + this._baseOffsetX;
+    this.container.y = c.y + this._baseOffsetY;
   }
 }
