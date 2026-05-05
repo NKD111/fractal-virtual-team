@@ -214,8 +214,9 @@ class BaseAgent {
     // 5. Cargar relaciones con otros agentes
     const teamRelationships = this.getTeamRelationships();
 
-    // 6. Construir prompt completo
-    return `${this.basePrompt}
+    // 6. Construir prompt completo. Si Fase 8.5 inyectó baseContext en el
+    //    agente al boot, lo prepend antes de todo lo demás.
+    return `${this.baseContext ? this.baseContext + '\n\n---\n\n' : ''}${this.basePrompt}
 
 ═══ CONTEXTO ACTUAL ═══
 

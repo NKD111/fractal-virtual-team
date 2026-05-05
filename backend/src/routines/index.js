@@ -4,7 +4,7 @@
 const cron = require('node-cron');
 const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
-const { runDailyStandup } = require('./daily-standup');
+const DailyStandup = require('./daily-standup');
 
 const TZ = { timezone: 'America/Mexico_City' };
 
@@ -58,8 +58,8 @@ class RoutineManager {
     let dayContext = '';
     let standupResult = null;
     try {
-      standupResult = await runDailyStandup();
-      dayContext = standupResult?.oracleSummary || '';
+      standupResult = await DailyStandup.run();
+      dayContext = standupResult?.summary || '';
     } catch (err) {
       console.error('  ✗ Standup falló (digest sigue):', err.message);
     }

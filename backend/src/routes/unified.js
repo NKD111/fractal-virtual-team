@@ -50,6 +50,39 @@ router.get('/users/me', async (req, res) => {
   }
 });
 
+// POST /api/standup/run — manual trigger for the daily standup orchestrator.
+// Used to verify the full pipeline works (agents report → Mariana synthesizes
+// → WhatsApp arrives at +525534189583 → Office View shows chat bubbles).
+router.post('/standup/run', async (req, res) => {
+  try {
+    const DailyStandup = require('../routines/daily-standup');
+    const result = await DailyStandup.run();
+    res.json({
+      success: true,
+      message: 'Standup ejecutado',
+      whatsapp_sent: result.whatsapp_sent,
+      summary: result.summary,
+      standups: result.standups
+    });
+  } catch (err) {
+    console.error('Standup error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/standup/latest — last standup events from the log
+router.get('/standup/latest', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('system_events')
+      .select('event_type, details, started_at')
+      .in('event_type', ['agent_standup', 'daily_summary'])
+      .order('started_at', { ascending: false })
+      .limit(20);
+    res.json({ events: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/unified/status — for verification
 router.get('/status', async (req, res) => {
   try {

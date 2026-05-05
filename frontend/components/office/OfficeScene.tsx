@@ -337,6 +337,10 @@ export default function OfficeScene() {
       socket.on('chat_bubble', (ev: any) => {
         if (ev?.agent && ev?.text) showBubble(ev.agent, ev.text, 5000);
       });
+      // Daily standup broadcasts as 'agent_standup' (per Fase 8.5 spec)
+      socket.on('agent_standup', (ev: any) => {
+        if (ev?.agent && ev?.message) showBubble(ev.agent, ev.message, 5000);
+      });
       socket.on('agent_event', (ev: any) => {
         const a = agents.find(x => x.slug === ev.agent);
         if (!a) return;

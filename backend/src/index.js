@@ -201,6 +201,26 @@ server.listen(PORT, async () => {
     console.error('[Fase 6] init error:', err.message);
   }
 
+  // Fase 8.5 — inject business context into every initialized agent
+  try {
+    const agentContext = require('./agents/agent-context');
+    const agentNames = ['mariana', 'diana', 'carlos', 'alex', 'sofia', 'lucas',
+                        'diego', 'max', 'valentina', 'roberto', 'qcbot'];
+    for (const name of agentNames) {
+      try {
+        const ctx = await agentContext.buildContext(name);
+        const target = global[name] || global[name.toUpperCase()];
+        if (target) {
+          target.baseContext = ctx;
+          console.log(`  ✓ ${name.toUpperCase()} contexto inyectado (${ctx.length} chars)`);
+        }
+      } catch (e) { /* per-agent failure is non-fatal */ }
+    }
+    console.log('🧠 FASE 8.5: contexto de negocio inyectado en agentes');
+  } catch (err) {
+    console.error('[Fase 8.5] context injection error:', err.message);
+  }
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {

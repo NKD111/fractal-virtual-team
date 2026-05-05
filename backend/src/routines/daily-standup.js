@@ -1,132 +1,191 @@
 // backend/src/routines/daily-standup.js
-// Fase 8.5: Mariana corre un standup matutino con el equipo. Cada agente
-// reporta su status (autogenerado por Claude con contexto real de DB).
-// ORACLE sintetiza. Resultado: registro en `daily_context` + broadcast al
-// Office View (chat bubbles via WebSocket).
+// Fase 8.5 PASO 4: Daily Standup orchestrator (per spec).
+// Mariana sintetiza el día. Cada agente reporta. Llega WhatsApp a Neiky
+// y se broadcastean chat bubbles al Office View.
 
-const { supabase } = require('../core/supabase');
 const Anthropic = require('@anthropic-ai/sdk');
+const { supabase } = require('../core/supabase');
+const agentContext = require('../agents/agent-context');
+const { notifyNeiky } = require('../core/whatsapp');
 
-const TEAM = ['mariana', 'diana', 'carlos', 'diego', 'max', 'valentina', 'alex', 'sofia', 'lucas', 'roberto', 'qcbot'];
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
 
-const ROLES = {
-  mariana:   'Hub Coordinator',
-  diana:     'Senior Client Manager',
-  carlos:    'Senior Designer',
-  diego:     'Senior Designer Editorial',
-  max:       'AI Video Editor',
-  valentina: 'Art Director',
-  alex:      'Content Creator',
-  sofia:     'Project Manager',
-  lucas:     'Analytics',
-  roberto:   'CFO',
-  qcbot:     'Quality Control Bot'
-};
+const TEAM_AGENTS = [
+  { name: 'CARLOS',  role: 'Senior Designer',  focus: 'diseño y branding' },
+  { name: 'SOFIA',   role: 'Project Manager',  focus: 'proyectos y deadlines' },
+  { name: 'LUCAS',   role: 'Analytics',        focus: 'métricas y datos' },
+  { name: 'ROBERTO', role: 'CFO',              focus: 'finanzas' },
+  { name: 'DIANA',   role: 'Client Manager',   focus: 'clientes' }
+];
 
-/** Emit a chat bubble over an agent in the Office View (5s display). */
-function emitBubble(agentSlug, text, kind = 'standup') {
-  try {
-    if (global.io) {
-      global.io.emit('chat_bubble', {
-        agent: agentSlug,
-        text: text.length > 60 ? text.slice(0, 57) + '…' : text,
-        kind,
-        ts: Date.now()
-      });
+class DailyStandup {
+
+  async run() {
+    console.log('🌅 Daily Standup iniciando...');
+
+    // 1. Contexto del día (clientes/proyectos/promesas reales en DB)
+    const context = await agentContext.buildContext('mariana');
+
+    // 2. Cada agente del equipo reporta
+    const standups = await this.generateTeamStandups(context);
+
+    // 3. Mariana sintetiza
+    const summary = await this.generateMarianasSummary(standups, context);
+
+    // 4. Persiste en DB para histórico
+    await this.saveStandupToDB(standups, summary);
+
+    // 5. WhatsApp a Neiky
+    const sent = await this.sendToNeiky(summary);
+
+    // 6. Broadcast al Office View (chat bubbles staggered)
+    this.broadcastToOffice(standups);
+
+    console.log(`✅ Daily Standup completado (whatsapp_sent=${sent})`);
+    return { standups, summary, whatsapp_sent: sent };
+  }
+
+  async generateTeamStandups(context) {
+    const standups = {};
+    for (const agent of TEAM_AGENTS) {
+      const fallback = `${agent.name} en su ${agent.focus}, sin novedades. Listo para el día.`;
+      let text = fallback;
+      if (anthropic) {
+        try {
+          const res = await anthropic.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 150,
+            system: `${context}
+
+Eres ${agent.name}, ${agent.role} de Fractal MX.
+Responde el standup matutino en máximo 2 oraciones.
+Sé específico sobre los proyectos actuales.
+Tono natural y directo, como en un equipo real.
+No uses emojis excesivos.`,
+            messages: [{ role: 'user', content: '¿Qué vas a trabajar hoy?' }]
+          });
+          text = res.content[0]?.text?.trim() || fallback;
+        } catch (e) {
+          console.warn(`[standup] ${agent.name} fallback:`, e.message);
+        }
+      }
+      standups[agent.name] = { agent: agent.name, role: agent.role, message: text, timestamp: new Date() };
+      console.log(`  ✓ ${agent.name}: ${text.slice(0, 80)}…`);
     }
-  } catch (_) { /* no-op */ }
-}
-
-/** Pull lightweight ops context from DB for prompt injection. */
-async function gatherOpsContext() {
-  const [proj, prom, msgs] = await Promise.allSettled([
-    supabase.from('projects').select('name, status, deadline, clients(name)').not('status', 'in', '("completed","cancelled")').limit(15),
-    supabase.from('pending_promises').select('promise_text, execute_at, user_phone').eq('status', 'pending').limit(10),
-    supabase.from('messages_log').select('user_phone, message_text, created_at').order('created_at', { ascending: false }).limit(8)
-  ]);
-  return {
-    projects: proj.value?.data || [],
-    promises: prom.value?.data || [],
-    recentMessages: msgs.value?.data || []
-  };
-}
-
-/** Generate one agent's standup line using Claude. Falls back to a
- *  templated line if the API call fails. */
-async function generateAgentLine(slug, role, opsContext) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const fallback = `${slug} reportando — sin novedades, listos para el día.`;
-  if (!apiKey) return fallback;
-  try {
-    const client = new Anthropic({ apiKey });
-    const projSummary = opsContext.projects.slice(0, 5).map(p => `${p.name} (${p.status})`).join(', ');
-    const promSummary = opsContext.promises.length;
-    const msg = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 80,
-      messages: [{
-        role: 'user',
-        content: `Eres ${slug.toUpperCase()} (${role}) en el daily standup matutino de Fractal MX.
-Contexto: ${projSummary || 'sin proyectos activos'}. ${promSummary} promesas pendientes.
-Reporta tu status del día en UNA frase corta (máx 18 palabras), tono casual de agencia.
-Solo la frase, sin prefijos ni nombre.`
-      }]
-    });
-    return msg.content[0]?.text?.trim() || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-/** Run the full standup and return the synthesized summary. */
-async function runDailyStandup({ silent = false } = {}) {
-  console.log('🗣️  ROUTINE: Daily Standup iniciado...');
-  const ops = await gatherOpsContext();
-
-  // Mariana opens
-  if (!silent) emitBubble('mariana', 'Buenos días equipo, ¿cómo amanecemos?', 'standup');
-  await new Promise(r => setTimeout(r, 500));
-
-  // Each agent reports (sequential so bubbles appear in order in the Office)
-  const reports = {};
-  for (const slug of TEAM) {
-    if (slug === 'mariana') continue;
-    const line = await generateAgentLine(slug, ROLES[slug], ops);
-    reports[slug] = line;
-    if (!silent) emitBubble(slug, line, 'standup');
-    await new Promise(r => setTimeout(r, 800)); // stagger so bubbles read naturally
+    return standups;
   }
 
-  // Oracle synthesizes
-  let oracleSummary = '';
-  if (global.oracle?.isInitialized) {
+  async generateMarianasSummary(standups, context) {
+    const standupText = Object.values(standups).map(s => `${s.agent}: ${s.message}`).join('\n');
+    const fallback = `Equipo activo. ${Object.keys(standups).length} agentes reportaron. ` +
+                     `Foco del día: revisar proyectos activos y mantener seguimiento con clientes.`;
+
+    if (!anthropic) return fallback;
     try {
-      const r = await global.oracle.consult({
-        question: `Equipo de Fractal MX en standup matutino:
-${Object.entries(reports).map(([s, t]) => `- ${s}: ${t}`).join('\n')}
+      const res = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 400,
+        system: `${context}
 
-Sintetiza en 2-3 puntos accionables el foco del día. Tono directo.`,
-        agent: { id: null, name: 'SYSTEM', role: 'standup_synthesis' },
-        depth: 'quick'
+Eres MARIANA, Hub Coordinator de Fractal MX.
+Genera el resumen matutino para Neiky (el director).
+Incluye: estado del equipo, proyectos prioritarios del día, alertas si las hay.
+Tono: profesional pero cercano. Máximo 5 puntos clave. Emojis con moderación.`,
+        messages: [{
+          role: 'user',
+          content: `El equipo ha reportado:\n\n${standupText}\n\nGenera el resumen ejecutivo del día para Neiky.`
+        }]
       });
-      oracleSummary = r?.answer || '';
+      return res.content[0]?.text?.trim() || fallback;
+    } catch (e) {
+      console.warn('[standup] Mariana summary fallback:', e.message);
+      return fallback;
+    }
+  }
+
+  async saveStandupToDB(standups, summary) {
+    const today = new Date().toISOString().slice(0, 10);
+    const reports = {};
+    for (const [k, v] of Object.entries(standups)) reports[k.toLowerCase()] = v.message;
+
+    // Persist daily_context (one row per date)
+    try {
+      await supabase.from('daily_context').upsert({
+        context_date: today,
+        reports,
+        oracle_summary: summary,
+        project_count: 0,
+        promise_count: 0,
+        generated_at: new Date().toISOString()
+      }, { onConflict: 'context_date' });
+    } catch (_) {}
+
+    // Persist event log entries
+    for (const standup of Object.values(standups)) {
+      try {
+        await supabase.from('system_events').insert({
+          event_type: 'agent_standup',
+          severity: 'info',
+          service_key: 'standup',
+          details: {
+            agent: standup.agent,
+            message: standup.message,
+            type: 'daily_standup',
+            date: today
+          }
+        });
+      } catch (_) {}
+    }
+    try {
+      await supabase.from('system_events').insert({
+        event_type: 'daily_summary',
+        severity: 'info',
+        service_key: 'standup',
+        details: { summary, date: today, agents_count: Object.keys(standups).length }
+      });
     } catch (_) {}
   }
-  if (oracleSummary && !silent) emitBubble('oracle', oracleSummary.slice(0, 60), 'standup');
 
-  // Persist
-  const todayKey = new Date().toISOString().slice(0, 10);
-  await supabase.from('daily_context').upsert({
-    context_date: todayKey,
-    reports,
-    oracle_summary: oracleSummary,
-    project_count: ops.projects.length,
-    promise_count: ops.promises.length,
-    generated_at: new Date().toISOString()
-  }, { onConflict: 'context_date' }).then(() => {}).catch(() => {});
+  async sendToNeiky(summary) {
+    const message =
+      `🌅 *Buenos días Neiky!*\n\n` +
+      `${summary}\n\n` +
+      `— Mariana 🤖 | Fractal MX`;
+    try {
+      await notifyNeiky(message);
+      console.log('  ✓ WhatsApp enviado a Neiky');
+      return true;
+    } catch (err) {
+      console.error('  ✗ WhatsApp a Neiky falló:', err.message);
+      return false;
+    }
+  }
 
-  console.log(`✅ Daily Standup: ${Object.keys(reports).length} agentes reportaron`);
-  return { reports, oracleSummary, ops };
+  broadcastToOffice(standups) {
+    if (!global.io) return;
+    let delay = 0;
+    for (const standup of Object.values(standups)) {
+      setTimeout(() => {
+        try {
+          global.io.emit('agent_standup', {
+            agent: standup.agent.toLowerCase(),
+            message: standup.message,
+            type: 'standup'
+          });
+          // Also fire chat_bubble for consistency with the existing handler
+          global.io.emit('chat_bubble', {
+            agent: standup.agent.toLowerCase(),
+            text: standup.message.length > 60 ? standup.message.slice(0, 57) + '…' : standup.message,
+            kind: 'standup',
+            ts: Date.now()
+          });
+        } catch (_) {}
+      }, delay);
+      delay += 2000;
+    }
+  }
 }
 
-module.exports = { runDailyStandup, emitBubble, TEAM, ROLES };
+module.exports = new DailyStandup();
