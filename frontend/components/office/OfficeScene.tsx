@@ -303,8 +303,40 @@ export default function OfficeScene() {
 
       const recentlyBusy: Set<string> = new Set();
 
+      // Chat bubble overlay helper. Anchors a small label above the agent and
+      // fades it out after `lifeMs`. Used by the daily-standup WS broadcast.
+      const showBubble = (agentSlug: string, text: string, lifeMs = 5000) => {
+        const a = agents.find(x => x.slug === agentSlug);
+        // Allow Oracle to receive bubbles too
+        const target = a?.container ?? (agentSlug === 'oracle' ? oracle.container : null);
+        if (!target) return;
+        const style = new TextStyle({
+          fontFamily: 'system-ui, monospace', fontSize: 10, fontWeight: '500',
+          fill: 0xffffff, stroke: { color: 0x0a0a14, width: 3 },
+          wordWrap: true, wordWrapWidth: 140, align: 'center'
+        });
+        const bubble = new Text({ text, style });
+        bubble.anchor.set(0.5, 1);
+        bubble.position.set(0, -68);
+        bubble.alpha = 0;
+        bubble.zIndex = 99999;
+        target.addChild(bubble);
+        gsap.to(bubble, { alpha: 1, duration: 0.18 });
+        gsap.delayedCall(lifeMs / 1000, () => {
+          gsap.to(bubble, { alpha: 0, duration: 0.3, onComplete: () => bubble.destroy() });
+        });
+        // Working pose during bubble
+        if (a) {
+          a.setPose(POSE.WORKING);
+          setTimeout(() => a.setPose(POSE.IDLE), lifeMs);
+        }
+      };
+
       // WebSocket events drive poses
       const socket: Socket = io(API_URL, { transports: ['websocket', 'polling'] });
+      socket.on('chat_bubble', (ev: any) => {
+        if (ev?.agent && ev?.text) showBubble(ev.agent, ev.text, 5000);
+      });
       socket.on('agent_event', (ev: any) => {
         const a = agents.find(x => x.slug === ev.agent);
         if (!a) return;

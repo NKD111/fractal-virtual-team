@@ -4,6 +4,7 @@
 const cron = require('node-cron');
 const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
+const { runDailyStandup } = require('./daily-standup');
 
 const TZ = { timezone: 'America/Mexico_City' };
 
@@ -52,8 +53,19 @@ class RoutineManager {
       return days < 3;
     });
 
+    // Run team standup BEFORE building Neiky's digest. Standup populates
+    // `daily_context` table and emits chat bubbles to the live Office View.
     let dayContext = '';
-    if (global.oracle?.isInitialized) {
+    let standupResult = null;
+    try {
+      standupResult = await runDailyStandup();
+      dayContext = standupResult?.oracleSummary || '';
+    } catch (err) {
+      console.error('  ✗ Standup falló (digest sigue):', err.message);
+    }
+
+    // Fall back to direct Oracle query if standup didn't yield a summary
+    if (!dayContext && global.oracle?.isInitialized) {
       try {
         const r = await global.oracle.consult({
           question: `Resumen ejecutivo del día para Mariana:
