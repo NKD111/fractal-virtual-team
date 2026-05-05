@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Application, Container, Sprite, Text, TextStyle } from 'pixi.js';
+import { Application, Container, Sprite, Text, TextStyle, Graphics } from 'pixi.js';
 import { io, Socket } from 'socket.io-client';
 import { gsap } from 'gsap';
 import ChatPanel from './ChatPanel';
@@ -111,7 +111,7 @@ export default function OfficeScene() {
       const oracleCenter = isoToScreen(oracleRoom.gx + oracleRoom.sx / 2, oracleRoom.gy + oracleRoom.sy / 2);
       oracle.container.x = oracleCenter.x;
       oracle.setBaseY(oracleCenter.y - 8);
-      oracle.container.zIndex = oracleCenter.x + oracleCenter.y * 1000;
+      oracle.container.zIndex = Math.round(oracleCenter.y) + 1000;
       world.addChild(oracle.container);
       oracle.tryLoadSpritesheet();
       oracle.container.on('pointertap', () => {
@@ -137,6 +137,11 @@ export default function OfficeScene() {
         root.cursor = 'pointer';
         let setPose: (p: number) => void;
 
+        // Soft elliptical ground shadow (Habbo style), drawn FIRST so sprite covers it
+        const shadow = new Graphics();
+        shadow.ellipse(0, -2, 16, 5).fill({ color: 0x000000, alpha: 0.45 });
+        root.addChild(shadow);
+
         if (sheet.hasReal && sheet.textures) {
           const spriteImg = new Sprite(sheet.textures[POSE.IDLE]);
           spriteImg.anchor.set(0.5, 1);
@@ -156,7 +161,9 @@ export default function OfficeScene() {
         const pos = agentScreenPos(slug);
         root.x = pos.x;
         root.y = pos.y;
-        root.zIndex = pos.x + pos.y * 1000;
+        // Painter's algorithm: depth-sort by Y. Add baseline so agents always
+        // render ABOVE the platforms (zIndex -1000), regardless of negative Y.
+        root.zIndex = Math.round(pos.y) + 1000;
         console.log(`[agent] ${slug} mode=${sheet.hasReal ? 'REAL' : 'PROC'} pos=(${Math.round(pos.x)},${Math.round(pos.y)})`);
 
         // Hover label
@@ -203,7 +210,7 @@ export default function OfficeScene() {
       nexus.container.on('pointertap', () => setGuardianMode('nexus'));
       const nexusPos = isoToScreen(oracleRoom.gx + oracleRoom.sx + 1.5, oracleRoom.gy + 0.5);
       nexus.setBasePosition(nexusPos.x, nexusPos.y);
-      nexus.container.zIndex = nexusPos.x + nexusPos.y * 1000;
+      nexus.container.zIndex = Math.round(nexusPos.y) + 1000;
 
       // ATLAS — world entity, bottom-right of Oracle tower
       const atlas = new AtlasEntity();
@@ -214,7 +221,7 @@ export default function OfficeScene() {
       atlas.container.on('pointertap', () => setGuardianMode('atlas'));
       const atlasPos = isoToScreen(oracleRoom.gx + oracleRoom.sx + 1.5, oracleRoom.gy + oracleRoom.sy + 0.5);
       atlas.setBasePosition(atlasPos.x, atlasPos.y);
-      atlas.container.zIndex = atlasPos.x + atlasPos.y * 1000;
+      atlas.container.zIndex = Math.round(atlasPos.y) + 1000;
 
       const recentlyBusy: Set<string> = new Set();
 
