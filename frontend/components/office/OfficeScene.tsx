@@ -401,6 +401,9 @@ export default function OfficeScene() {
         root.on('pointerover', () => {
           gsap.to(hoverLabel, { alpha: 1, duration: 0.2 });
           if (!editModeRef.current) gsap.to(root.scale, { x: 1.08, y: 1.08, duration: 0.18 });
+          // Re-show last bubble for this agent if any
+          const fn = (window as any).__showLastBubble;
+          if (fn) fn(slug);
         });
         root.on('pointerout', () => {
           gsap.to(hoverLabel, { alpha: 0, duration: 0.2 });
@@ -478,60 +481,108 @@ export default function OfficeScene() {
 
       const recentlyBusy: Set<string> = new Set();
 
+      // Cache last bubble text per agent so hover re-shows it.
+      const lastBubbles = new Map<string, string>();
+      const activeBubbles = new Map<string, Container>();
+
       // Chat bubble overlay — comic-style: white rounded rect + black border
-      // + tail pointing down. Used by daily-standup + intro-chat WS broadcast.
-      const showBubble = (agentSlug: string, text: string, lifeMs = 5000) => {
+      // + tail pointing down + X close button. Used by daily-standup +
+      // intro-chat WS broadcast and by agent hover (re-show last bubble).
+      const showBubble = (agentSlug: string, text: string, lifeMs = 15000, opts: { fromHover?: boolean } = {}) => {
         const a = agents.find(x => x.slug === agentSlug);
         const target = a?.container ?? (agentSlug === 'oracle' ? oracle.container : null);
-        if (!target) return;
+        if (!target || !text) return;
 
-        // Container holds rect + text together
+        // Don't cache hover replays — only fresh messages
+        if (!opts.fromHover) lastBubbles.set(agentSlug, text);
+
+        // Replace existing bubble for this agent
+        const existing = activeBubbles.get(agentSlug);
+        if (existing) { try { existing.destroy(); } catch {} }
+
         const bubbleRoot = new Container();
         bubbleRoot.alpha = 0;
         bubbleRoot.zIndex = 99999;
+        bubbleRoot.eventMode = 'static';
+        activeBubbles.set(agentSlug, bubbleRoot);
 
-        const padding = 7;
-        const maxW = 160;
+        const padX = 8, padY = 6;
+        const maxW = 220; // wider so text rarely truncates
+        const closeSize = 12;
         const style = new TextStyle({
           fontFamily: '"VT323", "Courier New", monospace',
-          fontSize: 13, fontWeight: '400',
+          fontSize: 11, fontWeight: '400',
           fill: 0x1a1a14,
-          wordWrap: true, wordWrapWidth: maxW - padding * 2, align: 'center',
-          lineHeight: 14
+          wordWrap: true, wordWrapWidth: maxW - padX * 2 - closeSize, align: 'left',
+          lineHeight: 12
         });
         const t = new Text({ text, style });
 
-        const w = Math.min(maxW, t.width + padding * 2);
-        const h = t.height + padding * 2;
+        const w = Math.min(maxW, t.width + padX * 2 + closeSize + 4);
+        const h = t.height + padY * 2;
         const rect = new Graphics();
         rect.roundRect(-w / 2, -h, w, h, 8)
-          .fill({ color: 0xfafaf6, alpha: 0.96 })
+          .fill({ color: 0xfafaf6, alpha: 0.97 })
           .stroke({ color: 0x1a1a14, width: 2 });
-        // Comic tail pointing down
+        // Comic tail pointing down toward the agent's head
         rect.poly([-5, 0, 5, 0, 0, 7])
-          .fill({ color: 0xfafaf6, alpha: 0.96 })
+          .fill({ color: 0xfafaf6, alpha: 0.97 })
           .stroke({ color: 0x1a1a14, width: 2 });
 
-        t.anchor.set(0.5, 0);
-        t.position.set(0, -h + padding);
+        t.anchor.set(0, 0);
+        t.position.set(-w / 2 + padX, -h + padY);
+
+        // Close button (X) top-right
+        const closeBtn = new Container();
+        closeBtn.eventMode = 'static';
+        closeBtn.cursor = 'pointer';
+        const closeBg = new Graphics();
+        closeBg.circle(0, 0, closeSize / 2 + 2).fill(0x1a1a14);
+        const closeX = new Text({
+          text: '×',
+          style: new TextStyle({
+            fontFamily: 'system-ui', fontSize: 14, fontWeight: '700', fill: 0xfafaf6
+          })
+        });
+        closeX.anchor.set(0.5, 0.55);
+        closeBtn.addChild(closeBg);
+        closeBtn.addChild(closeX);
+        closeBtn.position.set(w / 2 - closeSize / 2 - 2, -h + closeSize / 2 + 2);
+        closeBtn.on('pointertap', (ev: any) => {
+          ev.stopPropagation?.();
+          gsap.to(bubbleRoot, { alpha: 0, duration: 0.2, onComplete: () => {
+            try { bubbleRoot.destroy(); } catch {}
+            activeBubbles.delete(agentSlug);
+          }});
+        });
 
         bubbleRoot.addChild(rect);
         bubbleRoot.addChild(t);
+        bubbleRoot.addChild(closeBtn);
         bubbleRoot.position.set(0, -62);
         target.addChild(bubbleRoot);
 
-        gsap.to(bubbleRoot, { alpha: 1, duration: 0.18, ease: 'back.out(1.6)' });
+        gsap.to(bubbleRoot, { alpha: 1, duration: 0.18 });
         gsap.from(bubbleRoot.scale, { x: 0.6, y: 0.6, duration: 0.22, ease: 'back.out(2)' });
 
         gsap.delayedCall(lifeMs / 1000, () => {
-          gsap.to(bubbleRoot, { alpha: 0, duration: 0.3, onComplete: () => bubbleRoot.destroy() });
+          if (activeBubbles.get(agentSlug) !== bubbleRoot) return; // already replaced
+          gsap.to(bubbleRoot, { alpha: 0, duration: 0.3, onComplete: () => {
+            try { bubbleRoot.destroy(); } catch {}
+            activeBubbles.delete(agentSlug);
+          }});
         });
 
-        // Working pose during bubble
-        if (a) {
+        if (a && !opts.fromHover) {
           a.setPose(POSE.WORKING);
           setTimeout(() => a.setPose(POSE.IDLE), lifeMs);
         }
+      };
+
+      // Expose for the hover handler to re-show last bubble
+      (window as any).__showLastBubble = (slug: string) => {
+        const txt = lastBubbles.get(slug);
+        if (txt) showBubble(slug, txt, 8000, { fromHover: true });
       };
 
       // WebSocket events drive poses
