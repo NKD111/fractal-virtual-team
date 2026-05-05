@@ -128,17 +128,23 @@ export default function OfficeScene() {
       recenter();
       app.renderer.on('resize', recenter);
 
-      // BACKGROUND: clean office art (no characters baked in). Renders at
-      // full opacity behind the live sprites.
+      // BACKGROUND: LAYOUT 2 — same central office as v1 PLUS surrounding
+      // street/buildings/cars/pedestrians. Office cluster occupies the
+      // central ~65% of the new image. Scale + offset chosen so the office
+      // cluster center lands at world (0, 0) and matches v1 footprint —
+      // existing AGENT_PLACEMENT and saved drag positions still align.
       try {
         const bgTex = await Assets.load('/assets/sprites/LAYOUT.png');
         const bg = new Sprite(bgTex);
         bg.anchor.set(0.5, 0.5);
+        // Office cluster in the source image is roughly centered at
+        // (1100, 480) of the 2200x1228 source. Image center is (1100, 614).
+        // Y-shift needed: (614 - 480) = 134 px in source.
+        // Scale picked so office width ≈ 1680 display (matches v1):
+        // office source width ≈ 1900; scale = 1680/1900 ≈ 0.88
+        bg.scale.set(0.88);
         bg.x = 0;
-        bg.y = 0;
-        // Image is 2200x1228. Live agents span ~700x450 logical world units.
-        // Scale 0.42 → display 924x515, leaves comfortable air around the rooms.
-        bg.scale.set(0.42);
+        bg.y = 134 * 0.88; // ≈ 118
         bg.alpha = 1.0;
         bg.zIndex = -10000;
         bg.eventMode = 'static';
@@ -190,9 +196,20 @@ export default function OfficeScene() {
       const draggables: Array<{ slug: string; container: Container }> = [];
 
       // Helper: make any container draggable in edit mode + persist.
-      const makeDraggable = (slug: string, container: Container) => {
+      // `entity` (optional) lets us update the entity's _baseY so its update()
+      // tick doesn't reset y back to the original on every frame (NEXUS/ATLAS).
+      const makeDraggable = (slug: string, container: Container, entity?: any) => {
         let dragging = false;
         let dragStartGX = 0, dragStartGY = 0, startX = 0, startY = 0;
+        const sync = () => {
+          // Atlas/Nexus update() resets container.y to _baseY each frame.
+          // Keep _baseY in sync with the dragged y so it doesn't snap back.
+          if (entity && typeof entity.setBasePosition === 'function') {
+            entity.setBasePosition(container.x, container.y);
+          } else if (entity && '_baseY' in entity) {
+            entity._baseY = container.y;
+          }
+        };
         container.on('pointerdown', (ev: any) => {
           if (!editModeRef.current) return;
           dragging = true;
@@ -206,11 +223,13 @@ export default function OfficeScene() {
           container.x = startX + (ev.global.x - dragStartGX);
           container.y = startY + (ev.global.y - dragStartGY);
           container.zIndex = Math.round(container.y) + 1000;
+          sync(); // continuous so float-aware entities don't fight
         });
         const stop = () => {
           if (!dragging) return;
           dragging = false;
           container.cursor = 'pointer';
+          sync();
           persistAll();
           console.log(`[edit] ${slug} → (${Math.round(container.x)}, ${Math.round(container.y)})`);
         };
@@ -247,7 +266,7 @@ export default function OfficeScene() {
         if (editModeRef.current) return;
         setSelectedAgent({ name: 'oracle', color: '#B14FFF', role: 'Inteligencia Compartida' });
       });
-      makeDraggable('oracle', oracle.container);
+      makeDraggable('oracle', oracle.container, oracle);
 
       // Agents
       const agents: AgentRecord[] = [];
@@ -384,7 +403,7 @@ export default function OfficeScene() {
       const nexusPos = savedPositions['nexus'] || { x: nexusDefault.x, y: nexusDefault.y };
       nexus.setBasePosition(nexusPos.x, nexusPos.y);
       nexus.container.zIndex = Math.round(nexusPos.y) + 1000;
-      makeDraggable('nexus', nexus.container);
+      makeDraggable('nexus', nexus.container, nexus);
 
       // ATLAS — independent entity. Default east; saved overrides win.
       const atlas = new AtlasEntity();
@@ -400,7 +419,7 @@ export default function OfficeScene() {
       const atlasPos = savedPositions['atlas'] || { x: atlasDefault.x, y: atlasDefault.y };
       atlas.setBasePosition(atlasPos.x, atlasPos.y);
       atlas.container.zIndex = Math.round(atlasPos.y) + 1000;
-      makeDraggable('atlas', atlas.container);
+      makeDraggable('atlas', atlas.container, atlas);
 
       const recentlyBusy: Set<string> = new Set();
 
