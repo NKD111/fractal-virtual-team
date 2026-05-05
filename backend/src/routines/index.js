@@ -25,6 +25,8 @@ class RoutineManager {
     this._tasks.push(cron.schedule('0 9 * * 1', () => this.weeklyFinancial().catch(e => console.error('weeklyFinancial:', e.message)), TZ));
 
     // EXTRAS:
+    // Insights scan — Lunes 7:30 AM (antes del Morning Prep)
+    this._tasks.push(cron.schedule('30 7 * * 1', () => this._runInsightsScan().catch(e => console.error('insights:', e.message)), TZ));
     // Follow-ups proactivos — 3 PM L-V
     this._tasks.push(cron.schedule('0 15 * * 1-5', () => this._runProactiveFollowups().catch(e => console.error('proactive:', e.message)), TZ));
     // Diana health check — Viernes 6 PM
@@ -156,6 +158,11 @@ Máximo 3 puntos clave de acción para hoy. Tono: directo, accionable.`,
   async _runProactiveFollowups() {
     const ProactiveFollowups = require('../features/proactive-followups');
     return new ProactiveFollowups().runDailyScan();
+  }
+
+  async _runInsightsScan() {
+    const { runInsightsScan } = require('./insights-scanner');
+    return runInsightsScan();
   }
 
   async _runDianaHealthCheck() {

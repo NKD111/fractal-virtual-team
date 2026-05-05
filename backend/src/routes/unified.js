@@ -171,6 +171,205 @@ document.getElementById('go').addEventListener('click', async () => {
   res.set('Content-Type', 'text/html').send(html);
 });
 
+// ╔════════════════════════════════════════════════════════════════════╗
+// ║ UNICORN LAYER — embed widget, client portal, insights, voice TTS    ║
+// ╚════════════════════════════════════════════════════════════════════╝
+
+// POST /api/embed/message — Mariana responde a leads en sitios externos
+//   body: { visitor_id, agency, source_url, message, conversation }
+router.post('/embed/message', async (req, res) => {
+  try {
+    const { visitor_id, agency, source_url, message, conversation = [] } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    let reply = '¡Gracias por escribir! Te contacto pronto con más detalles.';
+    let qualified = false;
+    let extracted = { name: null, email: null, phone: null };
+
+    if (process.env.ANTHROPIC_API_KEY) {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const { wrapAnthropic } = require('../core/telemetry');
+      const ai = wrapAnthropic(new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }));
+      const transcript = (conversation || [])
+        .slice(-8)
+        .map(m => `${m.role === 'user' ? 'Lead' : 'Mariana'}: ${m.text}`)
+        .join('\n');
+      try {
+        const r = await ai.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 200,
+          system: `Eres MARIANA, hub coordinator de Fractal MX (agencia AI-powered en CDMX).
+Estás en el chat embebido del sitio web de la agencia "${agency}". Responde
+a un lead potencial. Tono: profesional cálido mexicano.
+
+REGLAS:
+- Responde en UNA-DOS oraciones máximo
+- Si aún no tienes su nombre y correo, pídelos amablemente en algún punto
+- Si ya tiene una pregunta concreta, intenta calificar el proyecto
+  (tipo de necesidad, plazo, presupuesto orientativo)
+- Si parece serio (>15k MXN o proyecto grande), avísale que un humano
+  lo contactará en máx 24h
+- NO des precios — siempre "lo coordinamos contigo en una llamada breve"
+- EN ESPAÑOL, sin emojis excesivos
+
+DEVUELVE JSON SOLO (no markdown):
+{ "reply": "...", "qualified": <bool si parece serio>, "extracted": {"name":"|null","email":"|null","phone":"|null"} }`,
+          messages: [{ role: 'user', content: `Conversación previa:\n${transcript}\n\nÚltimo mensaje del lead: "${message}"\n\nRespuesta JSON:` }]
+        });
+        const txt = r.content[0]?.text || '';
+        const json = JSON.parse(txt.replace(/```json\s*|\s*```/g, '').trim());
+        if (json.reply) reply = json.reply;
+        if (json.qualified) qualified = true;
+        if (json.extracted) extracted = json.extracted;
+      } catch (e) { console.warn('[embed] Claude:', e.message); }
+    }
+
+    // Persist lead (async, no bloqueante)
+    supabase.from('embed_leads').insert({
+      visitor_id, source_url,
+      name: extracted.name, email: extracted.email, phone: extracted.phone,
+      conversation: [...(conversation || []), { role: 'user', text: message }, { role: 'bot', text: reply }],
+      qualified, qual_notes: agency
+    }).then(() => {}).catch(() => {});
+
+    // Broadcast al office para visibility (Mariana habla)
+    try { global.io?.emit('chat_bubble', { agent: 'mariana', text: `Lead web: "${message.slice(0, 50)}…"`, kind: 'embed', ts: Date.now() }); } catch {}
+
+    res.json({ reply, qualified });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/embed/leads — listado para review
+router.get('/embed/leads', async (req, res) => {
+  try {
+    const { data } = await supabase.from('embed_leads')
+      .select('*').order('created_at', { ascending: false }).limit(50);
+    res.json({ leads: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/portal/create — crea token para que un cliente vea su mini-Office
+//   body: { client_name, client_id?, project_ids?, days? }
+router.post('/portal/create', async (req, res) => {
+  try {
+    const { client_name, client_id = null, project_ids = [], days = 30 } = req.body || {};
+    if (!client_name) return res.status(400).json({ error: 'client_name required' });
+    const token = require('crypto').randomBytes(16).toString('hex');
+    const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from('client_portal_tokens').insert({
+      token, client_id, client_name, scope: { project_ids }, expires_at: expires
+    });
+    const PUBLIC = process.env.PUBLIC_URL || `https://fractal-virtual-team.vercel.app`;
+    res.json({
+      token,
+      url: `${PUBLIC}/client/${token}`,
+      expires_at: expires
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/portal/:token — datos del mini-Office para el cliente
+router.get('/portal/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { data: row } = await supabase.from('client_portal_tokens')
+      .select('*').eq('token', token).maybeSingle();
+    if (!row) return res.status(404).json({ error: 'token invalid' });
+    if (row.expires_at && new Date(row.expires_at) < new Date()) return res.status(410).json({ error: 'token expired' });
+
+    // Update last_used
+    supabase.from('client_portal_tokens').update({ last_used: new Date().toISOString() }).eq('token', token).then(() => {}).catch(() => {});
+
+    // Fetch client data
+    let projects = [], tasks = [];
+    if (row.client_id) {
+      const projRes = await supabase.from('projects')
+        .select('id, name, status, deadline').eq('client_id', row.client_id).limit(10);
+      projects = projRes.data || [];
+    }
+    const taskRes = await supabase.from('tasks')
+      .select('id, brief, status, agent_assigned, image_url, completed_at')
+      .eq('user_email', row.client_name + '@portal') // logical match (extend as needed)
+      .order('created_at', { ascending: false }).limit(10);
+    tasks = taskRes.data || [];
+
+    res.json({
+      client_name: row.client_name,
+      projects, tasks,
+      assigned_agent: row.scope?.agent || 'mariana'
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/voice/synth — TTS via ElevenLabs (audio del agente con voz)
+//   body: { text, agent_slug }
+router.post('/voice/synth', async (req, res) => {
+  try {
+    const { text, agent_slug = 'mariana' } = req.body || {};
+    if (!text) return res.status(400).json({ error: 'text required' });
+    if (!process.env.ELEVENLABS_API_KEY) return res.status(503).json({ error: 'ELEVENLABS_API_KEY no configurada' });
+
+    // Cache check
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha256').update(`${agent_slug}::${text}`).digest('hex').slice(0, 32);
+    const { data: cached } = await supabase.from('voice_cache').select('audio_url').eq('text_hash', hash).maybeSingle();
+    if (cached?.audio_url) return res.json({ audio_url: cached.audio_url, cached: true });
+
+    // Voice IDs por agente — defaults a "Rachel" (Mariana). Configurable vía env.
+    const voiceMap = {
+      mariana:   process.env.ELEVENLABS_VOICE_MARIANA   || '21m00Tcm4TlvDq8ikWAM',
+      diana:     process.env.ELEVENLABS_VOICE_DIANA     || 'AZnzlk1XvdvUeBnXmlld',
+      sofia:     process.env.ELEVENLABS_VOICE_SOFIA     || 'EXAVITQu4vr4xnSDxMaL',
+      valentina: process.env.ELEVENLABS_VOICE_VALENTINA || 'ThT5KcBeYPX3keUQqHPh',
+      carlos:    process.env.ELEVENLABS_VOICE_CARLOS    || 'pNInz6obpgDQGcFmaJgB',
+      diego:     process.env.ELEVENLABS_VOICE_DIEGO     || 'VR6AewLTigWG4xSOukaG',
+      lucas:     process.env.ELEVENLABS_VOICE_LUCAS     || 'TxGEqnHWrfWFTfGW9XjX',
+      max:       process.env.ELEVENLABS_VOICE_MAX       || 'yoZ06aMxZJJ28mfd3POQ',
+      alex:      process.env.ELEVENLABS_VOICE_ALEX      || 'JBFqnCBsd6RMkjVDRZzb',
+      roberto:   process.env.ELEVENLABS_VOICE_ROBERTO   || 'pqHfZKP75CvOlQylNhV4'
+    };
+    const voiceId = voiceMap[agent_slug] || voiceMap.mariana;
+
+    const axios = require('axios');
+    const resp = await axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      { text, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.5, similarity_boost: 0.75 } },
+      { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
+        responseType: 'arraybuffer', timeout: 30000 }
+    );
+
+    // Persistir como base64 inline (alt: subir a Cloudinary)
+    const audioB64 = `data:audio/mpeg;base64,${Buffer.from(resp.data).toString('base64')}`;
+    await supabase.from('voice_cache').insert({
+      text_hash: hash, agent_slug, audio_url: audioB64,
+      bytes: resp.data.length
+    }).then(() => {}).catch(() => {});
+
+    res.json({ audio_url: audioB64, cached: false });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/insights — patrones detectados (último 14 días)
+router.get('/insights', async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await supabase.from('insights')
+      .select('*').gte('ts', since).order('ts', { ascending: false }).limit(20);
+    res.json({ insights: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/insights/run — corre análisis y persiste insights nuevos
+router.post('/insights/run', async (req, res) => {
+  try {
+    const { runInsightsScan } = require('../routines/insights-scanner');
+    runInsightsScan().catch(err => console.error('insights:', err.message));
+    res.json({ started: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // GET /api/inbox — agregado de TODO lo que requiere atención del usuario
 //   - tareas en awaiting_confirmation
 //   - promesas que vencen hoy o ya vencieron
