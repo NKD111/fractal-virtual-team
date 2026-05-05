@@ -461,8 +461,19 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
   /**
    * Detecta si el mensaje necesita acción de un agente y lo ejecuta en background
    * Ahora usa ProjectClassifier para clasificar inteligentemente antes de delegar
+   *
+   * DESACTIVADO POR DEFAULT (Fase 8.5+): el task-runner pipeline
+   * (/api/task/dispatch + cross-channel bridge en orchestrator) maneja la
+   * delegación explícita y controlada. Este auto-delegate disparaba emails
+   * de Diego cada vez que Neiky mencionaba "vanexpo/fif/diseño" en un mensaje
+   * casual — generaba spam sin contexto real.
+   * Para reactivar: set LEGACY_AUTODELEGATE=1 en env.
    */
   async _checkAndDelegate(content, marianaResponse, sender) {
+    if (process.env.LEGACY_AUTODELEGATE !== '1') {
+      console.log('[Mariana] _checkAndDelegate skipped (legacy disabled, task-runner handles delegation)');
+      return;
+    }
     const lower = content.toLowerCase();
 
     const mentionsArticle = (lower.includes('articulo') || lower.includes('artículo') || lower.includes('post') || lower.includes('nota')) &&
