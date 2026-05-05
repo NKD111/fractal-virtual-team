@@ -88,9 +88,11 @@ async function sendMetaImage(to, imageUrl, caption = '') {
   return data;
 }
 
-// Notify Fermín (Neiky) directly
+// Notify Fermín (Neiky) directly. Number is +525534189583 (hardcoded
+// fallback if NEIKY_WHATSAPP env is missing in production).
 async function notifyNeiky(message) {
-  const neikyPhone = process.env.NEIKY_WHATSAPP;
+  const neikyPhone = process.env.NEIKY_WHATSAPP || '+525534189583';
+  if (!neikyPhone) throw new Error('NEIKY_WHATSAPP not configured');
   return sendMetaMessage(neikyPhone, message);
 }
 

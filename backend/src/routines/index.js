@@ -3,6 +3,7 @@
 
 const cron = require('node-cron');
 const { supabase } = require('../core/supabase');
+const { notifyNeiky } = require('../core/whatsapp');
 
 const TZ = { timezone: 'America/Mexico_City' };
 
@@ -81,8 +82,29 @@ Máximo 3 puntos clave de acción para hoy. Tono: directo, accionable.`,
       }
     }).then(() => {}).catch(() => {});
 
+    // Build the WhatsApp digest and send to Neiky
+    const oracleSummary = (dayContext || '').trim() ||
+      (atRisk.length > 0
+        ? `Enfocar el día en los ${atRisk.length} proyectos en riesgo.`
+        : 'Día limpio. Mantener ritmo de seguimiento con clientes activos.');
+    const message =
+      `🌅 Buenos días Neiky!\n\n` +
+      `📋 HOY:\n` +
+      `- ${promises?.length || 0} promesas que vencen hoy\n` +
+      `- ${list.length} proyectos activos\n` +
+      `- ⚠️ ${atRisk.length} proyectos en riesgo\n\n` +
+      `🎯 Prioridad del día:\n${oracleSummary}\n\n` +
+      `— Mariana 🤖`;
+
+    try {
+      await notifyNeiky(message);
+      console.log('  ✓ Morning digest enviado por WhatsApp');
+    } catch (err) {
+      console.error('  ✗ Morning WhatsApp falló:', err.message);
+    }
+
     console.log(`✅ Morning Prep: ${promises?.length || 0} promesas, ${atRisk.length} en riesgo`);
-    return { promises: promises?.length || 0, active_projects: list.length, at_risk: atRisk.length, day_context: dayContext };
+    return { promises: promises?.length || 0, active_projects: list.length, at_risk: atRisk.length, day_context: dayContext, message };
   }
 
   // C2
