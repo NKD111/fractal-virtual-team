@@ -143,6 +143,23 @@ export default function OfficeScene() {
         shadow.ellipse(0, -2, 16, 5).fill({ color: 0x000000, alpha: 0.45 });
         root.addChild(shadow);
 
+        // Procedural isometric desk + monitor in front of agent
+        const presetColor = parseInt(String(preset.color).replace('#', ''), 16);
+        const desk = new Graphics();
+        // Iso desk top: a flat 50x14 diamond
+        desk.poly([0, -7, 25, 0, 0, 7, -25, 0]).fill({ color: 0x3d2817 });
+        desk.poly([0, -7, 25, 0, 0, 7, -25, 0]).stroke({ color: 0x1a1a14, width: 1 });
+        // Monitor base
+        desk.rect(-3, -8, 6, 3).fill(0x1a1a1a);
+        // Monitor screen with agent color glow
+        desk.rect(-9, -22, 18, 14).fill(0x0f0f17);
+        desk.rect(-9, -22, 18, 14).stroke({ color: presetColor, width: 1, alpha: 0.85 });
+        desk.rect(-7, -20, 14, 10).fill({ color: presetColor, alpha: 0.25 });
+        // Position desk slightly in front of feet (toward viewer = positive y)
+        desk.position.set(14, 6);
+        desk.zIndex = -1; // behind sprite within root
+        root.addChild(desk);
+
         let breathTarget: any = null;
         if (sheet.hasReal && sheet.textures) {
           const spriteImg = new Sprite(sheet.textures[POSE.IDLE]);
