@@ -72,6 +72,44 @@ router.post('/standup/run', async (req, res) => {
   }
 });
 
+// POST /api/mariana/notify — Mariana envía un WhatsApp directo a Neiky.
+// Body: { message?: string }. Si no hay message, manda un recordatorio default.
+// Devuelve diagnostic completo para saber qué canal entregó.
+router.post('/mariana/notify', async (req, res) => {
+  try {
+    const customMsg = String(req.body?.message || '').trim();
+    const message = customMsg ||
+      `🔔 Hola Neiky! Recordatorio rápido:\n\n` +
+      `• Revisa las cotizaciones pendientes que vencen esta semana\n` +
+      `• Confirma con Diana los precios para que pueda enviar propuestas\n` +
+      `• Roberto necesita cerrar el flujo de caja del mes\n\n` +
+      `Aquí estoy si necesitas algo. — Mariana 🤖`;
+
+    const phone = process.env.NEIKY_WHATSAPP || '+525534189583';
+    const { sendMetaMessage, sendTwilioMessage } = require('../core/whatsapp');
+    const diag = { phone, channels: {} };
+
+    try {
+      const r = await sendMetaMessage(phone, message);
+      diag.channels.meta = { ok: true, response: r };
+    } catch (e) {
+      diag.channels.meta = { ok: false, error: e.message, details: e.response?.data || null };
+    }
+
+    try {
+      const r = await sendTwilioMessage(phone, message);
+      diag.channels.twilio = { ok: true, sid: r?.sid, status: r?.status, to: r?.to };
+    } catch (e) {
+      diag.channels.twilio = { ok: false, error: e.message, code: e.code || null, more: e.moreInfo || null };
+    }
+
+    const sent = diag.channels.meta?.ok || diag.channels.twilio?.ok;
+    res.json({ sent, message_preview: message.slice(0, 120), diagnostic: diag });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/agents/:slug/pendings — what's on this agent's plate right now
 router.get('/agents/:slug/pendings', async (req, res) => {
   try {
