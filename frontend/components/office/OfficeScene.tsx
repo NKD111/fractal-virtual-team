@@ -96,18 +96,18 @@ export default function OfficeScene() {
       recenter();
       app.renderer.on('resize', recenter);
 
-      // BACKGROUND: pre-rendered LAYOUT image replaces procedural platforms.
-      // NOTE: the source image has characters baked in. Lowered alpha so the
-      // live sprites (which render on top) don't fight visually with the
-      // drawn versions of themselves.
+      // BACKGROUND: clean office art (no characters baked in). Renders at
+      // full opacity behind the live sprites.
       try {
         const bgTex = await Assets.load('/assets/sprites/LAYOUT.png');
         const bg = new Sprite(bgTex);
         bg.anchor.set(0.5, 0.5);
         bg.x = 0;
-        bg.y = 60;
-        bg.scale.set(0.55);
-        bg.alpha = 0.45; // ghosted so live chars dominate; bg provides ambience
+        bg.y = 0;
+        // Image is 2200x1228. Live agents span ~700x450 logical world units.
+        // Scale 0.42 → display 924x515, leaves comfortable air around the rooms.
+        bg.scale.set(0.42);
+        bg.alpha = 1.0;
         bg.zIndex = -10000;
         bg.eventMode = 'static';
         bg.cursor = 'grab';
