@@ -68,6 +68,37 @@ function detectVisualNeed(message) {
   return VISUAL_KEYWORDS.some(k => lower.includes(k));
 }
 
+// Detecta si el mensaje pide ABRIR UNA CONVERSACIÓN/HILO/DEBATE en lugar
+// de delegar una tarea. Frases como "comienza un hilo sobre X",
+// "inicia conversación de Y", "abre debate sobre Z", "platica con el equipo
+// sobre W" → dispara group-chat NO task pipeline.
+function detectConversationalIntent(message) {
+  const t = String(message || '').toLowerCase().trim();
+  if (t.length < 10) return null;
+  const triggers = [
+    /\b(comienza|inicia|abre|arma|levanta|arranca|empieza)\s+(un|una)?\s*(hilo|conversaci[oó]n|debate|charla|pl[aá]tica|discusi[oó]n|brainstorm|jam)\b/i,
+    /\b(que|qu[eé])\s+(el\s+)?equipo\s+(comente|opine|hable|platique|discuta|debata)/i,
+    /\b(pl[aá]tica|conversa|debate|discute)\s+con\s+(el\s+)?(equipo|los\s+(dem[aá]s|chicos|chavos))/i,
+    /\bechen\s+un\s+(round|hilo|debate)/i
+  ];
+  if (!triggers.some(rx => rx.test(t))) return null;
+
+  // Extract theme: text after "sobre", "de", "acerca de", or after the trigger phrase
+  let theme = '';
+  const sobreMatch = t.match(/\b(sobre|acerca\s+de|de\s+(?:c[oó]mo|qu[eé])|en\s+torno\s+a)\s+(.{4,160})$/i);
+  if (sobreMatch) theme = sobreMatch[2].trim();
+  else {
+    // Fallback: text after the first trigger phrase
+    const firstTrigger = t.match(/\b(?:hilo|conversaci[oó]n|debate|charla|pl[aá]tica|jam|brainstorm)\b\s*(.{4,160})$/i);
+    if (firstTrigger) theme = firstTrigger[1].replace(/^[:,\s]+/, '').trim();
+  }
+  // Clean trailing punctuation
+  theme = theme.replace(/[.!?…]+$/, '').trim();
+  if (!theme || theme.length < 4) return null;
+
+  return { theme };
+}
+
 async function persistTask(row) {
   try { await supabase.from('tasks').insert(row); }
   catch (e) { console.warn('[task] persist insert:', e.message); }
@@ -346,6 +377,22 @@ function buildFinalEmailHtml({ agentSlug, brief, feedback, summary, promised, de
 
 // ── PHASE 1 — PITCH ────────────────────────────────────────────────────────
 async function runTask({ message, userEmail = 'nakedgeometry19@gmail.com', source = 'web' }) {
+  // Short-circuit: si pide abrir un hilo/debate/conversación, NO crear task,
+  // disparar group-chat con el tema extraído.
+  const convo = detectConversationalIntent(message);
+  if (convo) {
+    console.log(`\n💬 Conversational intent detected: theme="${convo.theme}"`);
+    bubble('mariana', `Le digo al equipo, abrimos un hilo sobre eso.`);
+    try {
+      const { runGroupChat } = require('./group-chat');
+      runGroupChat({ topics: 1, repliesPerTopic: 10, gapMs: 8000, theme: convo.theme })
+        .catch(err => console.error('[task→group-chat] error:', err.message));
+      return { ok: true, mode: 'conversation', theme: convo.theme };
+    } catch (e) {
+      console.warn('[task] group-chat fallback to task:', e.message);
+    }
+  }
+
   const taskId = `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   console.log(`\n📋 Task ${taskId} [${source}] PITCH: "${message.slice(0, 100)}…"`);
 
@@ -537,5 +584,6 @@ function extractReplyBody(rawBody) {
 
 module.exports = {
   runTask, resumeTask, classifyTask, detectVisualNeed,
+  detectConversationalIntent,
   parseTaskIdFromSubject, extractReplyBody
 };
