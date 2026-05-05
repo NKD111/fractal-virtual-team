@@ -183,8 +183,8 @@ export default function OfficeScene() {
           const baseScaleY = breathTarget.scale.y;
           const baseScaleX = breathTarget.scale.x;
           gsap.to(breathTarget.scale, {
-            y: baseScaleY * 0.97,
-            x: baseScaleX * 1.015,
+            y: baseScaleY * 0.92,
+            x: baseScaleX * 1.04,
             duration: 1.6 + Math.random() * 0.6,
             ease: 'sine.inOut',
             yoyo: true,
