@@ -72,6 +72,29 @@ router.post('/standup/run', async (req, res) => {
   }
 });
 
+// POST /api/intro-chat/run — los 11 agentes se presentan, hablan de gustos y
+// reaccionan entre sí durante ~5 min. Cada línea se broadcastea como
+// chat_bubble al Office View. Devuelve inmediatamente; corre en background.
+router.post('/intro-chat/run', async (req, res) => {
+  try {
+    const rounds = Math.max(1, Math.min(4, parseInt(req.body?.rounds, 10) || 4));
+    const gapMs = Math.max(3000, Math.min(15000, parseInt(req.body?.gapMs, 10) || 8000));
+    const { runIntroChat } = require('../routines/intro-chat');
+    // Fire-and-forget so the HTTP request returns fast
+    runIntroChat({ rounds, gapMs }).catch(err => console.error('intro-chat:', err.message));
+    const estSeconds = (rounds * 11 * gapMs) / 1000;
+    res.json({
+      started: true,
+      rounds, gapMs,
+      agents: 11,
+      estimated_duration_sec: Math.round(estSeconds),
+      hint: 'Abre el Office View ahora — verás bubbles flotando arriba de cada agente.'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/mariana/notify — Mariana envía un WhatsApp directo a Neiky.
 // Body: { message?: string }. Si no hay message, manda un recordatorio default.
 // Devuelve diagnostic completo para saber qué canal entregó.

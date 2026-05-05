@@ -478,28 +478,55 @@ export default function OfficeScene() {
 
       const recentlyBusy: Set<string> = new Set();
 
-      // Chat bubble overlay helper. Anchors a small label above the agent and
-      // fades it out after `lifeMs`. Used by the daily-standup WS broadcast.
+      // Chat bubble overlay — comic-style: white rounded rect + black border
+      // + tail pointing down. Used by daily-standup + intro-chat WS broadcast.
       const showBubble = (agentSlug: string, text: string, lifeMs = 5000) => {
         const a = agents.find(x => x.slug === agentSlug);
-        // Allow Oracle to receive bubbles too
         const target = a?.container ?? (agentSlug === 'oracle' ? oracle.container : null);
         if (!target) return;
+
+        // Container holds rect + text together
+        const bubbleRoot = new Container();
+        bubbleRoot.alpha = 0;
+        bubbleRoot.zIndex = 99999;
+
+        const padding = 7;
+        const maxW = 160;
         const style = new TextStyle({
-          fontFamily: 'system-ui, monospace', fontSize: 10, fontWeight: '500',
-          fill: 0xffffff, stroke: { color: 0x0a0a14, width: 3 },
-          wordWrap: true, wordWrapWidth: 140, align: 'center'
+          fontFamily: '"VT323", "Courier New", monospace',
+          fontSize: 13, fontWeight: '400',
+          fill: 0x1a1a14,
+          wordWrap: true, wordWrapWidth: maxW - padding * 2, align: 'center',
+          lineHeight: 14
         });
-        const bubble = new Text({ text, style });
-        bubble.anchor.set(0.5, 1);
-        bubble.position.set(0, -68);
-        bubble.alpha = 0;
-        bubble.zIndex = 99999;
-        target.addChild(bubble);
-        gsap.to(bubble, { alpha: 1, duration: 0.18 });
+        const t = new Text({ text, style });
+
+        const w = Math.min(maxW, t.width + padding * 2);
+        const h = t.height + padding * 2;
+        const rect = new Graphics();
+        rect.roundRect(-w / 2, -h, w, h, 8)
+          .fill({ color: 0xfafaf6, alpha: 0.96 })
+          .stroke({ color: 0x1a1a14, width: 2 });
+        // Comic tail pointing down
+        rect.poly([-5, 0, 5, 0, 0, 7])
+          .fill({ color: 0xfafaf6, alpha: 0.96 })
+          .stroke({ color: 0x1a1a14, width: 2 });
+
+        t.anchor.set(0.5, 0);
+        t.position.set(0, -h + padding);
+
+        bubbleRoot.addChild(rect);
+        bubbleRoot.addChild(t);
+        bubbleRoot.position.set(0, -62);
+        target.addChild(bubbleRoot);
+
+        gsap.to(bubbleRoot, { alpha: 1, duration: 0.18, ease: 'back.out(1.6)' });
+        gsap.from(bubbleRoot.scale, { x: 0.6, y: 0.6, duration: 0.22, ease: 'back.out(2)' });
+
         gsap.delayedCall(lifeMs / 1000, () => {
-          gsap.to(bubble, { alpha: 0, duration: 0.3, onComplete: () => bubble.destroy() });
+          gsap.to(bubbleRoot, { alpha: 0, duration: 0.3, onComplete: () => bubbleRoot.destroy() });
         });
+
         // Working pose during bubble
         if (a) {
           a.setPose(POSE.WORKING);
