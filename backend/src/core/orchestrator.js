@@ -62,6 +62,26 @@ function normalizePhone(str) {
 }
 
 // Main message processor
+// Quick heuristic: does this message look like a delegation/task request?
+// (vs a casual chat message). If yes, trigger the visual task pipeline.
+function looksLikeDelegation(text) {
+  const t = String(text || '').toLowerCase().trim();
+  if (t.length < 8) return false;
+  // Imperative or request verbs in Spanish
+  const verbs = [
+    'haz', 'hazme', 'arma', 'armame', 'crea', 'créame', 'créa', 'genera', 'generame',
+    'diseña', 'diseñame', 'cotiza', 'cotízame', 'manda', 'mándame', 'envia', 'envíame',
+    'investiga', 'busca', 'búscame', 'analiza', 'edita', 'organiza', 'planea', 'agenda',
+    'prepara', 'preparame', 'corre', 'ejecuta', 'pidele', 'pídele', 'asigna',
+    'necesito', 'quiero', 'requiero', 'urge', 'pásame', 'pasame', 'mándame',
+    'puedes', 'podrías'
+  ];
+  // Has a verb at start OR contains "necesito/quiero" anywhere
+  if (verbs.some(v => t.startsWith(v + ' ') || t.startsWith(v + ','))) return true;
+  if (t.includes('necesito') || t.includes('quiero que') || t.includes('puedes ')) return true;
+  return false;
+}
+
 async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = null, agentSlug = null }) {
   console.log(`[Orchestrator] New message from ${from} via ${channel}: ${text?.substring(0, 80)}`);
 
@@ -90,8 +110,23 @@ async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = nu
     // Set Socket.io if available
     if (global.io) agent.setIo(global.io);
 
-    // Process
+    // Process the agent's natural reply
     const result = await agent.processMessage({ from, text, channel, mediaUrl });
+
+    // Cross-channel sync: if Neiky from WhatsApp sent a delegation request,
+    // ALSO trigger the visual task pipeline so the Office View animates
+    // (bolita + bubbles + email) in parallel to the WA reply.
+    if (isNeiky && channel !== 'web' && text && looksLikeDelegation(text)) {
+      try {
+        const { runTask } = require('../routines/task-runner');
+        // Fire-and-forget — frontend listens via socket
+        runTask({ message: text, userEmail: 'nakedgeometry19@gmail.com', source: channel })
+          .catch(err => console.error('[orchestrator] runTask:', err.message));
+        console.log(`[Orchestrator] WA → Office sync: task pipeline triggered`);
+      } catch (err) {
+        console.warn('[Orchestrator] task bridge skipped:', err.message);
+      }
+    }
 
     console.log(`[Orchestrator] ${targetSlug} responded successfully`);
     return result;

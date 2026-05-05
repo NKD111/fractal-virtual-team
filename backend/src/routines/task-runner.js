@@ -24,18 +24,26 @@ const ROUTING = {
   carlos:    ['diseño', 'logo', 'branding', 'identidad', 'paleta', 'sistema visual'],
   diego:     ['editorial', 'tipografía', 'corporate', 'libro', 'reporte impreso'],
   alex:      ['contenido', 'redes', 'copy', 'caption', 'instagram', 'tiktok', 'reel'],
-  sofia:     ['proyecto', 'timeline', 'deadline', 'avance', 'kanban', 'sprint'],
+  sofia:     [
+    'proyecto', 'timeline', 'deadline', 'avance', 'kanban', 'sprint', 'gestión',
+    'gestion', 'seguimiento', 'status', 'plan', 'planeación', 'planeacion',
+    'organiza', 'organizar', 'calendario', 'agenda'
+  ],
   lucas:     ['analytics', 'datos', 'métricas', 'kpi', 'dashboard', 'reporte'],
   max:       ['video', 'edición', 'motion', 'youtube', 'animación'],
   valentina: ['arte', 'creativo', 'concepto', 'visión', 'estrategia creativa', 'moodboard'],
   roberto:   ['factura', 'pago', 'precio', 'cotización', 'presupuesto', 'iva', 'flujo de caja']
 };
 
+// Sofia (PM) supervisa los entregables de creativos y contenido para dar
+// seguimiento de proyecto. Valentina sigue siendo el visto bueno artístico.
+// Mariana cierra todo (hub coordinator).
 const SUPERVISOR = {
   carlos: 'valentina', diego: 'valentina', max: 'valentina',
-  alex: 'mariana', sofia: 'mariana',
+  alex: 'sofia',  // contenido pasa por PM
+  sofia: 'mariana',
   diana: 'mariana', lucas: 'roberto',
-  roberto: 'mariana', valentina: 'mariana'
+  roberto: 'mariana', valentina: 'sofia'
 };
 
 function emit(event, payload) {
@@ -119,9 +127,9 @@ Devuelve JSON: {"subject":"...","html":"<p>...</p>"}. NO markdown.`,
   };
 }
 
-async function runTask({ message, userEmail = 'nakedgeometry19@gmail.com' }) {
+async function runTask({ message, userEmail = 'nakedgeometry19@gmail.com', source = 'web' }) {
   const taskId = `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  console.log(`\n📋 Task ${taskId}: "${message}"`);
+  console.log(`\n📋 Task ${taskId} [${source}]: "${message}"`);
 
   emit('task_created', { taskId, message, from: 'user' });
   bubble('mariana', 'Recibido, déjame ver a quién le toca esto.');
