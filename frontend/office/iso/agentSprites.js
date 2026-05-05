@@ -9,6 +9,13 @@ const POSE_COORDS = [ [0, 0], [1, 0], [0, 1], [1, 1] ]; // [col, row]
 
 const SPRITE_PATH = '/assets/sprites/';
 
+// Per-slug crop tuning for spritesheets where pose figures bleed into
+// adjacent cells. Use cellH < baseCellH to clip the bottom of the IDLE crop
+// so the next-row pose's head doesn't leak in.
+const SPRITE_CROP = {
+  diego: { cellH: 200 } // his THINKING pose head sits at top of bottom row
+};
+
 const cache = new Map(); // slug → Promise<{textures: Texture[], hasReal: boolean}>
 
 /**
@@ -32,17 +39,29 @@ export async function loadAgentSpritesheet(slug, preset) {
       console.log(`[sprites] ${slug} loaded ${baseTex.width}x${baseTex.height}`);
       const w = baseTex.width;
       const h = baseTex.height;
-      const cellW = Math.floor(w / 2);
-      const cellH = Math.floor(h / 2);
+      const baseCellW = Math.floor(w / 2);
+      const baseCellH = Math.floor(h / 2);
+
+      // Per-slug crop overrides — for spritesheets where individual poses
+      // bleed into adjacent quadrants (e.g. Diego's THINKING pose head leaks
+      // into the IDLE cell). Defaults to full quadrant.
+      const cropH = SPRITE_CROP[slug]?.cellH ?? baseCellH;
+      const cropW = SPRITE_CROP[slug]?.cellW ?? baseCellW;
+      const innerYBias = SPRITE_CROP[slug]?.innerY ?? 0; // shift the crop window down inside the cell
 
       const textures = POSE_COORDS.map(([c, r]) => {
         const tex = new Texture({
           source: baseTex.source,
-          frame: new Rectangle(c * cellW, r * cellH, cellW, cellH)
+          frame: new Rectangle(
+            c * baseCellW + Math.floor((baseCellW - cropW) / 2),
+            r * baseCellH + innerYBias,
+            cropW,
+            cropH
+          )
         });
         return tex;
       });
-      return { textures, hasReal: true, cellW, cellH };
+      return { textures, hasReal: true, cellW: cropW, cellH: cropH };
     } catch (e) {
       console.warn(`[sprites] ${slug} → procedural fallback:`, e?.message || e);
       return { textures: buildProceduralPoses(preset), hasReal: false, cellW: 64, cellH: 96 };

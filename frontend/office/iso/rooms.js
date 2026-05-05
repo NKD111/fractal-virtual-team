@@ -46,14 +46,15 @@ export const ROOMS = {
     agents: ['roberto']
   },
   qc_station: {
-    gx: -1, gy: 8, sx: 2, sy: 2,
+    // Shifted east one tile so qcbot lands inside the painted gray server
+    // room (was placing him under the FRACTAL MX sign).
+    gx: 0, gy: 8, sx: 2, sy: 2,
     label: 'QC', color: 0x7F8C8D,
     agents: ['qcbot']
   },
   oracle_tower: {
-    // Aligned to painted portal in CLIENT RELATIONS bg (visual offset from
-    // previous attempt: live was 55px left + 60px up of painted)
-    gx: 0, gy: -7, sx: 3, sy: 3,
+    // +32 right + 32 down adjustment from prior pass to overlap painted portal
+    gx: 1, gy: -7, sx: 3, sy: 3,
     label: 'ORACLE', color: 0xB14FFF,
     agents: ['oracle'], isOracle: true
   }
@@ -83,16 +84,16 @@ export const AGENT_PLACEMENT = {
   mariana: { cellX: 3.0, cellY: 2.6 },
 
   // CLIENT RELATIONS (3x3): screen + Oracle portal occupy back wall.
-  // Diana stands forward-left of the portal.
-  diana: { cellX: 1.0, cellY: 2.6 },
+  // Diana stands deeper INSIDE the room, beside (not below) the portal.
+  diana: { cellX: 1.5, cellY: 1.8 },
 
   // CONTENT/podcast (3x3): chairs + ring lights center.
-  // Alex stands at the southern entrance, away from the gear.
-  alex: { cellX: 1.5, cellY: 2.7 },
+  // Alex stands more INSIDE (was on west edge).
+  alex: { cellX: 2.0, cellY: 2.4 },
 
   // BUILD (3x3): kanban on north wall, desk on east.
-  // Sofia stands front-left, in the open floor.
-  sofia: { cellX: 1.0, cellY: 2.4 },
+  // Sofia front-center of room (was floating between HUB and BUILD).
+  sofia: { cellX: 1.5, cellY: 2.6 },
 
   // ANALYTICS (3x3): standing desk on south.
   // Lucas stands front-left of the desk.
