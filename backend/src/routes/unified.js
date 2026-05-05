@@ -172,6 +172,172 @@ document.getElementById('go').addEventListener('click', async () => {
 });
 
 // ╔════════════════════════════════════════════════════════════════════╗
+// ║ REVENUE ENGINE — autonomous passive income pipeline                 ║
+// ╚════════════════════════════════════════════════════════════════════╝
+
+// POST /api/funnel/build — funnel completo de 5 productos cross-promovidos
+router.post('/funnel/build', async (req, res) => {
+  try {
+    const { niche = null, fast = false } = req.body || {};
+    const { buildFunnel } = require('../routines/funnel-builder');
+    buildFunnel({ niche, fast }).catch(err => console.error('funnel:', err.message));
+    res.json({
+      started: true, niche,
+      hint: 'Mariana orquesta 5 productos + drip 4 emails + 3 blog posts SEO. ETA ~5-10 min.'
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/funnels — todos los funnels y su status
+router.get('/funnels', async (req, res) => {
+  try {
+    const { data: funnels } = await supabase.from('funnels')
+      .select('*').order('created_at', { ascending: false }).limit(20);
+    const ids = (funnels || []).map(f => f.id);
+    const { data: products } = ids.length
+      ? await supabase.from('revenue_products').select('id, funnel_id, funnel_role, title, status, price_usd').in('funnel_id', ids)
+      : { data: [] };
+    const grouped = (funnels || []).map(f => ({
+      ...f,
+      products: (products || []).filter(p => p.funnel_id === f.id)
+    }));
+    res.json({ funnels: grouped });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/funnels/:id/subscribe — inscribir email a un funnel (lead magnet)
+router.post('/funnels/:id/subscribe', async (req, res) => {
+  try {
+    const { email, source = 'lead_magnet' } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'email required' });
+    await supabase.from('subscribers').insert({
+      email, funnel_id: req.params.id, source
+    });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/blog/:slug — render artículo SEO público
+router.get('/blog/:slug', async (req, res) => {
+  try {
+    const { data: post } = await supabase.from('blog_posts')
+      .select('*').eq('slug', req.params.slug).eq('status', 'published').maybeSingle();
+    if (!post) return res.status(404).send('Not found');
+    // Increment views
+    supabase.from('blog_posts').update({ views: (post.views || 0) + 1 }).eq('id', post.id).then(() => {}).catch(() => {});
+    const md2html = (md) => md.replace(/^# (.*$)/gm, '<h1>$1</h1>')
+      .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+      .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" rel="noopener">$1</a>')
+      .replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
+    const html = `<!DOCTYPE html>
+<html lang='es'><head><meta charset='utf-8'>
+<title>${post.title}</title>
+<meta name='description' content='${(post.meta_desc || '').replace(/"/g, '&quot;')}'/>
+<meta property='og:title' content='${post.title}'/>
+<meta property='og:description' content='${(post.meta_desc || '').replace(/"/g, '&quot;')}'/>
+<style>
+body{font-family:Georgia,serif;background:#fafaf6;color:#1a1a14;margin:0;padding:0;line-height:1.7;}
+article{max-width:680px;margin:0 auto;padding:60px 24px;}
+h1{font-size:36px;line-height:1.2;}h2{font-size:24px;margin-top:32px;}h3{font-size:18px;}
+a{color:#B14FFF;}
+.meta{color:#888;font-size:13px;margin-bottom:32px;}
+.cta{background:#B14FFF;color:#fff;text-decoration:none;padding:14px 28px;border-radius:24px;display:inline-block;margin:24px 0;font-weight:600;}
+.brand{position:fixed;top:14px;right:14px;font-size:11px;color:#999;}
+</style></head>
+<body><article>
+<div class='meta'>${new Date(post.published_at).toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+${post.cover_url ? `<img src='${post.cover_url}' style='max-width:100%;border-radius:8px;margin-bottom:24px;'/>` : ''}
+<p>${md2html(post.body_md || '')}</p>
+</article><div class='brand'>fractal.mx</div></body></html>`;
+    res.set('Content-Type', 'text/html').send(html);
+  } catch (err) { res.status(500).send(err.message); }
+});
+
+// POST /api/funnel/drip-now — fuerza envío de drips pendientes
+router.post('/funnel/drip-now', async (req, res) => {
+  try {
+    const { sendDueDrips } = require('../routines/funnel-builder');
+    const r = await sendDueDrips();
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/revenue/kickoff — Mariana arranca un nuevo producto
+router.post('/revenue/kickoff', async (req, res) => {
+  try {
+    const { niche = null, kind = 'ebook' } = req.body || {};
+    const { kickoffProduct } = require('../routines/revenue-pipeline');
+    kickoffProduct({ niche, kind }).catch(err => console.error('revenue:', err.message));
+    res.json({
+      started: true, niche, kind,
+      hint: 'Pipeline de 7 fases corriendo — observa los bubbles del Office. ETA ~5-10 min hasta tener producto live.'
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/revenue/products — listado completo
+router.get('/revenue/products', async (req, res) => {
+  try {
+    const { data } = await supabase.from('revenue_products')
+      .select('id, kind, title, status, price_usd, cover_url, landing_url, council_score, published_at, created_at')
+      .order('created_at', { ascending: false }).limit(50);
+    res.json({ products: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/revenue/products/:id — detalle + votes + events + metrics
+router.get('/revenue/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [prodR, votesR, eventsR, metricsR] = await Promise.allSettled([
+      supabase.from('revenue_products').select('*').eq('id', id).maybeSingle(),
+      supabase.from('council_votes').select('*').eq('product_id', id).order('ts'),
+      supabase.from('revenue_events').select('*').eq('product_id', id).order('ts'),
+      supabase.from('revenue_metrics_daily').select('*').eq('product_id', id).order('date', { ascending: false }).limit(30)
+    ]);
+    res.json({
+      product: prodR.value?.data,
+      votes:   votesR.value?.data || [],
+      events:  eventsR.value?.data || [],
+      metrics: metricsR.value?.data || []
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/revenue/track-now — fuerza tracking diario
+router.post('/revenue/track-now', async (req, res) => {
+  try {
+    const { phaseTrackingDaily } = require('../routines/revenue-pipeline');
+    phaseTrackingDaily().catch(err => console.error('revenue track:', err.message));
+    res.json({ started: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/revenue/landing/:id — landing page del producto (HTML público)
+router.get('/revenue/landing/:id', async (req, res) => {
+  try {
+    const { data: product } = await supabase.from('revenue_products').select('*').eq('id', req.params.id).maybeSingle();
+    if (!product) return res.status(404).send('Not found');
+    const { renderLandingHtml } = require('../routines/revenue-pipeline');
+    res.set('Content-Type', 'text/html').send(renderLandingHtml(product));
+  } catch (err) { res.status(500).send(err.message); }
+});
+
+// GET /api/revenue/download/:id — descarga el contenido (markdown del ebook)
+router.get('/revenue/download/:id', async (req, res) => {
+  try {
+    const { data: product } = await supabase.from('revenue_products').select('*').eq('id', req.params.id).maybeSingle();
+    if (!product?.content_md) return res.status(404).send('Not available');
+    res.set('Content-Type', 'text/markdown')
+       .set('Content-Disposition', `attachment; filename="${(product.title || 'ebook').replace(/[^a-z0-9]/gi, '_')}.md"`)
+       .send(product.content_md);
+  } catch (err) { res.status(500).send(err.message); }
+});
+
+// ╔════════════════════════════════════════════════════════════════════╗
 // ║ GROWTH LAYER — Deal Room · Case Study · Self-improve · Integrations ║
 // ╚════════════════════════════════════════════════════════════════════╝
 

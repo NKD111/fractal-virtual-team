@@ -9,6 +9,7 @@ import PendingsBalloon, { PendingsTarget } from './PendingsBalloon';
 import TaskInput from './TaskInput';
 import InboxWidget from './InboxWidget';
 import CostBadge from './CostBadge';
+import RevenueWidget from './RevenueWidget';
 
 import { isoToScreen } from '../../office/iso/isoMath';
 import { ROOMS, agentScreenPos, buildRoomPlatform } from '../../office/iso/rooms';
@@ -891,6 +892,9 @@ export default function OfficeScene() {
 
       {/* Inbox bottom-right · pendientes que requieren atención del usuario */}
       <InboxWidget />
+
+      {/* Revenue Engine · productos automáticos generadores de ingresos */}
+      <RevenueWidget />
 
       {/* Cost badge top-right · gasto IA del día/mes */}
       <CostBadge />

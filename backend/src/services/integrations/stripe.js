@@ -77,4 +77,38 @@ async function listInvoices(limit = 10) {
   }
 }
 
-module.exports = { createInvoice, listInvoices, ensureCustomer };
+/**
+ * Crea Stripe Product + Price + Payment Link de pago único.
+ * Útil para vender ebooks/cursos sin necesitar checkout custom.
+ */
+async function createPaymentLink({ product_name, product_description, price_usd, image_url = null, currency = 'usd' }) {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return {
+      ok: false, mock: true,
+      preview: { product_name, price_usd, currency, would_url: 'https://buy.stripe.com/test_...' }
+    };
+  }
+  try {
+    const s = stripe();
+    const productData = {
+      name: product_name,
+      description: product_description || '',
+    };
+    if (image_url) productData.images = [image_url];
+    const product = await s.products.create(productData);
+    const price = await s.prices.create({
+      product: product.id,
+      currency,
+      unit_amount: Math.round(Number(price_usd) * 100)
+    });
+    const link = await s.paymentLinks.create({
+      line_items: [{ price: price.id, quantity: 1 }],
+      after_completion: { type: 'hosted_confirmation' }
+    });
+    return { ok: true, url: link.url, product_id: product.id, price_id: price.id, link_id: link.id };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+module.exports = { createInvoice, listInvoices, ensureCustomer, createPaymentLink };

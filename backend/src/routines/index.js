@@ -29,6 +29,10 @@ class RoutineManager {
     this._tasks.push(cron.schedule('30 7 * * 1', () => this._runInsightsScan().catch(e => console.error('insights:', e.message)), TZ));
     // Self-improve agents — Domingo 11 PM (semanal, low-traffic)
     this._tasks.push(cron.schedule('0 23 * * 0', () => this._runSelfImprove().catch(e => console.error('self-improve:', e.message)), TZ));
+    // Revenue tracking diario — 9:00 AM
+    this._tasks.push(cron.schedule('0 9 * * *', () => this._runRevenueTracking().catch(e => console.error('revenue-track:', e.message)), TZ));
+    // Email drip — cada hora envía drips pendientes
+    this._tasks.push(cron.schedule('15 * * * *', () => this._runDripSender().catch(e => console.error('drip:', e.message)), TZ));
     // Follow-ups proactivos — 3 PM L-V
     this._tasks.push(cron.schedule('0 15 * * 1-5', () => this._runProactiveFollowups().catch(e => console.error('proactive:', e.message)), TZ));
     // Diana health check — Viernes 6 PM
@@ -170,6 +174,16 @@ Máximo 3 puntos clave de acción para hoy. Tono: directo, accionable.`,
   async _runSelfImprove() {
     const { refineAll } = require('../services/self-improve');
     return refineAll();
+  }
+
+  async _runRevenueTracking() {
+    const { phaseTrackingDaily } = require('./revenue-pipeline');
+    return phaseTrackingDaily();
+  }
+
+  async _runDripSender() {
+    const { sendDueDrips } = require('./funnel-builder');
+    return sendDueDrips();
   }
 
   async _runDianaHealthCheck() {
