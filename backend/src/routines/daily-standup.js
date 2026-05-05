@@ -37,14 +37,14 @@ class DailyStandup {
     // 4. Persiste en DB para histórico
     await this.saveStandupToDB(standups, summary);
 
-    // 5. WhatsApp a Neiky
-    const { sent, error: waError } = await this.sendToNeiky(summary);
+    // 5. WhatsApp a Neiky (probamos AMBOS canales y reportamos cuál delivered)
+    const { sent, diagnostic } = await this.sendToNeiky(summary);
 
     // 6. Broadcast al Office View (chat bubbles staggered)
     this.broadcastToOffice(standups);
 
     console.log(`✅ Daily Standup completado (whatsapp_sent=${sent})`);
-    return { standups, summary, whatsapp_sent: sent, whatsapp_error: waError || null };
+    return { standups, summary, whatsapp_sent: sent, whatsapp_diagnostic: diagnostic };
   }
 
   async generateTeamStandups(context) {
@@ -153,31 +153,42 @@ Tono: profesional pero cercano. Máximo 5 puntos clave. Emojis con moderación.`
       `🌅 *Buenos días Neiky!*\n\n` +
       `${summary}\n\n` +
       `— Mariana 🤖 | Fractal MX`;
+    const phone = process.env.NEIKY_WHATSAPP || '+525534189583';
+    const diag = { phone, channels: {} };
 
-    // Try Meta WhatsApp first (production primary channel)
+    // Try BOTH channels and report. Helps diagnose silent-success cases
+    // (API returned 200 but message never arrived).
+    const { sendMetaMessage, sendTwilioMessage } = require('../core/whatsapp');
+
     try {
-      await notifyNeiky(message);
-      console.log('  ✓ WhatsApp enviado via Meta');
-      return { sent: true };
+      const metaRes = await sendMetaMessage(phone, message);
+      diag.channels.meta = { ok: true, response: metaRes };
+      console.log('  ✓ Meta API:', JSON.stringify(metaRes).slice(0, 200));
     } catch (metaErr) {
-      console.error('  ✗ Meta WA falló:', metaErr.response?.data || metaErr.message);
-
-      // Fallback: Twilio Sandbox (works without 24h-window restriction in sandbox)
-      try {
-        const { sendTwilioMessage } = require('../core/whatsapp');
-        const phone = process.env.NEIKY_WHATSAPP || '+525534189583';
-        await sendTwilioMessage(phone, message);
-        console.log('  ✓ WhatsApp enviado via Twilio fallback');
-        return { sent: true, via: 'twilio' };
-      } catch (twErr) {
-        const detail = twErr.response?.data || twErr.message;
-        console.error('  ✗ Twilio fallback también falló:', detail);
-        return {
-          sent: false,
-          error: `meta: ${metaErr.message} | twilio: ${twErr.message}`
-        };
-      }
+      diag.channels.meta = {
+        ok: false,
+        error: metaErr.message,
+        details: metaErr.response?.data || null
+      };
+      console.error('  ✗ Meta API:', JSON.stringify(diag.channels.meta).slice(0, 300));
     }
+
+    try {
+      const twRes = await sendTwilioMessage(phone, message);
+      diag.channels.twilio = { ok: true, sid: twRes?.sid, status: twRes?.status };
+      console.log('  ✓ Twilio:', diag.channels.twilio);
+    } catch (twErr) {
+      diag.channels.twilio = {
+        ok: false,
+        error: twErr.message,
+        code: twErr.code || null,
+        details: twErr.response?.data || null
+      };
+      console.error('  ✗ Twilio:', JSON.stringify(diag.channels.twilio).slice(0, 300));
+    }
+
+    const sent = diag.channels.meta?.ok || diag.channels.twilio?.ok;
+    return { sent, diagnostic: diag };
   }
 
   broadcastToOffice(standups) {
