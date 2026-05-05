@@ -214,11 +214,32 @@ export default function OfficeScene() {
       app.stage.on('pointerup', endDrag);
       app.stage.on('pointerupoutside', endDrag);
 
-      // Saved overrides from edit-mode dragging (localStorage)
-      // Loaded EARLY so Oracle/NEXUS/ATLAS can use them too
+      // Locked-in default positions (calibrated by Neiky via drag mode).
+      // Used when no localStorage override exists — fresh visitors see this layout.
+      const LOCKED_POSITIONS: Record<string, { x: number; y: number }> = {
+        mariana:   { x:   -5, y:  40 },
+        diana:     { x: -194, y: 161 },
+        alex:      { x: -134, y:  82 },
+        carlos:    { x: -117, y: -118 },
+        sofia:     { x:   87, y: 137 },
+        lucas:     { x:  261, y: 190 },
+        diego:     { x:  -44, y: -97 },
+        max:       { x: -122, y: -48 },
+        valentina: { x: -199, y: -77 },
+        roberto:   { x: -288, y:   5 },
+        qcbot:     { x: -259, y: 107 },
+        oracle:    { x:  201, y: -78 },
+        nexus:     { x: -371, y: 101 },
+        atlas:     { x:  352, y:  80 }
+      };
+
+      // Saved overrides from edit-mode dragging (localStorage). Higher priority
+      // than LOCKED_POSITIONS so power-users can still tweak.
       const savedPositions: Record<string, { x: number; y: number }> = (() => {
         try { return JSON.parse(localStorage.getItem('fractal-agent-positions') || '{}'); } catch { return {}; }
       })();
+      const resolvePos = (slug: string, fallback: { x: number; y: number }) =>
+        savedPositions[slug] || LOCKED_POSITIONS[slug] || fallback;
 
       // Track all draggable entities (agents + Oracle/NEXUS/ATLAS) so the
       // persist + dump functions cover everything in one place.
@@ -284,7 +305,7 @@ export default function OfficeScene() {
       const oracle = new OracleEntity();
       const oracleRoom = ROOMS.oracle_tower;
       const oracleDefault = isoToScreen(oracleRoom.gx + oracleRoom.sx / 2, oracleRoom.gy + oracleRoom.sy / 2);
-      const oraclePos = savedPositions['oracle'] || { x: oracleDefault.x, y: oracleDefault.y - 8 };
+      const oraclePos = resolvePos('oracle', { x: oracleDefault.x, y: oracleDefault.y - 8 });
       oracle.container.x = oraclePos.x;
       oracle.setBaseY(oraclePos.y);
       oracle.container.zIndex = Math.round(oraclePos.y) + 1000;
@@ -357,9 +378,8 @@ export default function OfficeScene() {
           });
         }
 
-        // Use saved position if user has dragged this agent, else default
-        const defaultPos = agentScreenPos(slug);
-        const pos = savedPositions[slug] || defaultPos;
+        // Resolution: saved drag → locked default → algorithmic fallback
+        const pos = resolvePos(slug, agentScreenPos(slug));
         root.x = pos.x;
         root.y = pos.y;
         // Painter's algorithm: depth-sort by Y. Add baseline so agents always
@@ -435,7 +455,7 @@ export default function OfficeScene() {
         setGuardianMode('nexus');
       });
       const nexusDefault = isoToScreen(-11, 1);
-      const nexusPos = savedPositions['nexus'] || { x: nexusDefault.x, y: nexusDefault.y };
+      const nexusPos = resolvePos('nexus', { x: nexusDefault.x, y: nexusDefault.y });
       nexus.setBasePosition(nexusPos.x, nexusPos.y);
       nexus.container.zIndex = Math.round(nexusPos.y) + 1000;
       makeDraggable('nexus', nexus.container, nexus);
@@ -451,7 +471,7 @@ export default function OfficeScene() {
         setGuardianMode('atlas');
       });
       const atlasDefault = isoToScreen(8, -3);
-      const atlasPos = savedPositions['atlas'] || { x: atlasDefault.x, y: atlasDefault.y };
+      const atlasPos = resolvePos('atlas', { x: atlasDefault.x, y: atlasDefault.y });
       atlas.setBasePosition(atlasPos.x, atlasPos.y);
       atlas.container.zIndex = Math.round(atlasPos.y) + 1000;
       makeDraggable('atlas', atlas.container, atlas);
