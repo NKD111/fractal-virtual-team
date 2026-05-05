@@ -46,8 +46,8 @@ export class GlitchEntity {
       ];
       this.spriteImg = new Sprite(this.poseTex[0]);
       this.spriteImg.anchor.set(0.5, 1);
-      // Slightly smaller than agents — wandering NPC
-      const targetH = 42;
+      // Cachorro NPC, debe verse claramente menor que un humano (~30px)
+      const targetH = 30;
       const k = targetH / fh;
       this.spriteImg.scale.set(k);
       this.container.addChild(this.spriteImg);

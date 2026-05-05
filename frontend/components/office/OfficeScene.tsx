@@ -5,6 +5,7 @@ import { io, Socket } from 'socket.io-client';
 import { gsap } from 'gsap';
 import ChatPanel from './ChatPanel';
 import GuardianPanel from './GuardianPanel';
+import PendingsBalloon, { PendingsTarget } from './PendingsBalloon';
 
 import { isoToScreen } from '../../office/iso/isoMath';
 import { ROOMS, agentScreenPos, buildRoomPlatform } from '../../office/iso/rooms';
@@ -78,6 +79,16 @@ export default function OfficeScene() {
   const editModeRef = useRef(false);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
 
+  // ── Pendings balloon (right-click on agent) ──────────────────────────────
+  const [pendingsTarget, setPendingsTarget] = useState<PendingsTarget>(null);
+
+  // ── Lounge music widget state ────────────────────────────────────────────
+  const [loungeOn, setLoungeOn] = useState(false);
+  useEffect(() => {
+    setLoungeOn(audio.isLoungePlaying());
+    return audio.onLoungeChange(setLoungeOn);
+  }, []);
+
   // ── Pixi scene setup ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
@@ -98,6 +109,9 @@ export default function OfficeScene() {
       appRef.current = app;
       (window as any).__PIXI_APP = app;
       containerRef.current!.appendChild(app.canvas);
+
+      // Suppress browser context menu so right-click can be used as a game input
+      app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
       // World container, centered on screen
       const world = new Container();
@@ -227,8 +241,9 @@ export default function OfficeScene() {
         if (sheet.hasReal && sheet.textures) {
           const spriteImg = new Sprite(sheet.textures[POSE.IDLE]);
           spriteImg.anchor.set(0.5, 1);
-          // Target ~56px tall: ~45% of a 4-tile room (128px diamond height).
-          if (sheet.cellH) spriteImg.scale.set(56 / sheet.cellH);
+          // Default 56px tall, per-slug targetH override (e.g. Diego 50)
+          const tH = (sheet as any).targetH || 56;
+          if (sheet.cellH) spriteImg.scale.set(tH / sheet.cellH);
           root.addChild(spriteImg);
           breathTarget = spriteImg;
           setPose = (p: number) => { spriteImg.texture = sheet.textures[p]; };
@@ -287,7 +302,18 @@ export default function OfficeScene() {
         });
         root.on('pointertap', () => {
           if (editModeRef.current) return; // editing → no chat panel
+          audio.playAgentVoice(slug); // "¡Hey!" grunt by gender bucket
           setSelectedAgent({ name: slug, color: preset.color, role: preset.role });
+        });
+        // Right-click → show pendings balloon
+        root.on('rightclick', (ev: any) => {
+          ev.stopPropagation?.();
+          if (editModeRef.current) return;
+          const gp = root.getGlobalPosition();
+          setPendingsTarget({
+            slug, name: preset.name, color: preset.color,
+            screenX: gp.x, screenY: gp.y - 12
+          });
         });
 
         // Drag-to-place (only fires in editMode). Stops the camera-pan handler
@@ -549,6 +575,24 @@ export default function OfficeScene() {
         {muted ? '🔇' : '🔊'}
       </button>
 
+      {/* Lounge music widget — hipster elevator vibes */}
+      <button
+        onClick={() => audio.toggleLounge()}
+        title={loungeOn ? 'Pausar música lounge' : 'Música lounge'}
+        style={{
+          position: 'absolute', bottom: 12, left: 56,
+          padding: '0 12px', height: 36, borderRadius: 18,
+          background: loungeOn ? 'rgba(255, 206, 92, 0.95)' : 'rgba(15,15,25,0.85)',
+          border: `1px solid ${loungeOn ? '#FFCE5C' : 'rgba(177,79,255,0.4)'}`,
+          color: loungeOn ? '#1a1a14' : '#fff',
+          fontSize: 13, cursor: 'pointer', fontWeight: 600,
+          display: 'flex', alignItems: 'center', gap: 6,
+          backdropFilter: 'blur(8px)', fontFamily: 'system-ui, monospace'
+        }}>
+        <span style={{ fontSize: 16 }}>🎷</span>
+        {loungeOn ? 'lounge ON' : 'lounge'}
+      </button>
+
       {/* Edit mode toggle (drag-to-place agents) */}
       <button
         onClick={() => setEditMode(m => !m)}
@@ -580,6 +624,8 @@ export default function OfficeScene() {
           para imprimir las coords finales.
         </div>
       )}
+
+      <PendingsBalloon target={pendingsTarget} onDismiss={() => setPendingsTarget(null)} />
 
       {selectedAgent && userId && (
         <ChatPanel agent={selectedAgent} userId={userId} onClose={() => setSelectedAgent(null)} />

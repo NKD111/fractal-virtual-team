@@ -72,6 +72,49 @@ router.post('/standup/run', async (req, res) => {
   }
 });
 
+// GET /api/agents/:slug/pendings — what's on this agent's plate right now
+router.get('/agents/:slug/pendings', async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '').toLowerCase();
+    // Promises owned by this agent OR delegated TO this agent
+    const { data: ownPromises } = await supabase
+      .from('pending_promises')
+      .select('id, promise_text, action_type, action_target, execute_at, user_phone, status')
+      .eq('status', 'pending')
+      .or(`agent_id.eq.${slug},action_target.eq.${slug}`)
+      .order('execute_at', { ascending: true })
+      .limit(8);
+
+    // Recent activity from system_events (last 24h)
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: events } = await supabase
+      .from('system_events')
+      .select('event_type, details, started_at')
+      .or(`details->>agent.eq.${slug},details->>agent.eq.${slug.toUpperCase()}`)
+      .gte('started_at', since)
+      .order('started_at', { ascending: false })
+      .limit(5);
+
+    // Latest standup line from daily_context
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: ctxRow } = await supabase
+      .from('daily_context')
+      .select('reports')
+      .eq('context_date', today)
+      .maybeSingle();
+    const standupLine = ctxRow?.reports?.[slug] || ctxRow?.reports?.[slug.toUpperCase()] || null;
+
+    res.json({
+      slug,
+      standup_today: standupLine,
+      promises: ownPromises || [],
+      recent_events: events || []
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/standup/latest — last standup events from the log
 router.get('/standup/latest', async (req, res) => {
   try {

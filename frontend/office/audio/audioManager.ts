@@ -12,29 +12,65 @@
 
 import { Howl, Howler } from 'howler';
 
-type SoundKey = 'ambient' | 'notification' | 'success' | 'oracle' | 'teleport';
+type SoundKey =
+  | 'ambient' | 'lounge' | 'notification' | 'success' | 'oracle' | 'teleport'
+  | 'voice_male_1' | 'voice_male_2' | 'voice_male_3'
+  | 'voice_female_1' | 'voice_female_2' | 'voice_female_3'
+  | 'voice_bot';
 
 const FILES: Record<SoundKey, string> = {
-  ambient:      '/assets/audio/ambient.mp3',
-  notification: '/assets/audio/notification.mp3',
-  success:      '/assets/audio/success.mp3',
-  oracle:       '/assets/audio/oracle.mp3',
-  teleport:     '/assets/audio/teleport.mp3'
+  ambient:        '/assets/audio/ambient.mp3',
+  lounge:         '/assets/audio/lounge.mp3',          // hipster elevator loop
+  notification:   '/assets/audio/notification.mp3',
+  success:        '/assets/audio/success.mp3',
+  oracle:         '/assets/audio/oracle.mp3',
+  teleport:       '/assets/audio/teleport.mp3',
+  voice_male_1:   '/assets/audio/voice_m1.mp3',
+  voice_male_2:   '/assets/audio/voice_m2.mp3',
+  voice_male_3:   '/assets/audio/voice_m3.mp3',
+  voice_female_1: '/assets/audio/voice_f1.mp3',
+  voice_female_2: '/assets/audio/voice_f2.mp3',
+  voice_female_3: '/assets/audio/voice_f3.mp3',
+  voice_bot:      '/assets/audio/voice_bot.mp3'
 };
 
 const DEFAULT_VOLUMES: Record<SoundKey, number> = {
-  ambient:      0.10,
-  notification: 0.40,
-  success:      0.40,
-  oracle:       0.40,
-  teleport:     0.30
+  ambient:        0.10,
+  lounge:         0.18,
+  notification:   0.40,
+  success:        0.40,
+  oracle:         0.40,
+  teleport:       0.30,
+  voice_male_1:   0.55,
+  voice_male_2:   0.55,
+  voice_male_3:   0.55,
+  voice_female_1: 0.55,
+  voice_female_2: 0.55,
+  voice_female_3: 0.55,
+  voice_bot:      0.55
+};
+
+// Map agent slug → gender bucket so we can pick a fitting voice grunt
+export const AGENT_VOICE: Record<string, 'male' | 'female' | 'bot'> = {
+  mariana: 'female', diana: 'female', sofia: 'female', valentina: 'female',
+  carlos: 'male', alex: 'male', lucas: 'male', diego: 'male', max: 'male', roberto: 'male',
+  qcbot: 'bot', oracle: 'bot', nexus: 'bot', atlas: 'bot'
+};
+
+const VOICE_POOL: Record<'male' | 'female' | 'bot', SoundKey[]> = {
+  male:   ['voice_male_1', 'voice_male_2', 'voice_male_3'],
+  female: ['voice_female_1', 'voice_female_2', 'voice_female_3'],
+  bot:    ['voice_bot']
 };
 
 class AudioManager {
   private sounds: Partial<Record<SoundKey, Howl>> = {};
   private ambientId: number | null = null;
+  private loungeId: number | null = null;
   private muted = false;
+  private loungePlaying = false;
   private listeners: Array<(muted: boolean) => void> = [];
+  private loungeListeners: Array<(playing: boolean) => void> = [];
 
   init() {
     // Restore mute state from localStorage
@@ -48,17 +84,45 @@ class AudioManager {
         this.sounds[key] = new Howl({
           src: [FILES[key]],
           volume: DEFAULT_VOLUMES[key],
-          loop: key === 'ambient',
+          loop: key === 'ambient' || key === 'lounge',
           preload: true,
-          onloaderror: () => {
-            // file missing — drop reference so play() is no-op
-            this.sounds[key] = undefined;
-          }
+          onloaderror: () => { this.sounds[key] = undefined; }
         });
       } catch {
         this.sounds[key] = undefined;
       }
     });
+  }
+
+  /** Play a random voice grunt for the agent (male/female/bot bucket). */
+  playAgentVoice(slug: string) {
+    const bucket = AGENT_VOICE[slug] || 'bot';
+    const pool = VOICE_POOL[bucket];
+    const key = pool[Math.floor(Math.random() * pool.length)];
+    const s = this.sounds[key];
+    if (s) { try { s.play(); } catch {} }
+  }
+
+  /** Toggle the lounge/elevator music loop. Returns new playing state. */
+  toggleLounge() {
+    const s = this.sounds.lounge;
+    if (!s) return this.loungePlaying;
+    if (this.loungePlaying) {
+      try { s.stop(); } catch {}
+      this.loungePlaying = false;
+      this.loungeId = null;
+    } else {
+      try { this.loungeId = s.play(); this.loungePlaying = true; } catch {}
+    }
+    this.loungeListeners.forEach(fn => fn(this.loungePlaying));
+    return this.loungePlaying;
+  }
+
+  isLoungePlaying() { return this.loungePlaying; }
+
+  onLoungeChange(fn: (playing: boolean) => void) {
+    this.loungeListeners.push(fn);
+    return () => { this.loungeListeners = this.loungeListeners.filter(f => f !== fn); };
   }
 
   startAmbient() {
