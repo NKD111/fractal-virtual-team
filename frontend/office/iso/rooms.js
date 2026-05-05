@@ -157,7 +157,10 @@ export function agentScreenPos(slug) {
   const total = agents.length;
 
   if (total <= 1) {
-    return inRoomScreenPos(roomKey, room.sx / 2, room.sy / 2);
+    // Feet anchored at (cellX, cellY); push slightly forward so the body
+    // visually fills the lower half of the diamond instead of sitting on the
+    // top half (which makes the agent look like they're on the upper edge).
+    return inRoomScreenPos(roomKey, room.sx / 2, room.sy * 0.65);
   }
 
   // Distribute in a small grid: 2 columns when 3-4 agents, else single row.
@@ -168,11 +171,11 @@ export function agentScreenPos(slug) {
     return inRoomScreenPos(roomKey, cellX, cellY);
   }
 
-  // 3-4 agents: 2x2 layout with margin
-  const col = idx % 2;        // 0 or 1
-  const row = Math.floor(idx / 2); // 0 or 1
-  const marginX = room.sx * 0.22;
-  const marginY = room.sy * 0.22;
+  // 3-4 agents: 2x2 layout with generous margin so they don't crowd
+  const col = idx % 2;
+  const row = Math.floor(idx / 2);
+  const marginX = room.sx * 0.30;
+  const marginY = room.sy * 0.30;
   const cellX = marginX + col * (room.sx - 2 * marginX);
   const cellY = marginY + row * (room.sy - 2 * marginY);
   return inRoomScreenPos(roomKey, cellX, cellY);
