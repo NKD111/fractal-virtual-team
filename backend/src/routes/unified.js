@@ -172,6 +172,142 @@ document.getElementById('go').addEventListener('click', async () => {
 });
 
 // ╔════════════════════════════════════════════════════════════════════╗
+// ║ GROWTH LAYER — Deal Room · Case Study · Self-improve · Integrations ║
+// ╚════════════════════════════════════════════════════════════════════╝
+
+// POST /api/deal-room/create — crea propuesta con link público + e-sign
+router.post('/deal-room/create', async (req, res) => {
+  try {
+    const { task_id, client_name, client_email, proposal_html, total_usd, days = 14 } = req.body || {};
+    if (!client_name || !proposal_html) return res.status(400).json({ error: 'client_name + proposal_html required' });
+    const { createDealRoom } = require('../services/deal-room');
+    const dr = await createDealRoom({ task_id, client_name, client_email, proposal_html, total_usd, days });
+    res.json(dr);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/deal-room/:token — datos para el deal page
+router.get('/deal-room/:token', async (req, res) => {
+  try {
+    const { getDealRoom } = require('../services/deal-room');
+    const data = await getDealRoom(req.params.token);
+    if (!data) return res.status(404).json({ error: 'not found' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/deal-room/:token/accept — cliente firma
+router.post('/deal-room/:token/accept', async (req, res) => {
+  try {
+    const { signed_name } = req.body || {};
+    if (!signed_name) return res.status(400).json({ error: 'signed_name required' });
+    const { acceptDealRoom } = require('../services/deal-room');
+    await acceptDealRoom(req.params.token, signed_name);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/case-study/generate — fuerza generación de case study para un task
+router.post('/case-study/generate', async (req, res) => {
+  try {
+    const { task_id } = req.body || {};
+    if (!task_id) return res.status(400).json({ error: 'task_id required' });
+    const { data: task } = await supabase.from('tasks').select('*').eq('id', task_id).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'task not found' });
+    const { generateCaseStudy } = require('../services/case-study');
+    const r = await generateCaseStudy({ task });
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/case-studies — lista de case studies
+router.get('/case-studies', async (req, res) => {
+  try {
+    const { data } = await supabase.from('case_studies')
+      .select('id, task_id, client, agent, title, pdf_url, created_at')
+      .order('created_at', { ascending: false }).limit(20);
+    res.json({ case_studies: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/agents/refine — refina prompts con wins de la semana
+router.post('/agents/refine', async (req, res) => {
+  try {
+    const { agent } = req.body || {};
+    const { refineAgent, refineAll } = require('../services/self-improve');
+    const result = agent ? await refineAgent(agent) : await refineAll();
+    res.json({ ok: true, result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/agents/baselines — ver addendums vivos
+router.get('/agents/baselines', async (req, res) => {
+  try {
+    const { data } = await supabase.from('agent_baseline').select('*');
+    res.json({ baselines: data || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── INTEGRATIONS — Google Calendar ──────────────────────────────────────
+router.get('/integrations/google/connect', async (req, res) => {
+  const { getOAuthUrl } = require('../services/integrations/gcal');
+  const url = getOAuthUrl();
+  if (!url) return res.status(503).json({ error: 'GOOGLE_CLIENT_ID no configurado' });
+  res.redirect(url);
+});
+router.get('/integrations/google/callback', async (req, res) => {
+  try {
+    const { handleOAuthCallback } = require('../services/integrations/gcal');
+    await handleOAuthCallback(String(req.query.code || ''));
+    res.send('<h1>✅ Google conectado</h1><p>Sofia ya puede usar tu calendario.</p>');
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.post('/integrations/google/event', async (req, res) => {
+  try {
+    const { createEvent } = require('../services/integrations/gcal');
+    const r = await createEvent(req.body || {});
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.get('/integrations/google/upcoming', async (req, res) => {
+  try {
+    const { listUpcoming } = require('../services/integrations/gcal');
+    const r = await listUpcoming(parseInt(req.query?.limit, 10) || 10);
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── INTEGRATIONS — Stripe ──────────────────────────────────────────────
+router.post('/integrations/stripe/invoice', async (req, res) => {
+  try {
+    const { createInvoice } = require('../services/integrations/stripe');
+    const r = await createInvoice(req.body || {});
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.get('/integrations/stripe/invoices', async (req, res) => {
+  try {
+    const { listInvoices } = require('../services/integrations/stripe');
+    const r = await listInvoices(parseInt(req.query?.limit, 10) || 10);
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── INTEGRATIONS — Figma ───────────────────────────────────────────────
+router.get('/integrations/figma/file/:key', async (req, res) => {
+  const { getFile } = require('../services/integrations/figma');
+  res.json(await getFile(req.params.key));
+});
+router.post('/integrations/figma/comment', async (req, res) => {
+  const { postComment } = require('../services/integrations/figma');
+  res.json(await postComment(req.body || {}));
+});
+router.post('/integrations/figma/export', async (req, res) => {
+  const { exportImage } = require('../services/integrations/figma');
+  res.json(await exportImage(req.body || {}));
+});
+
+// ╔════════════════════════════════════════════════════════════════════╗
 // ║ UNICORN LAYER — embed widget, client portal, insights, voice TTS    ║
 // ╚════════════════════════════════════════════════════════════════════╝
 

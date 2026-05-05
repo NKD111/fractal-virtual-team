@@ -53,6 +53,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-dark-900 text-white min-h-screen">
         {children}
+        {/* Service Worker registration for PWA offline */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+              navigator.serviceWorker.register('/sw.js').catch(()=>{});
+            });
+          }
+        ` }} />
       </body>
     </html>
   );

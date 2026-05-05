@@ -44,6 +44,7 @@ app.use('/api/features', require('./routes/features'));
 app.use('/api/vision', require('./routes/vision'));
 app.use('/api/meshy', require('./routes/meshy'));
 app.use('/api', require('./routes/unified'));
+app.use('/api', require('./routes/public-api'));   // /api/admin/keys + /api/v1/*
 app.use('/webhooks', require('./routes/webhooks'));
 
 // MEGAZORD status endpoint

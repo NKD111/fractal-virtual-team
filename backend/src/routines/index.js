@@ -27,6 +27,8 @@ class RoutineManager {
     // EXTRAS:
     // Insights scan — Lunes 7:30 AM (antes del Morning Prep)
     this._tasks.push(cron.schedule('30 7 * * 1', () => this._runInsightsScan().catch(e => console.error('insights:', e.message)), TZ));
+    // Self-improve agents — Domingo 11 PM (semanal, low-traffic)
+    this._tasks.push(cron.schedule('0 23 * * 0', () => this._runSelfImprove().catch(e => console.error('self-improve:', e.message)), TZ));
     // Follow-ups proactivos — 3 PM L-V
     this._tasks.push(cron.schedule('0 15 * * 1-5', () => this._runProactiveFollowups().catch(e => console.error('proactive:', e.message)), TZ));
     // Diana health check — Viernes 6 PM
@@ -163,6 +165,11 @@ Máximo 3 puntos clave de acción para hoy. Tono: directo, accionable.`,
   async _runInsightsScan() {
     const { runInsightsScan } = require('./insights-scanner');
     return runInsightsScan();
+  }
+
+  async _runSelfImprove() {
+    const { refineAll } = require('../services/self-improve');
+    return refineAll();
   }
 
   async _runDianaHealthCheck() {

@@ -580,6 +580,34 @@ async function resumeTask({ taskId, feedback = '', source = 'web-confirm' }) {
     delivered: true
   });
 
+  // Auto: capture win signal if QC passed + case study generation
+  if (emailResult.ok) {
+    try {
+      const { captureOutcome } = require('../services/self-improve');
+      await captureOutcome({
+        agent: task.agent_assigned, task_id: taskId,
+        outcome: 'win', signal: 'qc_high+sent',
+        excerpt: summary.summary_html?.replace(/<[^>]+>/g, '').slice(0, 800)
+      });
+    } catch (_) {}
+    // Async case study (no esperamos)
+    setImmediate(async () => {
+      try {
+        const { generateCaseStudy } = require('../services/case-study');
+        const fullTask = { ...task, status: 'delivered', delivered, image_url: image?.url || task.image_url };
+        await generateCaseStudy({ task: fullTask });
+      } catch (e) { console.warn('[case-study] auto failed:', e.message); }
+    });
+    // Webhook dispatch
+    try {
+      const { dispatchWebhookEvent } = require('../routes/public-api');
+      await dispatchWebhookEvent('task.delivered', {
+        task_id: taskId, agent: task.agent_assigned,
+        subject: summary.subject, image_url: image?.url || null
+      });
+    } catch (_) {}
+  }
+
   return { ok: true, taskId, phase: 'execute', delivered: true,
     image_url: image?.url, email_sent: emailResult.ok };
 }
