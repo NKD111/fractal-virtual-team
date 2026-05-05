@@ -128,23 +128,16 @@ export default function OfficeScene() {
       recenter();
       app.renderer.on('resize', recenter);
 
-      // BACKGROUND: LAYOUT 2 — same central office as v1 PLUS surrounding
-      // street/buildings/cars/pedestrians. Office cluster occupies the
-      // central ~65% of the new image. Scale + offset chosen so the office
-      // cluster center lands at world (0, 0) and matches v1 footprint —
-      // existing AGENT_PLACEMENT and saved drag positions still align.
+      // BACKGROUND: LAYOUT v1 (the original — clean office, no surrounding
+      // city block). Restored after LAYOUT 2 looked disproportionate vs
+      // characters. Saved agent positions in localStorage stay aligned.
       try {
         const bgTex = await Assets.load('/assets/sprites/LAYOUT.png');
         const bg = new Sprite(bgTex);
         bg.anchor.set(0.5, 0.5);
-        // Office cluster in the source image is roughly centered at
-        // (1100, 480) of the 2200x1228 source. Image center is (1100, 614).
-        // Y-shift needed: (614 - 480) = 134 px in source.
-        // Scale picked so office width ≈ 1680 display (matches v1):
-        // office source width ≈ 1900; scale = 1680/1900 ≈ 0.88
-        bg.scale.set(0.88);
         bg.x = 0;
-        bg.y = 134 * 0.88; // ≈ 118
+        bg.y = 0;
+        bg.scale.set(0.42);
         bg.alpha = 1.0;
         bg.zIndex = -10000;
         bg.eventMode = 'static';
