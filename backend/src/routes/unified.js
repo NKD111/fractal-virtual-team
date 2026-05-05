@@ -72,6 +72,27 @@ router.post('/standup/run', async (req, res) => {
   }
 });
 
+// POST /api/task/dispatch — pipeline visual de tarea
+//   1. Mariana clasifica (qué agente)
+//   2. Emite eventos para que el Office View anime una bolita
+//   3. Agente narra avances vía chat_bubble
+//   4. Supervisor revisa
+//   5. Email final al usuario (Resend)
+// Body: { message: string, email?: string }
+router.post('/task/dispatch', async (req, res) => {
+  try {
+    const message = String(req.body?.message || '').trim();
+    if (!message) return res.status(400).json({ error: 'message required' });
+    const userEmail = String(req.body?.email || 'nakedgeometry19@gmail.com').trim();
+    const { runTask } = require('../routines/task-runner');
+    // Fire-and-forget; el frontend escucha vía socket
+    runTask({ message, userEmail }).catch(err => console.error('task:', err.message));
+    res.json({ accepted: true, message: message.slice(0, 60) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/group-chat/run — conversación grupal con HILO coherente.
 // Un agente arranca un tema, los demás van encadenando respuestas (Claude
 // lee el transcript de la charla y genera réplicas conectadas).

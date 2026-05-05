@@ -6,6 +6,7 @@ import { gsap } from 'gsap';
 import ChatPanel from './ChatPanel';
 import GuardianPanel from './GuardianPanel';
 import PendingsBalloon, { PendingsTarget } from './PendingsBalloon';
+import TaskInput from './TaskInput';
 
 import { isoToScreen } from '../../office/iso/isoMath';
 import { ROOMS, agentScreenPos, buildRoomPlatform } from '../../office/iso/rooms';
@@ -553,6 +554,90 @@ export default function OfficeScene() {
 
       // WebSocket events drive poses
       const socket: Socket = io(API_URL, { transports: ['websocket', 'polling'] });
+      // ───────── TASK BALL ANIMATION ─────────
+      // Visualiza el flujo: usuario → Mariana → agente asignado → email
+      const tasks = new Map<string, { ball: Container; bar?: Graphics }>();
+      const findTarget = (slug: string): Container | null => {
+        const a = agents.find(x => x.slug === slug);
+        if (a) return a.container;
+        if (slug === 'oracle') return oracle.container;
+        if (slug === 'nexus')  return nexus.container;
+        if (slug === 'atlas')  return atlas.container;
+        return null;
+      };
+      const spawnBall = (taskId: string, atX: number, atY: number, color = 0xB14FFF) => {
+        const ball = new Container();
+        const orb = new Graphics();
+        orb.circle(0, 0, 8).fill({ color, alpha: 0.95 }).stroke({ color: 0xffffff, width: 2, alpha: 0.9 });
+        orb.circle(0, 0, 14).stroke({ color, width: 2, alpha: 0.4 });
+        ball.addChild(orb);
+        ball.x = atX; ball.y = atY;
+        ball.zIndex = 1000000;
+        world.addChild(ball);
+        // Pulsing glow
+        gsap.to(orb.scale, { x: 1.25, y: 1.25, duration: 0.6, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+        tasks.set(taskId, { ball });
+        return ball;
+      };
+      const moveBallTo = (taskId: string, slug: string, dur = 1.6) => {
+        const t = tasks.get(taskId);
+        const target = findTarget(slug);
+        if (!t || !target) return;
+        gsap.to(t.ball, {
+          x: target.x, y: target.y - 40,
+          duration: dur, ease: 'power2.inOut'
+        });
+      };
+      const attachProgressBar = (taskId: string, total: number) => {
+        const t = tasks.get(taskId);
+        if (!t) return;
+        if (t.bar) { try { t.bar.destroy(); } catch {} }
+        const bar = new Graphics();
+        bar.rect(-20, 16, 40, 4).fill({ color: 0x000000, alpha: 0.5 });
+        t.ball.addChild(bar);
+        t.bar = bar;
+        return bar;
+      };
+      const setProgress = (taskId: string, step: number, total: number) => {
+        const t = tasks.get(taskId);
+        if (!t) return;
+        if (!t.bar) attachProgressBar(taskId, total);
+        const bar = t.bar!;
+        bar.clear();
+        bar.rect(-20, 16, 40, 4).fill({ color: 0x000000, alpha: 0.5 });
+        bar.rect(-20, 16, (step / total) * 40, 4).fill({ color: 0xFFCE5C });
+      };
+      const completeBall = (taskId: string) => {
+        const t = tasks.get(taskId);
+        if (!t) return;
+        gsap.to(t.ball, {
+          alpha: 0, duration: 0.6,
+          onComplete: () => { try { t.ball.destroy(); } catch {} tasks.delete(taskId); }
+        });
+        gsap.to(t.ball.scale, { x: 2, y: 2, duration: 0.5 });
+      };
+
+      socket.on('task_created', (ev: any) => {
+        // Spawn at bottom-center of world (where input lives) and travel to Mariana
+        const startY = 200;
+        spawnBall(ev.taskId, 0, startY);
+        // Mariana receives it next
+        setTimeout(() => moveBallTo(ev.taskId, 'mariana', 1.4), 100);
+      });
+      socket.on('task_assigned', (ev: any) => {
+        attachProgressBar(ev.taskId, 3);
+        moveBallTo(ev.taskId, ev.agent, 1.8);
+      });
+      socket.on('task_progress', (ev: any) => {
+        setProgress(ev.taskId, ev.step, ev.total || 3);
+      });
+      socket.on('task_complete', (ev: any) => {
+        completeBall(ev.taskId);
+      });
+      socket.on('task_failed', (ev: any) => {
+        completeBall(ev.taskId);
+      });
+
       socket.on('connect', () => console.log('[socket] connected', socket.id));
       socket.on('disconnect', (r: any) => console.log('[socket] disconnect', r));
       socket.on('chat_bubble', (ev: any) => {
@@ -783,6 +868,9 @@ export default function OfficeScene() {
       )}
 
       <PendingsBalloon target={pendingsTarget} onDismiss={() => setPendingsTarget(null)} />
+
+      {/* Caja de texto bottom-center: dispara una tarea hacia Mariana */}
+      <TaskInput />
 
       {selectedAgent && userId && (
         <ChatPanel agent={selectedAgent} userId={userId} onClose={() => setSelectedAgent(null)} />
