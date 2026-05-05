@@ -61,6 +61,36 @@ router.post('/admin/keys', async (req, res) => {
   res.json({ key: raw, prefix, note: 'Guarda esta key — no se podrá ver de nuevo.' });
 });
 
+// ── ADMIN: env-fingerprint para debugging (no devuelve la key, solo metadata)
+router.get('/admin/env-fingerprint', async (req, res) => {
+  const token = req.query.token || req.headers['x-admin-token'];
+  if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  const fp = (val) => {
+    if (!val) return null;
+    return {
+      length: val.length,
+      starts: val.slice(0, 6),
+      ends: val.slice(-4),
+      has_whitespace: /\s/.test(val),
+      has_newline: /\n|\r/.test(val),
+      first_char_code: val.charCodeAt(0),
+      last_char_code: val.charCodeAt(val.length - 1)
+    };
+  };
+  res.json({
+    ELEVENLABS_API_KEY: fp(process.env.ELEVENLABS_API_KEY),
+    STRIPE_SECRET_KEY: fp(process.env.STRIPE_SECRET_KEY),
+    RESEND_API_KEY: fp(process.env.RESEND_API_KEY),
+    META_ACCESS_TOKEN: fp(process.env.META_ACCESS_TOKEN),
+    OPENAI_API_KEY: fp(process.env.OPENAI_API_KEY),
+    PUBLIC_URL: process.env.PUBLIC_URL || null,
+    NODE_VERSION: process.version,
+    process_uptime_sec: Math.round(process.uptime())
+  });
+});
+
 // ── ADMIN: setup-check via HTTP (?token=ADMIN_TOKEN) ─────────────────────
 router.get('/admin/setup-check', async (req, res) => {
   const token = req.query.token || req.headers['x-admin-token'];
