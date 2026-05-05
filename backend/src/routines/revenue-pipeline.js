@@ -333,7 +333,7 @@ async function phaseTrackingDaily() {
         const ours = checkouts.data.filter(c => c.line_items?.data?.some(li => li.price?.product === stripePlatform.product_id) || true);
         for (const c of ours) {
           if (c.payment_status === 'paid') {
-            salsN++; revenue += (c.amount_total || 0) / 100;
+            salesN++; revenue += (c.amount_total || 0) / 100;
           }
         }
         source = 'stripe';

@@ -5,6 +5,62 @@ const express = require('express');
 const router = express.Router();
 const { supabase } = require('../core/supabase');
 
+// GET /api/guardian/health — Quick condensed health (no auth, for dashboards/uptime checks)
+router.get('/health', async (req, res) => {
+  try {
+    const out = {
+      ok: true,
+      ts: new Date().toISOString(),
+      guardian_initialized: !!global.guardian,
+      services: { up: 0, degraded: 0, down: 0, total: 0 },
+      recent_alerts_24h: 0,
+      last_synthetic_test: null
+    };
+
+    // Service rollup
+    try {
+      const { data: services } = await supabase
+        .from('monitored_services')
+        .select('current_status')
+        .eq('is_active', true);
+      if (services?.length) {
+        out.services.total = services.length;
+        for (const s of services) {
+          const st = (s.current_status || 'unknown').toLowerCase();
+          if (st === 'up' || st === 'ok' || st === 'healthy') out.services.up++;
+          else if (st === 'degraded' || st === 'warning' || st === 'slow') out.services.degraded++;
+          else if (st === 'down' || st === 'error' || st === 'critical') out.services.down++;
+        }
+      }
+    } catch {}
+
+    // Alerts last 24h
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { count } = await supabase
+        .from('predictive_alerts')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', since);
+      out.recent_alerts_24h = count || 0;
+    } catch {}
+
+    // Last synthetic test
+    try {
+      const { data: tests } = await supabase
+        .from('synthetic_tests')
+        .select('service_key, status, tested_at')
+        .order('tested_at', { ascending: false })
+        .limit(1);
+      if (tests?.[0]) out.last_synthetic_test = tests[0];
+    } catch {}
+
+    out.ok = out.guardian_initialized && out.services.down === 0;
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // GET /api/guardian/status — Full guardian status
 router.get('/status', async (req, res) => {
   try {

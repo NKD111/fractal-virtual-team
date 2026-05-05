@@ -61,6 +61,52 @@ router.post('/admin/keys', async (req, res) => {
   res.json({ key: raw, prefix, note: 'Guarda esta key — no se podrá ver de nuevo.' });
 });
 
+// ── ADMIN: setup-check via HTTP (?token=ADMIN_TOKEN) ─────────────────────
+router.get('/admin/setup-check', async (req, res) => {
+  const token = req.query.token || req.headers['x-admin-token'];
+  if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  const REQUIRED_ENVS = {
+    SUPABASE_URL: { required: true }, SUPABASE_SERVICE_KEY: { required: true },
+    ANTHROPIC_API_KEY: { required: true }, NEIKY_PHONE: { required: true },
+    TWILIO_ACCOUNT_SID: { required: false }, TWILIO_AUTH_TOKEN: { required: false },
+    WHATSAPP_PHONE_NUMBER_ID: { required: false }, WHATSAPP_ACCESS_TOKEN: { required: false },
+    STRIPE_SECRET_KEY: { required: false }, RESEND_API_KEY: { required: false },
+    ELEVENLABS_API_KEY: { required: false }, OPENAI_API_KEY: { required: false },
+    GOOGLE_CLIENT_ID: { required: false }, GOOGLE_CLIENT_SECRET: { required: false },
+    FIGMA_TOKEN: { required: false }, CLOUDINARY_URL: { required: false },
+    ADMIN_TOKEN: { required: false }, PUBLIC_URL: { required: false },
+  };
+  const REQUIRED_TABLES = [
+    'clients','projects','daily_context','tasks','task_events',
+    'audit_log','cost_log','qc_reviews','agent_state',
+    'insights','embed_leads','voice_cache',
+    'deal_rooms','case_studies','api_keys','webhook_subs','agent_baseline',
+    'revenue_products','council_votes','revenue_campaigns','revenue_metrics_daily','revenue_events',
+    'funnels','subscribers','email_drips','email_drip_sent','blog_posts','product_subscriptions',
+    'pending_promises','system_events',
+  ];
+  const out = { envs: { ok: [], missing_required: [], optional_missing: [] }, tables: { exists: [], missing: [], errored: [] } };
+  for (const [name, m] of Object.entries(REQUIRED_ENVS)) {
+    const v = process.env[name];
+    if (v && v.length > 3) out.envs.ok.push(name);
+    else if (m.required) out.envs.missing_required.push(name);
+    else out.envs.optional_missing.push(name);
+  }
+  for (const t of REQUIRED_TABLES) {
+    try {
+      const { error } = await supabase.from(t).select('*', { count: 'exact', head: true }).limit(1);
+      if (error) {
+        if (/does not exist|42P01/i.test(error.message || '')) out.tables.missing.push(t);
+        else out.tables.errored.push({ t, err: error.message });
+      } else out.tables.exists.push(t);
+    } catch (e) { out.tables.errored.push({ t, err: e.message }); }
+  }
+  out.ready_for_production = out.envs.missing_required.length === 0 && out.tables.missing.length === 0;
+  res.json(out);
+});
+
 // ── Public endpoints (require auth) ──────────────────────────────────────
 router.use('/v1', authenticate);
 
