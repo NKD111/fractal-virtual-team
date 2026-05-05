@@ -124,8 +124,8 @@ export class OracleEntity {
     this.glow.circle(0, 0, r).stroke({ color: 0xB14FFF, width: 3, alpha: a });
     this.glow.circle(0, 0, r * 1.4).stroke({ color: 0xB14FFF, width: 1.5, alpha: a * 0.6 });
 
-    // Float
-    this.container.y = this._baseY + Math.sin(this._t * 0.04) * 3;
+    // No float — Oracle is a machine, stays anchored
+    this.container.y = this._baseY;
 
     // Procedural core spin
     if (this.proceduralCore?.visible) {

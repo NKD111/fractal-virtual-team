@@ -296,8 +296,8 @@ export default function OfficeScene() {
       atlas.container.on('pointerover', () => atlas.setHoverLabel(true));
       atlas.container.on('pointerout', () => atlas.setHoverLabel(false));
       atlas.container.on('pointertap', () => setGuardianMode('atlas'));
-      // East of bg, in visible viewport — floats next to Analytics/Lounge area
-      const atlasPos = isoToScreen(11, -5);
+      // Inside the Lounge area painted on the bg (image ~1700,700 → world ~252,36)
+      const atlasPos = isoToScreen(8, -3);
       atlas.setBasePosition(atlasPos.x, atlasPos.y);
       atlas.container.zIndex = Math.round(atlasPos.y) + 1000;
 

@@ -104,8 +104,9 @@ export class AtlasEntity {
   setHoverLabel(visible) { this.label.alpha = visible ? 1 : 0; }
 
   update(dt) {
+    // No float — ATLAS is a machine, stays anchored
     this._t += dt * 0.04;
-    this.container.y = this._baseY + Math.sin(this._t + 1.5) * 3;
+    this.container.y = this._baseY;
   }
 
   setBasePosition(x, y) {
