@@ -66,7 +66,7 @@ function emitBubble(slug, text) {
   try {
     global.io.emit('chat_bubble', {
       agent: slug,
-      text: text.length > 90 ? text.slice(0, 87) + '…' : text,
+      text: String(text || '').slice(0, 240), // generoso, frontend wordWraps
       kind: 'intro',
       ts: Date.now()
     });

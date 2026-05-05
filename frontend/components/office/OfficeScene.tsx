@@ -479,45 +479,43 @@ export default function OfficeScene() {
       const activeBubbles = new Map<string, Container>();
 
       // Chat bubble overlay — comic-style: white rounded rect + black border
-      // + tail pointing down + X close button. Used by daily-standup +
-      // intro-chat WS broadcast and by agent hover (re-show last bubble).
-      const showBubble = (agentSlug: string, text: string, lifeMs = 15000, opts: { fromHover?: boolean } = {}) => {
+      // + tail pointing down. 10s auto-dismiss (no close button — fue buggy).
+      // Hover sobre el agente re-aparece la última frase 8s.
+      const showBubble = (agentSlug: string, text: string, lifeMs = 10000, opts: { fromHover?: boolean } = {}) => {
         const a = agents.find(x => x.slug === agentSlug);
         const target = a?.container ?? (agentSlug === 'oracle' ? oracle.container : null);
         if (!target || !text) return;
 
-        // Don't cache hover replays — only fresh messages
         if (!opts.fromHover) lastBubbles.set(agentSlug, text);
 
-        // Replace existing bubble for this agent
+        // Reemplazo limpio si ya hay un bubble activo para ese agente
         const existing = activeBubbles.get(agentSlug);
         if (existing) { try { existing.destroy(); } catch {} }
 
         const bubbleRoot = new Container();
         bubbleRoot.alpha = 0;
         bubbleRoot.zIndex = 99999;
-        bubbleRoot.eventMode = 'static';
+        // bubble NO es interactivo — evita robar clicks al agente o canvas
+        bubbleRoot.eventMode = 'none';
         activeBubbles.set(agentSlug, bubbleRoot);
 
-        const padX = 8, padY = 6;
-        const maxW = 220; // wider so text rarely truncates
-        const closeSize = 12;
+        const padX = 9, padY = 7;
+        const maxW = 260; // generoso para mostrar oraciones largas completas
         const style = new TextStyle({
           fontFamily: '"VT323", "Courier New", monospace',
-          fontSize: 11, fontWeight: '400',
+          fontSize: 12, fontWeight: '400',
           fill: 0x1a1a14,
-          wordWrap: true, wordWrapWidth: maxW - padX * 2 - closeSize, align: 'left',
-          lineHeight: 12
+          wordWrap: true, wordWrapWidth: maxW - padX * 2, align: 'left',
+          lineHeight: 13
         });
         const t = new Text({ text, style });
 
-        const w = Math.min(maxW, t.width + padX * 2 + closeSize + 4);
+        const w = Math.min(maxW, t.width + padX * 2);
         const h = t.height + padY * 2;
         const rect = new Graphics();
         rect.roundRect(-w / 2, -h, w, h, 8)
           .fill({ color: 0xfafaf6, alpha: 0.97 })
           .stroke({ color: 0x1a1a14, width: 2 });
-        // Comic tail pointing down toward the agent's head
         rect.poly([-5, 0, 5, 0, 0, 7])
           .fill({ color: 0xfafaf6, alpha: 0.97 })
           .stroke({ color: 0x1a1a14, width: 2 });
@@ -525,33 +523,8 @@ export default function OfficeScene() {
         t.anchor.set(0, 0);
         t.position.set(-w / 2 + padX, -h + padY);
 
-        // Close button (X) top-right
-        const closeBtn = new Container();
-        closeBtn.eventMode = 'static';
-        closeBtn.cursor = 'pointer';
-        const closeBg = new Graphics();
-        closeBg.circle(0, 0, closeSize / 2 + 2).fill(0x1a1a14);
-        const closeX = new Text({
-          text: '×',
-          style: new TextStyle({
-            fontFamily: 'system-ui', fontSize: 14, fontWeight: '700', fill: 0xfafaf6
-          })
-        });
-        closeX.anchor.set(0.5, 0.55);
-        closeBtn.addChild(closeBg);
-        closeBtn.addChild(closeX);
-        closeBtn.position.set(w / 2 - closeSize / 2 - 2, -h + closeSize / 2 + 2);
-        closeBtn.on('pointertap', (ev: any) => {
-          ev.stopPropagation?.();
-          gsap.to(bubbleRoot, { alpha: 0, duration: 0.2, onComplete: () => {
-            try { bubbleRoot.destroy(); } catch {}
-            activeBubbles.delete(agentSlug);
-          }});
-        });
-
         bubbleRoot.addChild(rect);
         bubbleRoot.addChild(t);
-        bubbleRoot.addChild(closeBtn);
         bubbleRoot.position.set(0, -62);
         target.addChild(bubbleRoot);
 
@@ -559,7 +532,7 @@ export default function OfficeScene() {
         gsap.from(bubbleRoot.scale, { x: 0.6, y: 0.6, duration: 0.22, ease: 'back.out(2)' });
 
         gsap.delayedCall(lifeMs / 1000, () => {
-          if (activeBubbles.get(agentSlug) !== bubbleRoot) return; // already replaced
+          if (activeBubbles.get(agentSlug) !== bubbleRoot) return;
           gsap.to(bubbleRoot, { alpha: 0, duration: 0.3, onComplete: () => {
             try { bubbleRoot.destroy(); } catch {}
             activeBubbles.delete(agentSlug);

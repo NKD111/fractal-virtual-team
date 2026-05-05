@@ -205,7 +205,7 @@ Tono: profesional pero cercano. Máximo 5 puntos clave. Emojis con moderación.`
           // Also fire chat_bubble for consistency with the existing handler
           global.io.emit('chat_bubble', {
             agent: standup.agent.toLowerCase(),
-            text: standup.message.length > 60 ? standup.message.slice(0, 57) + '…' : standup.message,
+            text: String(standup.message || '').slice(0, 240),
             kind: 'standup',
             ts: Date.now()
           });
