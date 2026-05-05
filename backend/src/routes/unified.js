@@ -23,6 +23,8 @@ router.post('/unified-message', async (req, res) => {
 });
 
 // GET /api/conversations/:userId/:agentName
+// Strict filter: ONLY messages tagged with this exact agent. Each agent
+// keeps its own independent thread per user (no cross-agent leakage).
 router.get('/conversations/:userId/:agentName', async (req, res) => {
   try {
     const { userId, agentName } = req.params;
@@ -30,7 +32,7 @@ router.get('/conversations/:userId/:agentName', async (req, res) => {
       .from('messages')
       .select('id, role, content, agent_name, source_channel, created_at')
       .eq('user_id', userId)
-      .or(`role.eq.user,agent_name.eq.${agentName}`)
+      .eq('agent_name', agentName)
       .order('created_at', { ascending: true })
       .limit(100);
     res.json({ messages: messages || [] });

@@ -201,22 +201,29 @@ server.listen(PORT, async () => {
     console.error('[Fase 6] init error:', err.message);
   }
 
-  // Fase 8.5 — inject business context into every initialized agent
+  // Fase 8.5 — eager-load each agent, register as global, inject business context.
+  // Without eager load, getAgent() instantiates lazily on first message and
+  // baseContext is never injected. With eager + global.X registration, the
+  // spec's "global[agentName].baseContext" pattern works.
   try {
+    const { getAgent } = require('./core/orchestrator');
     const agentContext = require('./agents/agent-context');
     const agentNames = ['mariana', 'diana', 'carlos', 'alex', 'sofia', 'lucas',
                         'diego', 'max', 'valentina', 'roberto', 'qcbot'];
     for (const name of agentNames) {
       try {
-        const ctx = await agentContext.buildContext(name);
-        const target = global[name] || global[name.toUpperCase()];
-        if (target) {
-          target.baseContext = ctx;
-          console.log(`  ✓ ${name.toUpperCase()} contexto inyectado (${ctx.length} chars)`);
+        const inst = getAgent(name);
+        if (inst) {
+          global[name] = inst;
+          const ctx = await agentContext.buildContext(name);
+          inst.baseContext = ctx;
+          console.log(`  ✓ ${name.toUpperCase()} eager + contexto (${ctx.length} chars)`);
         }
-      } catch (e) { /* per-agent failure is non-fatal */ }
+      } catch (e) {
+        console.warn(`  ✗ ${name}: ${e.message}`);
+      }
     }
-    console.log('🧠 FASE 8.5: contexto de negocio inyectado en agentes');
+    console.log('🧠 FASE 8.5: 11 agentes globales con contexto de negocio');
   } catch (err) {
     console.error('[Fase 8.5] context injection error:', err.message);
   }

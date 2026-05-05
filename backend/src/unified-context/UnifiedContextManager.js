@@ -120,9 +120,14 @@ class UnifiedContextManager {
     const user = await this.identifyUser({ channel, identifier });
     const context = await this.getFullContext(user.id);
 
-    // Build Mariana-compatible call: she expects ({from, text, channel})
-    const agent = getAgent(agentName);
-    if (!agent) throw new Error(`Agent ${agentName} not found`);
+    // Dispatch to the requested agent. Fallback to Mariana ONLY if the
+    // agent slug doesn't resolve at all (per Fase 8.5 spec — never the reverse).
+    let agent = getAgent(agentName);
+    if (!agent) {
+      console.warn(`[UCM] agent "${agentName}" not found, falling back to mariana`);
+      agent = getAgent('mariana');
+      agentName = 'mariana';
+    }
 
     const fromId = channel === 'whatsapp' ? user.whatsapp : `web_${user.id}`;
     let responseText = '';
@@ -139,14 +144,16 @@ class UnifiedContextManager {
       responseText = 'Disculpa, hubo un problema procesando tu mensaje.';
     }
 
-    // Persist messages with the new schema columns (user_id, source_channel, agent_name)
+    // Persist BOTH user and assistant messages tagged with agent_name so that
+    // each agent's conversation can be retrieved independently. Without
+    // agent_name on the user message the conversation history leaked across
+    // agents (user msg sent to Carlos showed up in Diana's history).
     try {
       await supabase.from('messages').insert([
-        { user_id: user.id, role: 'user', content: message, source_channel: channel, created_at: new Date().toISOString() },
+        { user_id: user.id, role: 'user',      content: message,     source_channel: channel, agent_name: agentName, created_at: new Date().toISOString() },
         { user_id: user.id, role: 'assistant', content: responseText, source_channel: channel, agent_name: agentName, created_at: new Date().toISOString() }
       ]);
     } catch (err) {
-      // Schema-cache miss is non-fatal
       console.warn('[UCM] message persist warn:', err.message);
     }
 
