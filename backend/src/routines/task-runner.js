@@ -19,9 +19,11 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { sendEmail } = require('../core/email');
 const { supabase } = require('../core/supabase');
+const { audit, logEmailSent, logImageGen, wrapAnthropic, idempotent } = require('../core/telemetry');
+const { reviewEmail } = require('../core/qc-gate');
 
 const anthropic = process.env.ANTHROPIC_API_KEY
-  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  ? wrapAnthropic(new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }))
   : null;
 
 const ROUTING = {
@@ -401,6 +403,7 @@ async function runTask({ message, userEmail = 'nakedgeometry19@gmail.com', sourc
     id: taskId, source, user_email: userEmail, message,
     needs_visual: needsVisual, status: 'classifying'
   });
+  await audit({ actor: 'mariana', action: 'task.created', target: taskId, details: { source, needsVisual, len: message.length } });
 
   emit('task_created', { taskId, message, from: 'user' });
   bubble('mariana', 'Recibido, déjame ver a quién le toca esto.');
@@ -524,17 +527,43 @@ async function resumeTask({ taskId, feedback = '', source = 'web-confirm' }) {
       agentSlug: task.agent_assigned, brief: task.brief, feedback, summary,
       promised, delivered, image, supervisorNote, taskId
     });
-    emailResult = await sendEmail({
-      to: task.user_email,
-      subject: `[FX-${taskId}] ${summary.subject}`,
-      html,
-      text: `${summary.summary_html.replace(/<[^>]+>/g, '\n').trim()}`,
-      fromName: `${task.agent_assigned[0].toUpperCase() + task.agent_assigned.slice(1)} · Fractal MX`
+    const fullSubject = `[FX-${taskId}] ${summary.subject}`;
+
+    // QC-Bot gate: review before sending
+    bubble('qcbot', 'Reviso el email antes de que salga.');
+    const qc = await reviewEmail({
+      taskId, agent: task.agent_assigned,
+      subject: fullSubject, html, promised, delivered
     });
+    if (!qc.passed) {
+      bubble('qcbot', `Rechazo. Issues: ${(qc.issues || []).slice(0, 2).join('; ')}`);
+      bubble(task.agent_assigned, `QC me rebotó, ajusto y mando de nuevo.`);
+      // Best-effort: still send but flag in body
+      const flagged = `<div style="background:#fff3cd;border:1px solid #ffc107;padding:10px;border-radius:6px;margin-bottom:14px;color:#856404;font-size:12px;">⚠️ <strong>QC flag (score ${qc.score}/10):</strong> ${(qc.issues || []).join('; ')}</div>${html}`;
+      emailResult = await sendEmail({
+        to: task.user_email, subject: fullSubject, html: flagged,
+        text: summary.summary_html.replace(/<[^>]+>/g, '\n').trim(),
+        fromName: `${task.agent_assigned[0].toUpperCase() + task.agent_assigned.slice(1)} · Fractal MX`
+      });
+    } else {
+      bubble('qcbot', `Aprobado (${qc.score}/10).`);
+      emailResult = await sendEmail({
+        to: task.user_email, subject: fullSubject, html,
+        text: summary.summary_html.replace(/<[^>]+>/g, '\n').trim(),
+        fromName: `${task.agent_assigned[0].toUpperCase() + task.agent_assigned.slice(1)} · Fractal MX`
+      });
+    }
     bubble(task.agent_assigned, `Entrega completa enviada.`);
+    await logEmailSent({ taskId, agent: task.agent_assigned, ok: true });
+    if (image?.url) await logImageGen({ taskId, agent: task.agent_assigned, hd: true });
+    await audit({
+      actor: task.agent_assigned, action: 'task.delivered', target: taskId,
+      details: { qc_score: qc.score, image: !!image?.url, supervisor: task.supervisor }
+    });
   } catch (err) {
     console.error('[task] final email failed:', err.message);
     bubble(task.agent_assigned, `Final email falló (${err.message.slice(0, 30)}…).`);
+    await audit({ actor: task.agent_assigned, action: 'task.email_failed', target: taskId, details: { error: err.message }, ok: false });
   }
 
   await updateTask(taskId, {

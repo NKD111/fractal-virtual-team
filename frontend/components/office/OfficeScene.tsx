@@ -7,6 +7,8 @@ import ChatPanel from './ChatPanel';
 import GuardianPanel from './GuardianPanel';
 import PendingsBalloon, { PendingsTarget } from './PendingsBalloon';
 import TaskInput from './TaskInput';
+import InboxWidget from './InboxWidget';
+import CostBadge from './CostBadge';
 
 import { isoToScreen } from '../../office/iso/isoMath';
 import { ROOMS, agentScreenPos, buildRoomPlatform } from '../../office/iso/rooms';
@@ -886,6 +888,12 @@ export default function OfficeScene() {
 
       {/* Caja de texto bottom-center: dispara una tarea hacia Mariana */}
       <TaskInput />
+
+      {/* Inbox bottom-right · pendientes que requieren atención del usuario */}
+      <InboxWidget />
+
+      {/* Cost badge top-right · gasto IA del día/mes */}
+      <CostBadge />
 
       {selectedAgent && userId && (
         <ChatPanel agent={selectedAgent} userId={userId} onClose={() => setSelectedAgent(null)} />

@@ -171,6 +171,71 @@ document.getElementById('go').addEventListener('click', async () => {
   res.set('Content-Type', 'text/html').send(html);
 });
 
+// GET /api/inbox — agregado de TODO lo que requiere atención del usuario
+//   - tareas en awaiting_confirmation
+//   - promesas que vencen hoy o ya vencieron
+//   - alertas de NEXUS (financial / system)
+//   - ultimas 3 reviews de QC con score < 7
+router.get('/inbox', async (req, res) => {
+  try {
+    const now = new Date();
+    const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+
+    const [tasksAw, promisesDue, qcFails, recentEvents] = await Promise.allSettled([
+      supabase.from('tasks').select('id,brief,agent_assigned,created_at,user_email').eq('status', 'awaiting_confirmation').order('created_at', { ascending: false }).limit(8),
+      supabase.from('pending_promises').select('id,promise_text,execute_at,user_phone,agent_id').eq('status', 'pending').lte('execute_at', todayEnd.toISOString()).order('execute_at').limit(10),
+      supabase.from('qc_reviews').select('task_id,agent,score,issues,ts').lt('score', 7).order('ts', { ascending: false }).limit(5),
+      supabase.from('system_events').select('event_type,severity,details,started_at').in('severity', ['warning','error','critical']).order('started_at', { ascending: false }).limit(5)
+    ]);
+
+    res.json({
+      tasks_awaiting:  tasksAw.value?.data || [],
+      promises_due:    promisesDue.value?.data || [],
+      qc_failures:     qcFails.value?.data || [],
+      alerts:          recentEvents.value?.data || [],
+      generated_at:    now.toISOString()
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/cost/today — gasto de IA + email + WA del día
+router.get('/cost/today', async (req, res) => {
+  try {
+    const { getCostsToday, getCostsMonth } = require('../core/telemetry');
+    const today = await getCostsToday();
+    const month = await getCostsMonth();
+    res.json({ today, month });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/voice/transcribe — Whisper STT del audio del input voz
+//   body: { audio_base64: string, mime?: string }
+//   o multipart 'audio' field
+router.post('/voice/transcribe', async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(503).json({ error: 'OPENAI_API_KEY no configurada' });
+    }
+    const audioB64 = req.body?.audio_base64;
+    if (!audioB64) return res.status(400).json({ error: 'audio_base64 required' });
+    const mime = req.body?.mime || 'audio/webm';
+    const buf = Buffer.from(audioB64, 'base64');
+    const FormData = require('form-data');
+    const axios = require('axios');
+    const form = new FormData();
+    form.append('file', buf, { filename: 'audio.webm', contentType: mime });
+    form.append('model', 'whisper-1');
+    form.append('language', 'es');
+    const r = await axios.post('https://api.openai.com/v1/audio/transcriptions', form, {
+      headers: { ...form.getHeaders(), Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      maxBodyLength: Infinity, maxContentLength: Infinity, timeout: 30000
+    });
+    res.json({ text: r.data?.text || '' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/tasks — lista de tareas con su status y entregables (cumplidas vs prometidas)
 router.get('/tasks', async (req, res) => {
   try {
