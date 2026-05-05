@@ -66,6 +66,50 @@ Object.entries(ROOMS).forEach(([key, room]) => {
 });
 
 /**
+ * Per-agent placement INSIDE their room (cellX, cellY in tile units).
+ * Hand-tuned to land each agent on a clean floor area in the painted bg
+ * — NOT on top of furniture, monitors, plants, or other characters.
+ *
+ * Coordinate frame: (0,0) = room's NORTH (top) corner of the diamond.
+ * Higher cellX = SE direction. Higher cellY = SW direction. Center = (sx/2, sy/2).
+ */
+export const AGENT_PLACEMENT = {
+  // FINANCE (3x3): bookshelf on west wall, leather chair+desk on south.
+  // Clean floor: stand front-right of the room.
+  roberto: { cellX: 2.0, cellY: 2.4 },
+
+  // HUB CENTRAL (4x4): big round meeting table in the middle.
+  // Stand on the east side of the table, not on top of it.
+  mariana: { cellX: 3.0, cellY: 2.6 },
+
+  // CLIENT RELATIONS (3x3): screen + Oracle portal occupy back wall.
+  // Diana stands forward-left of the portal.
+  diana: { cellX: 1.0, cellY: 2.6 },
+
+  // CONTENT/podcast (3x3): chairs + ring lights center.
+  // Alex stands at the southern entrance, away from the gear.
+  alex: { cellX: 1.5, cellY: 2.7 },
+
+  // BUILD (3x3): kanban on north wall, desk on east.
+  // Sofia stands front-left, in the open floor.
+  sofia: { cellX: 1.0, cellY: 2.4 },
+
+  // ANALYTICS (3x3): standing desk on south.
+  // Lucas stands front-left of the desk.
+  lucas: { cellX: 1.0, cellY: 2.6 },
+
+  // QC (2x2): server rack tight room. qcbot beside the server.
+  qcbot: { cellX: 1.4, cellY: 1.2 },
+
+  // CREATIVE STUDIO (5x4): big room. Distribute 4 agents to 4 corners
+  // so each has their own drawing-table area.
+  carlos:    { cellX: 1.0, cellY: 1.0 },  // NW
+  diego:     { cellX: 4.0, cellY: 1.0 },  // NE
+  max:       { cellX: 1.0, cellY: 3.0 },  // SW
+  valentina: { cellX: 4.0, cellY: 3.0 }   // SE
+};
+
+/**
  * Build the visual platform for one room (a floating isometric slab).
  * Returns a Container positioned at room center.
  */
@@ -151,32 +195,31 @@ export function inRoomScreenPos(roomKey, cellX, cellY) {
 }
 
 /** Where each agent stands inside their room.
- *  - Single agent: centered, slightly toward the front (cellY = sy*0.55).
- *  - Multiple agents: distributed in 2D so they don't crowd a single row. */
+ *  Priority:
+ *    1. Hand-tuned AGENT_PLACEMENT entry (preferred — lands on clean floor).
+ *    2. Generic fallback (single agent → front-center; multiple → 2x2 grid). */
 export function agentScreenPos(slug) {
   const roomKey = AGENT_ROOM[slug];
   if (!roomKey) return { x: 0, y: 0 };
+
+  // Per-agent override wins
+  const place = AGENT_PLACEMENT[slug];
+  if (place) return inRoomScreenPos(roomKey, place.cellX, place.cellY);
+
   const room = ROOMS[roomKey];
   const agents = room.agents || [];
   const idx = agents.indexOf(slug);
   const total = agents.length;
 
   if (total <= 1) {
-    // Feet near the BOTTOM of the diamond so the body sits visually inside
-    // the room (sprite is 56px tall, small rooms have ~96px diamond height
-    // with feet-at-center the body extends above the diamond top edge).
     return inRoomScreenPos(roomKey, room.sx / 2, room.sy * 0.85);
   }
-
-  // Distribute in a small grid: 2 columns when 3-4 agents, else single row.
   if (total <= 2) {
     const spread = Math.min(1.6, room.sx * 0.45);
     const cellX = room.sx / 2 + (idx === 0 ? -spread / 2 : spread / 2);
     const cellY = room.sy / 2;
     return inRoomScreenPos(roomKey, cellX, cellY);
   }
-
-  // 3-4 agents: 2x2 layout with generous margin so they don't crowd
   const col = idx % 2;
   const row = Math.floor(idx / 2);
   const marginX = room.sx * 0.30;
