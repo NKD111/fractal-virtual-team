@@ -142,20 +142,37 @@ export default function OfficeScene() {
         shadow.ellipse(0, -2, 16, 5).fill({ color: 0x000000, alpha: 0.45 });
         root.addChild(shadow);
 
+        let breathTarget: any = null;
         if (sheet.hasReal && sheet.textures) {
           const spriteImg = new Sprite(sheet.textures[POSE.IDLE]);
           spriteImg.anchor.set(0.5, 1);
           // Target ~56px tall: ~45% of a 4-tile room (128px diamond height).
           if (sheet.cellH) spriteImg.scale.set(56 / sheet.cellH);
           root.addChild(spriteImg);
+          breathTarget = spriteImg;
           setPose = (p: number) => { spriteImg.texture = sheet.textures[p]; };
         } else {
           const proc = proceduralCharacter(preset);
-          // Procedural characters are small (~50px). Scale up so they're visible
-          // against the big floating platforms. Real PNGs use their own scale.
           proc.container.scale.set(0.95);
           root.addChild(proc.container);
+          breathTarget = proc.container;
           setPose = proc.setPose;
+        }
+
+        // Idle micro-animation (Habbo-style breathing): subtle vertical squash
+        // with randomized phase per agent so they don't all bob in unison.
+        if (breathTarget) {
+          const baseScaleY = breathTarget.scale.y;
+          const baseScaleX = breathTarget.scale.x;
+          gsap.to(breathTarget.scale, {
+            y: baseScaleY * 0.97,
+            x: baseScaleX * 1.015,
+            duration: 1.6 + Math.random() * 0.6,
+            ease: 'sine.inOut',
+            yoyo: true,
+            repeat: -1,
+            delay: Math.random() * 1.5
+          });
         }
 
         const pos = agentScreenPos(slug);
@@ -190,7 +207,8 @@ export default function OfficeScene() {
         });
 
         world.addChild(root);
-        tickerStops.push(animateBreathing(root, app.ticker));
+        // Note: GSAP idle anim runs on the sprite directly (above), so it
+        // doesn't fight the hover anim that targets root.scale.
         agents.push({ slug, preset, container: root, setPose });
       }
 
