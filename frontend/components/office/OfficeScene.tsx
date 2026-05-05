@@ -89,6 +89,29 @@ export default function OfficeScene() {
     return audio.onLoungeChange(setLoungeOn);
   }, []);
 
+  // ── Glitch visibility toggle ──────────────────────────────────────────────
+  const [glitchVisible, setGlitchVisible] = useState(true);
+  const toggleGlitch = () => {
+    const next = !glitchVisible;
+    setGlitchVisible(next);
+    const g = (window as any).__glitch;
+    if (g?.container) g.container.visible = next;
+    try { localStorage.setItem('fractal-glitch-visible', next ? '1' : '0'); } catch {}
+  };
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('fractal-glitch-visible');
+      if (saved === '0') {
+        // Apply hide after a tick so __glitch is registered
+        setTimeout(() => {
+          const g = (window as any).__glitch;
+          if (g?.container) g.container.visible = false;
+          setGlitchVisible(false);
+        }, 1500);
+      }
+    } catch {}
+  }, []);
+
   // ── Pixi scene setup ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
@@ -100,7 +123,9 @@ export default function OfficeScene() {
       await app.init({
         background: 0x0a0a14,
         antialias: true,
-        resolution: Math.min(2, window.devicePixelRatio || 1),
+        // Always render at 2x minimum so sprites stay crisp on standard
+        // displays. On retina screens use the device DPR up to 3.
+        resolution: Math.max(2, Math.min(3, window.devicePixelRatio || 2)),
         autoDensity: true,
         resizeTo: containerRef.current!,
         powerPreference: 'high-performance'
@@ -133,6 +158,17 @@ export default function OfficeScene() {
       // characters. Saved agent positions in localStorage stay aligned.
       try {
         const bgTex = await Assets.load('/assets/sprites/LAYOUT.png');
+        // Enable mipmaps + linear filter for smooth downscaling. Without
+        // these, a large source rendered small ends up aliased / pixelated.
+        try {
+          (bgTex.source as any).autoGenerateMipmaps = true;
+          (bgTex.source as any).style = {
+            ...(bgTex.source as any).style,
+            scaleMode: 'linear',
+            mipmapFilter: 'linear'
+          };
+          (bgTex.source as any).updateMipmaps?.();
+        } catch {}
         const bg = new Sprite(bgTex);
         bg.anchor.set(0.5, 0.5);
         bg.x = 0;
@@ -375,12 +411,18 @@ export default function OfficeScene() {
         agents.push({ slug, preset, container: root, setPose });
       }
 
-      // GLITCH
+      // GLITCH — wandering NPC. Saved drag position respected.
       const glitch = new GlitchEntity();
-      glitch.setBasePosition(0, 0);
+      const glitchSaved = savedPositions['glitch'];
+      if (glitchSaved) glitch.setBasePosition(glitchSaved.x, glitchSaved.y);
+      else glitch.setBasePosition(0, 0);
       glitch.container.zIndex = 999999;
+      glitch.container.eventMode = 'static';
       world.addChild(glitch.container);
       glitch.tryLoadSpritesheet();
+      makeDraggable('glitch', glitch.container, glitch);
+      // Visibility toggle (hide via UI button)
+      (window as any).__glitch = glitch;
 
       // NEXUS — independent entity. Default west quadrant; saved overrides win.
       const nexus = new NexusEntity();
@@ -621,6 +663,23 @@ export default function OfficeScene() {
         }}>
         <span style={{ fontSize: 16 }}>🎷</span>
         {loungeOn ? 'lounge ON' : 'lounge'}
+      </button>
+
+      {/* Glitch hide toggle */}
+      <button
+        onClick={toggleGlitch}
+        title={glitchVisible ? 'Ocultar Glitch' : 'Mostrar Glitch'}
+        style={{
+          position: 'absolute', bottom: 12, left: 158,
+          padding: '0 12px', height: 36, borderRadius: 18,
+          background: glitchVisible ? 'rgba(15,15,25,0.85)' : 'rgba(120,120,140,0.85)',
+          border: '1px solid rgba(177,79,255,0.4)',
+          color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600,
+          display: 'flex', alignItems: 'center', gap: 6,
+          backdropFilter: 'blur(8px)', fontFamily: 'system-ui, monospace'
+        }}>
+        <span style={{ fontSize: 14 }}>🐶</span>
+        {glitchVisible ? 'Glitch' : 'oculto'}
       </button>
 
       {/* Edit mode toggle (drag-to-place agents) */}

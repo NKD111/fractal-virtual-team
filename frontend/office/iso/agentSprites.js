@@ -41,6 +41,17 @@ export async function loadAgentSpritesheet(slug, preset) {
 
       // Sprites are pre-processed (transparent bg) by scripts/strip-sprite-bg.js
       const baseTex = await Assets.load(url);
+      // Enable mipmaps + linear filter so the heavy downscale (cellH 256 → ~56
+      // display) renders smoothly instead of pixelated.
+      try {
+        baseTex.source.autoGenerateMipmaps = true;
+        baseTex.source.style = {
+          ...baseTex.source.style,
+          scaleMode: 'linear',
+          mipmapFilter: 'linear'
+        };
+        baseTex.source.updateMipmaps?.();
+      } catch (_) {}
       console.log(`[sprites] ${slug} loaded ${baseTex.width}x${baseTex.height}`);
       const w = baseTex.width;
       const h = baseTex.height;
