@@ -73,6 +73,11 @@ export default function OfficeScene() {
     return () => { off(); window.removeEventListener('pointerdown', startOnce); };
   }, []);
 
+  // ── Edit mode (drag-to-place agents). Persisted in localStorage. ──────────
+  const [editMode, setEditMode] = useState(false);
+  const editModeRef = useRef(false);
+  useEffect(() => { editModeRef.current = editMode; }, [editMode]);
+
   // ── Pixi scene setup ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!containerRef.current) return;
@@ -183,6 +188,24 @@ export default function OfficeScene() {
         presetEntries.map(([slug, preset]) => loadAgentSpritesheet(slug, preset).catch(() => ({ hasReal: false, textures: null })))
       );
 
+      // Saved overrides from edit-mode dragging (localStorage)
+      const savedPositions: Record<string, { x: number; y: number }> = (() => {
+        try { return JSON.parse(localStorage.getItem('fractal-agent-positions') || '{}'); } catch { return {}; }
+      })();
+      const persistPositions = () => {
+        const all: Record<string, { x: number; y: number }> = {};
+        for (const a of agents) all[a.slug] = { x: Math.round(a.container.x), y: Math.round(a.container.y) };
+        try { localStorage.setItem('fractal-agent-positions', JSON.stringify(all)); } catch {}
+      };
+      // Expose helper so user can dump current placements from console
+      (window as any).__dumpAgentPlacements = () => {
+        const lines = agents.map(a =>
+          `  ${a.slug.padEnd(10)} { x: ${Math.round(a.container.x)}, y: ${Math.round(a.container.y)} },`);
+        const out = `// agent positions (paste into AGENT_PLACEMENT or rooms.js)\nconst SAVED = {\n${lines.join('\n')}\n};`;
+        console.log(out);
+        return out;
+      };
+
       console.log('[OfficeScene] sheets loaded:', sheets.map((s, i) => `${presetEntries[i][0]}=${s?.hasReal ? 'REAL' : 'PROC'}`));
       for (let i = 0; i < presetEntries.length; i++) {
         const [slug, preset] = presetEntries[i];
@@ -233,13 +256,15 @@ export default function OfficeScene() {
           });
         }
 
-        const pos = agentScreenPos(slug);
+        // Use saved position if user has dragged this agent, else default
+        const defaultPos = agentScreenPos(slug);
+        const pos = savedPositions[slug] || defaultPos;
         root.x = pos.x;
         root.y = pos.y;
         // Painter's algorithm: depth-sort by Y. Add baseline so agents always
         // render ABOVE the platforms (zIndex -1000), regardless of negative Y.
         root.zIndex = Math.round(pos.y) + 1000;
-        console.log(`[agent] ${slug} mode=${sheet.hasReal ? 'REAL' : 'PROC'} pos=(${Math.round(pos.x)},${Math.round(pos.y)})`);
+        console.log(`[agent] ${slug} mode=${sheet.hasReal ? 'REAL' : 'PROC'} pos=(${Math.round(pos.x)},${Math.round(pos.y)})${savedPositions[slug] ? ' [saved]' : ''}`);
 
         // Hover label
         const labelStyle = new TextStyle({
@@ -254,15 +279,47 @@ export default function OfficeScene() {
 
         root.on('pointerover', () => {
           gsap.to(hoverLabel, { alpha: 1, duration: 0.2 });
-          gsap.to(root.scale, { x: 1.08, y: 1.08, duration: 0.18 });
+          if (!editModeRef.current) gsap.to(root.scale, { x: 1.08, y: 1.08, duration: 0.18 });
         });
         root.on('pointerout', () => {
           gsap.to(hoverLabel, { alpha: 0, duration: 0.2 });
-          gsap.to(root.scale, { x: 1, y: 1, duration: 0.18 });
+          if (!editModeRef.current) gsap.to(root.scale, { x: 1, y: 1, duration: 0.18 });
         });
         root.on('pointertap', () => {
+          if (editModeRef.current) return; // editing → no chat panel
           setSelectedAgent({ name: slug, color: preset.color, role: preset.role });
         });
+
+        // Drag-to-place (only fires in editMode). Stops the camera-pan handler
+        // by being on the agent's container which is hit BEFORE app.stage.
+        let agentDragging = false;
+        let dragStartGX = 0, dragStartGY = 0, agentStartX = 0, agentStartY = 0;
+        root.on('pointerdown', (ev: any) => {
+          if (!editModeRef.current) return;
+          agentDragging = true;
+          ev.stopPropagation?.();
+          dragStartGX = ev.global.x; dragStartGY = ev.global.y;
+          agentStartX = root.x; agentStartY = root.y;
+          root.cursor = 'grabbing';
+          gsap.to(root.scale, { x: 1.12, y: 1.12, duration: 0.1 });
+        });
+        root.on('globalpointermove', (ev: any) => {
+          if (!agentDragging || !editModeRef.current) return;
+          // Convert global pixel delta into world-space delta (world isn't scaled today, so 1:1)
+          root.x = agentStartX + (ev.global.x - dragStartGX);
+          root.y = agentStartY + (ev.global.y - dragStartGY);
+          root.zIndex = Math.round(root.y) + 1000;
+        });
+        const stopAgentDrag = () => {
+          if (!agentDragging) return;
+          agentDragging = false;
+          root.cursor = 'grab';
+          gsap.to(root.scale, { x: 1, y: 1, duration: 0.15 });
+          persistPositions();
+          console.log(`[edit] ${slug} → (${Math.round(root.x)}, ${Math.round(root.y)})`);
+        };
+        root.on('pointerup', stopAgentDrag);
+        root.on('pointerupoutside', stopAgentDrag);
 
         world.addChild(root);
         // Note: GSAP idle anim runs on the sprite directly (above), so it
@@ -491,6 +548,38 @@ export default function OfficeScene() {
         }}>
         {muted ? '🔇' : '🔊'}
       </button>
+
+      {/* Edit mode toggle (drag-to-place agents) */}
+      <button
+        onClick={() => setEditMode(m => !m)}
+        title={editMode ? 'Bloquear posiciones' : 'Editar posiciones'}
+        style={{
+          position: 'absolute', bottom: 12, right: 12,
+          padding: '8px 14px', borderRadius: 18,
+          background: editMode ? 'rgba(255,107,53,0.95)' : 'rgba(15,15,25,0.85)',
+          border: `1px solid ${editMode ? '#FF6B35' : 'rgba(177,79,255,0.4)'}`,
+          color: '#fff', fontSize: 13, cursor: 'pointer', fontWeight: 600,
+          backdropFilter: 'blur(8px)'
+        }}>
+        {editMode ? '🔒 Listo (bloquear)' : '🔓 Editar posiciones'}
+      </button>
+      {editMode && (
+        <div style={{
+          position: 'absolute', bottom: 60, right: 12,
+          padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(15,15,25,0.95)',
+          border: '1px solid rgba(255,107,53,0.5)',
+          color: '#fff', fontSize: 12, fontFamily: 'system-ui, monospace',
+          maxWidth: 280, lineHeight: 1.5
+        }}>
+          <div style={{ color: '#FF6B35', fontWeight: 700, marginBottom: 4 }}>EDIT MODE</div>
+          Arrastra cada personaje a su lugar.<br />
+          Auto-guarda en localStorage.<br />
+          Cuando termines, abre la consola y escribe<br />
+          <code style={{ color: '#FFCE5C' }}>__dumpAgentPlacements()</code><br />
+          para imprimir las coords finales.
+        </div>
+      )}
 
       {selectedAgent && userId && (
         <ChatPanel agent={selectedAgent} userId={userId} onClose={() => setSelectedAgent(null)} />
