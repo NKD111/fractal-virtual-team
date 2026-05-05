@@ -392,16 +392,21 @@ export default function OfficeScene() {
         hoverLabel.alpha = 0;
         root.addChild(hoverLabel);
 
+        let hoverTimer: any = null;
         root.on('pointerover', () => {
           gsap.to(hoverLabel, { alpha: 1, duration: 0.2 });
           if (!editModeRef.current) gsap.to(root.scale, { x: 1.08, y: 1.08, duration: 0.18 });
-          // Re-show last bubble for this agent if any
-          const fn = (window as any).__showLastBubble;
-          if (fn) fn(slug);
+          // Re-show last bubble SOLO si el cursor se mantiene >1s sobre el agente.
+          if (hoverTimer) clearTimeout(hoverTimer);
+          hoverTimer = setTimeout(() => {
+            const fn = (window as any).__showLastBubble;
+            if (fn) fn(slug);
+          }, 1000);
         });
         root.on('pointerout', () => {
           gsap.to(hoverLabel, { alpha: 0, duration: 0.2 });
           if (!editModeRef.current) gsap.to(root.scale, { x: 1, y: 1, duration: 0.18 });
+          if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
         });
         root.on('pointertap', () => {
           if (editModeRef.current) return; // editing → no chat panel
@@ -496,8 +501,9 @@ export default function OfficeScene() {
         const bubbleRoot = new Container();
         bubbleRoot.alpha = 0;
         bubbleRoot.zIndex = 99999;
-        // bubble NO es interactivo — evita robar clicks al agente o canvas
-        bubbleRoot.eventMode = 'none';
+        // El bubble SÍ es interactivo — pero solo para detectar hover y
+        // desaparecer (anti-saturación). Pointertap NO se propaga al agente.
+        bubbleRoot.eventMode = 'static';
         activeBubbles.set(agentSlug, bubbleRoot);
 
         const padX = 9, padY = 7;
@@ -531,6 +537,15 @@ export default function OfficeScene() {
 
         gsap.to(bubbleRoot, { alpha: 1, duration: 0.18 });
         gsap.from(bubbleRoot.scale, { x: 0.6, y: 0.6, duration: 0.22, ease: 'back.out(2)' });
+
+        // Hover sobre el bubble → desaparece al instante (anti-saturación).
+        // El texto sigue cacheado en lastBubbles para hover-replay del agente.
+        bubbleRoot.on('pointerover', () => {
+          gsap.to(bubbleRoot, { alpha: 0, duration: 0.2, onComplete: () => {
+            try { bubbleRoot.destroy(); } catch {}
+            activeBubbles.delete(agentSlug);
+          }});
+        });
 
         gsap.delayedCall(lifeMs / 1000, () => {
           if (activeBubbles.get(agentSlug) !== bubbleRoot) return;

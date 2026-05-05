@@ -72,6 +72,33 @@ router.post('/standup/run', async (req, res) => {
   }
 });
 
+// POST /api/evolving-chat/run — el equipo brainstormea CRECIMIENTO de la
+// empresa cambiando de tema cada N réplicas. Cada tema cierra con conclusión
+// accionable ("X hará Y para Z fecha"). Mariana modera, Sofia trackea al final.
+router.post('/evolving-chat/run', async (req, res) => {
+  try {
+    const topicCount = Math.max(1, Math.min(7, parseInt(req.body?.topics, 10) || 3));
+    const repliesPerTopic = Math.max(3, Math.min(12, parseInt(req.body?.repliesPerTopic, 10) || 7));
+    const gapMs = Math.max(3000, Math.min(15000, parseInt(req.body?.gapMs, 10) || 8000));
+    const betweenTopicMs = Math.max(5000, Math.min(30000, parseInt(req.body?.betweenTopicMs, 10) || 14000));
+    const { runEvolvingChat } = require('../routines/evolving-chat');
+    runEvolvingChat({ topicCount, repliesPerTopic, gapMs, betweenTopicMs })
+      .catch(err => console.error('evolving-chat:', err.message));
+    const linesPerTopic = 1 + repliesPerTopic + 1;
+    const totalLines = topicCount * linesPerTopic + 2;
+    const estSec = (totalLines * gapMs + (topicCount - 1) * betweenTopicMs) / 1000;
+    res.json({
+      started: true,
+      topics: topicCount, repliesPerTopic, gapMs, betweenTopicMs,
+      total_lines: totalLines,
+      estimated_duration_sec: Math.round(estSec),
+      hint: 'Conversación evolutiva: cambian de tema cada cierto rato, cada tema cierra con conclusión accionable.'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/creative-jam/run — multi-agent collaboration para identidad 2027.
 // 5 creativos brainstormean, Valentina sintetiza 2 propuestas, Diego genera
 // imágenes IA, Sofia revisa viabilidad, Mariana aprueba, email final con TODO.
