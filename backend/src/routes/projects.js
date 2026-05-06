@@ -16,7 +16,7 @@ router.get('/status', async (req, res) => {
     const { data, error } = await supabase
       .from('projects')
       .select('id, client_name, client_whatsapp, project_type, status, budget_mxn, created_at, updated_at')
-      .not('status', 'in', '("completed","cancelled","deleted")')
+      .not('status', 'in', '("completed","cancelled")')
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -186,7 +186,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('projects')
-      .update({ status: 'deleted', updated_at: new Date().toISOString() })
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select('id, client_name, status')
       .single();
