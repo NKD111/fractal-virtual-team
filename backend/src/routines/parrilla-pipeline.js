@@ -13,6 +13,7 @@
 
 const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
+const { fase4_subirADrive, fase7_llenarTablasYEntregar } = require('../services/google-drive-delivery');
 
 const TZ = { timezone: 'America/Mexico_City' };
 
@@ -370,10 +371,25 @@ async function fase4_produccion() {
       }
     }
 
-    await notifyNeiky(`🎨 Producción FIF ${mes} — ${producidos}/${briefs.length} piezas generadas.\n${errores > 0 ? `⚠️ ${errores} piezas con error — revisar dashboard.` : '✅ Todo generado.'}\n\nVALENTINA hará QC. Revisión final el día 17.`);
+    // ─── BLOQUE S: Subir artes a Google Drive y notificar NKD ─────────────────
+    const briefsProducidos = await getBriefsByMes(mes, 'listo_qc');
+    const driveResult = await fase4_subirADrive(briefsProducidos, mes).catch(e => {
+      console.error('[Fase4] Drive upload error (non-fatal):', e.message);
+      return { success: false, error: e.message };
+    });
+
+    if (!driveResult.success) {
+      // Fallback: notificación simple si Drive falla
+      await notifyNeiky(
+        `🎨 Producción FIF ${mes} — ${producidos}/${briefs.length} piezas generadas.\n` +
+        `${errores > 0 ? `⚠️ ${errores} piezas con error.` : '✅ Todo generado.'}\n\n` +
+        `⚠️ Drive no disponible: ${driveResult.error || 'sin credenciales'}.\n` +
+        `Descarga desde el dashboard.`
+      );
+    }
 
     console.log(`✅ Fase 4: ${producidos} producidos, ${errores} errores`);
-    return { success: true, mes, producidos, errores };
+    return { success: true, mes, producidos, errores, drive: driveResult };
 
   } catch (err) {
     console.error('❌ Fase 4 error:', err.message);
@@ -464,76 +480,54 @@ async function fase6_revisionNKD() {
   }
 }
 
-// ─── FASE 7: DÍA 20 — Entrega automática a Claudia ──────────────────────────
+// ─── FASE 7: DÍA 20 — Entrega via Google Drive (BLOQUE S) ───────────────────
+// NKD acomoda las 8 artes finales en la presentación y avisa:
+// "ya está la parrilla lista, llena las tablas"
+// Eso llama a /api/parrilla/llenar-tablas que ejecuta fase7_llenarTablasYEntregar
+//
+// Este cron del día 20 avisa a NKD que es momento de hacer eso:
 async function fase7_entregaClaudia() {
   const mes = getMesActual();
-  console.log(`📦 PARRILLA PIPELINE: Fase 7 — Entrega a Claudia para ${mes}`);
+  console.log(`📦 PARRILLA PIPELINE: Fase 7 — Recordatorio de entrega Drive para ${mes}`);
 
   try {
-    // Briefs aprobados por NKD o en QA aprobado
     let briefs = await getBriefsByMes(mes, 'aprobado_nkd');
     if (briefs.length === 0) briefs = await getBriefsByMes(mes, 'aprobado_qa');
     if (briefs.length === 0) briefs = await getBriefsByMes(mes, 'listo_qc');
 
     if (briefs.length === 0) {
-      await notifyNeiky(`⚠️ Parrilla FIF ${mes}: no hay piezas aprobadas para entregar hoy.\nVerificar estado en dashboard.`);
+      await notifyNeiky(`⚠️ Parrilla FIF ${mes}: no hay piezas listas para entregar hoy.\nVerificar estado en dashboard.`);
       return { success: false, error: 'Sin piezas aprobadas' };
     }
 
-    const claudiaEmail = process.env.CLAUDIA_EMAIL;
+    // ─── BLOQUE S: Recordar a NKD que llene la presentación ─────────────────
+    const lista = briefs.slice(0, 8).map((b, i) =>
+      `${i + 1}. [${(b.tipo_pieza || '').toUpperCase()}] ${b.headline || b.concepto}`
+    ).join('\n');
 
-    if (claudiaEmail && process.env.RESEND_API_KEY) {
-      // Construir lista de artes
-      const artesList = briefs.map((b, i) =>
-        `${i + 1}. ${b.tipo_pieza?.toUpperCase()} — "${b.headline}"\n   ${b.url_arte_final || 'Arte pendiente de exportación'}`
-      ).join('\n\n');
+    await notifyNeiky(
+      `📅 Día 20 — Entrega FIF ${mes}\n\n` +
+      `${briefs.length} piezas listas:\n${lista}\n\n` +
+      `Pasos:\n` +
+      `1️⃣ Entra al Drive y acomoda las 8 finales en la presentación\n` +
+      `2️⃣ Cuando esté lista, responde: "ya está la parrilla lista, llena las tablas"\n` +
+      `3️⃣ Yo lleno las tablas y registro la entrega automáticamente 🤖`
+    );
 
-      const emailBody = `Hola Claudia,\n\nAdjunto la parrilla de contenido FIF para el mes ${mes}.\n\n${artesList}\n\nTotal: ${briefs.length} piezas.\n\nCualquier duda, con gusto atendemos.\n\nSaludos,\nFractal MX`;
-
-      const { Resend } = require('resend');
-      const resend = new Resend(process.env.RESEND_API_KEY);
-      await resend.emails.send({
-        from: 'Fractal MX <diana@fractalmx.com>',
-        to: claudiaEmail,
-        subject: `Parrilla FIF ${mes} — Entrega Fractal MX`,
-        text: emailBody
-      });
-
-      // Actualizar status
-      for (const brief of briefs) {
-        await updateBriefStatus(brief.id, 'entregado');
-      }
-
-      await notifyNeiky(`✅ Parrilla FIF ${mes} entregada a Claudia.\n${briefs.length} piezas enviadas.\nRevenue registrado: $1,000 USD`);
-
-      // Registrar en digital_products_sales (como ingreso de servicio)
-      await supabase.from('digital_products_sales').insert({
-        producto: `Parrilla mensual FIF ${mes}`,
-        tipo: 'servicio_agencia',
-        precio_usd: 1000,
-        plataforma: 'agencia',
-        cliente_email: claudiaEmail,
-        cliente_pais: 'México'
-      }).catch(() => {});
-
-      console.log(`✅ Fase 7: ${briefs.length} piezas entregadas a Claudia`);
-      return { success: true, mes, piezas_entregadas: briefs.length };
-    } else {
-      // Sin email configurado: notificar a NKD para entrega manual
-      const lista = briefs.map((b, i) => `${i + 1}. ${b.headline}`).join('\n');
-      await notifyNeiky(
-        `📦 Parrilla FIF ${mes} — ${briefs.length} piezas listas para entregar.\n\n` +
-        `${lista}\n\n` +
-        `⚠️ CLAUDIA_EMAIL no configurado. Configura el env var para entrega automática.\n` +
-        `Por ahora: entregar manualmente desde el dashboard.`
-      );
-      return { success: true, mes, manual_delivery_needed: true, piezas: briefs.length };
-    }
+    console.log(`✅ Fase 7: Recordatorio enviado a NKD — ${briefs.length} piezas`);
+    return { success: true, mes, piezas: briefs.length, awaiting_nkd: true };
 
   } catch (err) {
     console.error('❌ Fase 7 error:', err.message);
     return { success: false, error: err.message };
   }
+}
+
+// ─── FASE 7B: Trigger manual — "llenar las tablas" ──────────────────────────
+// Llamado desde /api/parrilla/llenar-tablas cuando NKD da la instrucción
+async function fase7b_llenarTablasTrigger(mes, presentationId = null) {
+  console.log(`📊 PARRILLA: Fase 7B — Llenar tablas Drive para ${mes}`);
+  return fase7_llenarTablasYEntregar(mes, presentationId);
 }
 
 // ─── REGISTRO DE CRONS ───────────────────────────────────────────────────────
@@ -565,5 +559,6 @@ module.exports = {
   fase4_produccion,
   fase5_qa,
   fase6_revisionNKD,
-  fase7_entregaClaudia
+  fase7_entregaClaudia,
+  fase7b_llenarTablasTrigger
 };

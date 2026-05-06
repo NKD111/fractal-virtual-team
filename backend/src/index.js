@@ -366,6 +366,38 @@ server.listen(PORT, async () => {
     console.warn('[Bloque L] init error (non-fatal):', err.message);
   }
 
+  // ─── BLOQUE S — Google Drive Delivery Pipeline ────────────────────────────
+  try {
+    const { fase7b_llenarTablasTrigger } = require('./routines/parrilla-pipeline');
+    const { verificarConexionDrive } = require('./services/google-drive-delivery');
+
+    // POST /api/parrilla/llenar-tablas — NKD dispara cuando está lista la presentación
+    app.post('/api/parrilla/llenar-tablas', async (req, res) => {
+      try {
+        const mes = req.body.mes || new Date().toISOString().substring(0, 7);
+        const presentationId = req.body.presentationId || null;
+        const result = await fase7b_llenarTablasTrigger(mes, presentationId);
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // GET /api/parrilla/drive-status — verifica conexión Drive
+    app.get('/api/parrilla/drive-status', async (req, res) => {
+      try {
+        const status = await verificarConexionDrive();
+        res.json(status);
+      } catch (err) {
+        res.status(500).json({ connected: false, error: err.message });
+      }
+    });
+
+    console.log('✅ BLOQUE S: Drive delivery pipeline activo (POST /api/parrilla/llenar-tablas + GET /drive-status)');
+  } catch (err) {
+    console.warn('[Bloque S] init error (non-fatal):', err.message);
+  }
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {
@@ -378,7 +410,7 @@ server.listen(PORT, async () => {
 
   console.log(`\n✅ Fractal MX — Business OS v3.0 listo`);
   console.log(`   Agentes: 14 activos (+ AXIOM + ORACLE)`);
-  console.log(`   Bloques: A-R completados`);
+  console.log(`   Bloques: A-S completados`);
   console.log(`   Crons: Oracle (dom 3AM) + YouTube (lun+jue) + Revenue Alert (día 20) + AXIOM (6h) + Parrilla FIF (7 fases)`);
   console.log(`   Flujos de ingreso: FIF($1k/mes) + Auditoría($300-800) + Productos digitales + Landing($1.5-3k)`);
   console.log(`   Brand Guide FIF/EFG: activo en CARLOS, DIEGO, ALEX, VALENTINA, NEXUS\n`);
