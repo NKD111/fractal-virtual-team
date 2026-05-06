@@ -8,6 +8,7 @@ const DailyStandup = require('./daily-standup');
 const axiomScan = require('./axiom-scan');
 const oracleDaily = require('./oracle-daily-report');
 const securityMonitor = require('./security-monitor');
+const workflows = require('../workflows');
 
 const TZ = { timezone: 'America/Mexico_City' };
 
@@ -48,6 +49,7 @@ class RoutineManager {
     try { axiomScan.start(); console.log('  ✓ AXIOM scanner registered (every 6h CDMX)'); } catch(e) { console.error('axiom-scan start err:', e.message); }
     try { oracleDaily.start(); console.log('  ✓ Oracle daily report cron registered (8 AM CDMX)'); } catch(e) { console.error('oracle-daily err:', e.message); }
     try { securityMonitor.start(); } catch(e) { console.error('security-monitor err:', e.message); }
+    try { workflows.start(); } catch(e) { console.error('workflows err:', e.message); }
     this._initialized = true;
     console.log(`✅ ROUTINES: ${this._tasks.length} schedules activos`);
   }
