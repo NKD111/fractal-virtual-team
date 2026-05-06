@@ -151,6 +151,65 @@ const FIF_BRAND_SYSTEM = {
     if_doubt: 'REHACER - no hay término medio en este cliente'
   },
 
+  // ─── Prompt system para generación con Higgsfield ─────────────────────
+  prompt_system: {
+
+    // Dirección visual base — incluir SIEMPRE en cualquier pieza FIF
+    base: `Premium editorial-commercial franchise expo campaign design.
+Clean white or very light gray background. Strong visual hierarchy.
+Navy blue #0B2A4A and institutional red #D7193F as main brand colors.
+White #FFFFFF and light gray #F2F4F7 as backgrounds.
+Subtle cyan #4FC3E0 only as secondary accent.
+Visual style: high-end corporate magazine layout, aspirational Mexican
+franchise business campaign, clean modular composition, structured
+information blocks, rounded icon cards, thin separator lines, soft curved
+lines, subtle dot patterns, geometric diamond accents in navy and red,
+premium white space, strong typographic hierarchy.
+Typography direction: bold geometric sans-serif similar to Gotham or
+Montserrat. Large headline, red emphasis words, clean readable hierarchy.
+NEVER use: neon, cyberpunk, biker aesthetics, glitch effects, chaotic
+compositions, excessive gradients, dark moody backgrounds, distorted text,
+fake logos, messy typography, overlaid text on faces, low-quality stock
+photo style, aggressive effects, random colors outside brand.`,
+
+    // Fotografía de feria — para todas las piezas con escena real
+    expo_photography: `Realistic high-quality expo hall photography.
+Modern franchise expo in Mexico, professional Mexican and Latin American
+business audience, entrepreneurs, investors, franchise owners and consultants
+networking. Premium booths in navy, white and red. Warm professional
+lighting. Natural faces, no distortions, no deformed hands. Aspirational
+commercial photography quality. Sharp details. Cinematic but clean.`,
+
+    // Composición post vertical 4:5 — Instagram / feed
+    composition_post: `Format: vertical Instagram post 1080x1350px.
+Composition: clean white background editorial layout. Left side with large
+bold headline area and structured vertical list with icon modules. Right side
+with large curved photo window or dynamic rounded photo container showing
+expo scene. Bottom area for data stats or CTA bar. Strong visual balance.
+Generous white space. Clean corporate finish.`,
+
+    // Composición banner web ultra-wide
+    composition_banner: `Format: ultra-wide horizontal banner 2048x700px.
+Left 45%: completely clean white space for editable text and logos.
+NO patterns, NO text, NO stripes on left side.
+Right 55%: realistic expo photo scene. Soft fade transition between white
+and photo. Important faces must NOT be in upper-right corner.`
+  },
+
+  // Modelos Higgsfield para generación de imágenes FIF (en orden de preferencia)
+  image_models: {
+    primary: 'gpt_image_2',         // GPT Image 2 — primary (calidad premium, coherente)
+    fallback: 'nano_banana_2',      // Nano Banana Pro — fallback (4:5 nativo, 4K)
+    ratios: {
+      post: '4:5',                  // 1080×1350 Instagram
+      banner: '16:9',               // 2048×700 banner web
+      story: '9:16',                // 1080×1920 Stories/Reels
+      square: '1:1'                 // 1080×1080 carrusel
+    },
+    resolution: '2k',
+    variations_per_generation: 2
+  },
+
   master_prompt: `
 Eres director de arte y diseñador senior para EF / FIF / Expo Franquicias / EFG.
 

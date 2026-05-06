@@ -153,55 +153,135 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
     return this.think(debatePrompt);
   }
 
-  // ─── HIGGSFIELD IMAGE GENERATION (Fase B) ─────────────────────────────
+  // ─── HIGGSFIELD IMAGE GENERATION (Fase B+) ────────────────────────────
   /**
-   * Genera imagen FIF con Higgsfield Soul V2 (primary) o fallback a descripción.
-   * @param {string} prompt
-   * @param {object} opts  { aspectRatio, quality, briefId }
-   * @returns {{ resultUrl, jobId, source, error? }}
+   * Construye el prompt editorial FIF combinando base + fotografía + composición + descripción.
+   *
+   * @param {object} brief
+   *   - pieceType: 'post_informativo' | 'post_comercial' | 'post_editorial' | 'banner_web' | 'carousel_slide'
+   *   - description: texto libre del arte específico
+   * @returns {string} prompt completo listo para enviar al modelo
    */
-  async generateFIFImage(prompt, opts = {}) {
-    console.log(`🎨 CARLOS: generando imagen FIF con Higgsfield — "${prompt.substring(0, 60)}..."`);
-    try {
-      const result = await higgsfield.generateImage(prompt, {
-        aspectRatio: opts.aspectRatio || '3:4',
-        quality: opts.quality || '2k'
-      });
-      console.log(`✅ CARLOS: imagen generada → ${result.resultUrl}`);
+  buildFIFPrompt(brief) {
+    const FIF = require('../clients/fif-brand-system').prompt_system;
+    const type = brief.pieceType || 'post_informativo';
 
-      // Save to Supabase assets table if briefId provided
-      if (opts.briefId) {
-        try {
-          const { supabase } = require('../core/supabase');
-          await supabase.from('assets').insert({
-            project_id: opts.projectId || null,
-            brief_id: opts.briefId,
+    const compositionKey = type === 'banner_web' ? 'composition_banner' : 'composition_post';
+    const composition = FIF[compositionKey] || FIF.composition_post;
+
+    return [
+      FIF.base,
+      FIF.expo_photography,
+      composition,
+      brief.description || ''
+    ].filter(Boolean).join('\n\n');
+  }
+
+  /**
+   * Genera 2 variaciones de imagen FIF.
+   * Primary: Nano Banana 2 (nano_banana_flash) — editorial, 4:5 nativo, consistente.
+   * Fallback: GPT Image 2 (gpt_image_2) si NB2 falla.
+   *
+   * @param {object} brief
+   *   - pieceType: 'post_informativo' | 'post_comercial' | 'post_editorial' | 'banner_web' | 'carousel_slide'
+   *   - description: {string} descripción específica del arte
+   *   - aspectRatio: override ratio (default: '4:5' para posts, '16:9' para banners)
+   *   - briefId: para guardar en Supabase
+   *   - projectId: id de proyecto
+   * @returns {{ variations: [{resultUrl, jobId, model}], model, prompt, error? }}
+   */
+  async generateFIFImage(brief = {}) {
+    // Support legacy string call (prompt, opts) for backwards compatibility
+    if (typeof brief === 'string') {
+      brief = { description: brief, pieceType: 'post_informativo', ...arguments[1] };
+    }
+
+    const FIF_MODELS = require('../clients/fif-brand-system').image_models;
+    const pieceType = brief.pieceType || 'post_informativo';
+    const isBanner = pieceType === 'banner_web';
+    const aspectRatio = brief.aspectRatio || (isBanner ? FIF_MODELS.ratios.banner : FIF_MODELS.ratios.post);
+    const resolution = brief.resolution || FIF_MODELS.resolution;
+
+    const prompt = this.buildFIFPrompt(brief);
+    console.log(`🎨 CARLOS: generando imagen FIF [${pieceType}] — "${prompt.substring(0, 80)}..."`);
+
+    // ── Try Nano Banana 2 first ──────────────────────────────────────────
+    let primaryResults = [];
+    try {
+      // GPT Image 2 no soporta 4:5 → usar 3:4 (más cercano sin crop agresivo)
+      const primaryRatio = aspectRatio === '4:5' ? '3:4' : aspectRatio;
+
+      // Run 2 parallel variations
+      const [v1, v2] = await Promise.all([
+        higgsfield.generateImage(prompt, {
+          model: FIF_MODELS.primary, // gpt_image_2
+          aspectRatio: primaryRatio,
+          quality: resolution
+        }),
+        higgsfield.generateImage(prompt, {
+          model: FIF_MODELS.primary,
+          aspectRatio: primaryRatio,
+          quality: resolution
+        })
+      ]);
+      primaryResults = [v1, v2];
+      console.log(`✅ CARLOS: 2 variaciones GPT Image 2 generadas`);
+    } catch (err) {
+      console.warn(`⚠️ CARLOS: GPT Image 2 falló — ${err.message}. Intentando Nano Banana Pro...`);
+
+      // ── Fallback: Nano Banana Pro ─────────────────────────────────────
+      try {
+        // Nano Banana Pro sí soporta 4:5 nativo
+        const [f1, f2] = await Promise.all([
+          higgsfield.generateImage(prompt, { model: FIF_MODELS.fallback, aspectRatio, quality: resolution }),
+          higgsfield.generateImage(prompt, { model: FIF_MODELS.fallback, aspectRatio, quality: resolution })
+        ]);
+        primaryResults = [f1, f2];
+        console.log(`✅ CARLOS: 2 variaciones Nano Banana Pro generadas (fallback)`);
+      } catch (fallbackErr) {
+        console.warn(`❌ CARLOS: ambos modelos fallaron. Último error: ${fallbackErr.message}`);
+        return { source: 'error', error: fallbackErr.message, prompt, variations: [] };
+      }
+    }
+
+    const modelUsed = primaryResults[0]?.model || FIF_MODELS.primary;
+
+    // Save to Supabase if briefId provided
+    if (brief.briefId) {
+      try {
+        const { supabase } = require('../core/supabase');
+        await Promise.all(primaryResults.map((r, i) =>
+          supabase.from('assets').insert({
+            project_id: brief.projectId || null,
+            brief_id: brief.briefId,
             type: 'image',
-            url: result.resultUrl,
+            url: r.resultUrl,
             source: 'higgsfield',
-            model: result.model,
+            model: r.model,
             prompt,
-            metadata: { job_id: result.jobId, params: result.params },
+            metadata: { job_id: r.jobId, params: r.params, variation: i + 1, piece_type: pieceType },
             created_by: 'carlos',
             status: 'ready'
-          });
-        } catch (dbErr) {
-          console.warn('[Carlos] asset save error (non-fatal):', dbErr.message);
-        }
+          })
+        ));
+      } catch (dbErr) {
+        console.warn('[Carlos] asset save error (non-fatal):', dbErr.message);
       }
-
-      return { ...result, source: 'higgsfield' };
-    } catch (err) {
-      console.warn(`⚠️ CARLOS: Higgsfield error — ${err.message}. Describiendo imagen sin generar.`);
-      // Fallback: return a description so the workflow doesn't break
-      return {
-        source: 'description_fallback',
-        error: err.message,
-        prompt,
-        resultUrl: null,
-        description: `[CARLOS] Imagen lista para generar: ${prompt}`
-      };
     }
+
+    return {
+      source: 'higgsfield',
+      model: modelUsed,
+      pieceType,
+      aspectRatio,
+      prompt,
+      variations: primaryResults.map((r, i) => ({
+        variation: i + 1,
+        resultUrl: r.resultUrl,
+        jobId: r.jobId,
+        params: r.params
+      }))
+    };
   }
 
   // ─── VISION (Fase 6.5) ─────────────────────────────────────────────────
