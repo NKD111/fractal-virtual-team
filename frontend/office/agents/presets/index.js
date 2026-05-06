@@ -87,6 +87,16 @@ export const AGENT_PRESETS = {
     accessory: null, glasses: true,
     role: 'Quality Control Bot',
     description: 'Sistema automatizado'
+  },
+  axiom: {
+    name: 'AXIOM', color: '#00D4FF', skinTone: '#B4D9DD',
+    hairStyle: 'short', hairColor: '#0E2A33',
+    shirtColor: '#00D4FF', pantsColor: '#0E1B2A', shoeColor: '#0a0a14',
+    accessory: 'visor',
+    role: 'Opportunity Scanner',
+    description: 'Bot autónomo — escanea oportunidades cada 6h',
+    is_bot: true,
+    placeholder: true
   }
 };
 
@@ -102,5 +112,6 @@ export const AGENT_POSITIONS = {
   sofia:     { x:  4, z:  2, label: 'PM Desk'          },
   lucas:     { x:  6, z:  0, label: 'Analytics'        },
   roberto:   { x: -6, z:  0, label: 'Finance Office'   },
-  qcbot:     { x:  0, z:  4, label: 'QC Station'       }
+  qcbot:     { x:  0, z:  4, label: 'QC Station'       },
+  axiom:     { x:  6, z: -3, label: 'AXIOM Scanner'    }
 };

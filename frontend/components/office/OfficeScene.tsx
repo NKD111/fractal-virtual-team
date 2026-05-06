@@ -227,7 +227,8 @@ export default function OfficeScene() {
         qcbot:     { x: -259, y: 107 },
         oracle:    { x:  201, y: -78 },
         nexus:     { x: -371, y: 101 },
-        atlas:     { x:  352, y:  80 }
+        atlas:     { x:  352, y:  80 },
+        axiom:     { x:  340, y: 180 }
       };
 
       // Saved overrides from edit-mode dragging (localStorage). Higher priority
