@@ -244,4 +244,18 @@ router.post('/email-inbound', async (req, res) => {
   }
 });
 
+
+// ─── STRIPE WEBHOOK ──────────────────────────────────────────────────────────
+router.post('/stripe', async (req, res) => {
+  res.status(200).end();  // ack inmediato
+  try {
+    const stripeClient = require('../core/stripe-client');
+    const sig = req.headers['stripe-signature'];
+    const result = await stripeClient.processWebhook(JSON.stringify(req.body), sig);
+    console.log('[Stripe webhook]', result);
+  } catch (err) {
+    console.error('[Stripe webhook] error:', err.message);
+  }
+});
+
 module.exports = router;
