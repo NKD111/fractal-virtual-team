@@ -110,12 +110,71 @@ router.post('/twilio', async (req, res) => {
 
 // ─── HEALTH CHECK ──────────────────────────────────────────────────────────────
 
-router.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+router.get('/health', async (req, res) => {
+  const start = Date.now();
+  const checks = { meta_whatsapp: 'unknown', twilio: 'unknown', supabase: 'unknown', redis: 'unknown', resend: 'unknown', axiom: 'unknown' };
+  const meta = {};
+  const axios = require('axios');
+
+  try {
+    const { data } = await axios.get(
+      `https://graph.facebook.com/v21.0/debug_token?input_token=${process.env.META_ACCESS_TOKEN}&access_token=${process.env.META_ACCESS_TOKEN}`,
+      { timeout: 4000 }
+    );
+    if (data?.data?.is_valid) {
+      checks.meta_whatsapp = 'healthy';
+      meta.token_expires = data.data.expires_at === 0 ? 'never' : new Date(data.data.expires_at * 1000).toISOString();
+    } else {
+      checks.meta_whatsapp = 'degraded';
+    }
+  } catch (e) {
+    checks.meta_whatsapp = 'degraded';
+    meta.meta_error = (e.message || '').slice(0, 80);
+  }
+
+  checks.twilio = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ? 'healthy' : 'not_configured';
+
+  try {
+    const { error } = await supabase.from('agents').select('id', { count: 'exact', head: true }).limit(1);
+    checks.supabase = error ? 'degraded' : 'healthy';
+  } catch (_) { checks.supabase = 'degraded'; }
+
+  checks.redis = process.env.REDIS_URL ? 'healthy' : 'not_configured';
+  checks.resend = process.env.RESEND_API_KEY ? 'healthy' : 'not_configured';
+
+  try {
+    const { data: lastAxiom } = await supabase.from('audit_log')
+      .select('timestamp').eq('actor', 'axiom').eq('action', 'scan_completed')
+      .order('timestamp', { ascending: false }).limit(1);
+    if (lastAxiom && lastAxiom.length > 0) {
+      const ageHours = ((Date.now() - new Date(lastAxiom[0].timestamp).getTime()) / 3600000).toFixed(1);
+      checks.axiom = parseFloat(ageHours) < 8 ? 'healthy' : 'stale';
+      meta.axiom_last_scan_hours_ago = parseFloat(ageHours);
+    } else {
+      checks.axiom = 'no_scans_yet';
+    }
+  } catch (_) { checks.axiom = 'unknown'; }
+
+  try {
+    const { data: lastStandup } = await supabase.from('audit_log')
+      .select('timestamp, status').eq('action', 'standup_sent')
+      .order('timestamp', { ascending: false }).limit(1);
+    if (lastStandup && lastStandup.length > 0) {
+      meta.last_standup = lastStandup[0].timestamp;
+      meta.last_standup_status = lastStandup[0].status;
+    }
+  } catch (_) {}
+
+  const allHealthy = Object.values(checks).every(s => s === 'healthy' || s === 'not_configured' || s === 'no_scans_yet');
+  res.status(200).json({
+    status: allHealthy ? 'healthy' : 'degraded',
+    timestamp: new Date().toISOString(),
     team: 'Fractal Virtual Team v4.2',
-    agents: 11,
-    timestamp: new Date().toISOString()
+    agents_active: 12,
+    services: checks,
+    meta,
+    uptime_seconds: Math.floor(process.uptime()),
+    duration_ms: Date.now() - start
   });
 });
 

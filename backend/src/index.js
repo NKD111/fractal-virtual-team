@@ -19,6 +19,10 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '10mb' }));     // audio base64 puede pesar
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Audit log middleware — captura todas las requests importantes
+const auditMiddleware = require('./middleware/audit');
+app.use(auditMiddleware);
+
 // Servir el widget embebible y otros assets públicos
 app.use(express.static(require('path').join(__dirname, '..', 'public')));
 
