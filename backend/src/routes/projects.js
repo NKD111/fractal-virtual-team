@@ -99,11 +99,7 @@ router.post('/', async (req, res) => {
       brief: brief || null,
       status,
       budget_mxn: budget_mxn || null,
-      assigned_to: assigned_to || null,
-      notes: notes || null,
-      revision_count: 0,
-      max_revisions: 2,
-      paid: false
+      assigned_to: assigned_to || null
     };
 
     const { data, error } = await supabase
