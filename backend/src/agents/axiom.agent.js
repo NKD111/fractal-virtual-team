@@ -147,55 +147,82 @@ class AxiomAgent extends BaseAgent {
    * Devuelve array de objetos opportunity.
    */
   async detectOpportunities(context, runId) {
-    // Compactar contexto para no exceder tokens
     const compactContext = {
-      clients_summary: context.clients.map(c => ({
-        id: c.id,
-        name: c.name,
-        tier: c.tier,
-        last_contacted: c.last_contacted_at,
-        lifetime_value: c.lifetime_value
-      })).slice(0, 50),
-      active_projects: context.projects.map(p => ({
-        id: p.id,
-        name: p.name,
-        status: p.status,
-        deadline: p.deadline,
-        value: p.value_mxn,
-        client: p.clients?.name
-      })).slice(0, 40),
-      recent_messages_count_per_client: this.groupMessagesByClient(context.recent_messages),
-      pending_promises: context.pending_promises.length,
-      events_warning_count: context.recent_events.filter(e => e.severity === 'warning' || e.severity === 'critical').length,
-      agent_failure_rate_24h: this.calculateAgentFailureRate(context.agent_logs)
+      clients_count: (context.clients || []).length,
+      clients_summary: (context.clients || []).slice(0, 30).map(c => ({
+        id: c.id, name: c.name, tier: c.tier,
+        last_contacted: c.last_contacted_at, lifetime_value: c.lifetime_value
+      })),
+      active_projects: (context.projects || []).slice(0, 25).map(p => ({
+        id: p.id, name: p.name, status: p.status, deadline: p.deadline,
+        value: p.value_mxn, client: p.clients?.name
+      })),
+      recent_messages_count: (context.recent_messages || []).length,
+      pending_promises: (context.pending_promises || []).length,
+      events_warning_count: (context.recent_events || []).filter(e => e.severity === 'warning' || e.severity === 'critical').length,
+      agent_failure_rate_24h: this.calculateAgentFailureRate(context.agent_logs || [])
     };
 
-    const userMsg = `Contexto del sistema (corrida ${runId}):
+    const userMsg = `SCAN INPUT (run ${runId}):
 
+\`\`\`json
 ${JSON.stringify(compactContext, null, 2)}
+\`\`\`
 
-Aplicando las heurísticas de tu prompt, detecta las oportunidades reales en este snapshot.
-Devuelve SOLO el JSON especificado en tu prompt, sin texto adicional, sin markdown fences.
-Máximo 10 oportunidades. Solo las que tengan evidencia clara en los datos.`;
+INSTRUCCIONES:
+- Aplica las heurísticas de tu prompt.
+- Devuelve un OBJETO JSON con la propiedad "opportunities" = array.
+- Máximo 10 oportunidades. Si NO hay datos suficientes para detectar nada real, devuelve { "opportunities": [] }.
+- NO incluyas markdown fences. NO incluyas texto explicativo antes ni después del JSON.
+- Cada opp debe tener exactamente estas claves:
+  category, title, description, score (0-10 numeric), urgency (low|medium|high|critical),
+  source, related_client_id (string|null), related_project_id (string|null),
+  suggested_action (object con who, what, deadline_hours, channel)
 
-    const response = await chat({
-      system: this.basePrompt,
-      messages: [{ role: 'user', content: userMsg }],
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4000
-    });
+Empieza tu respuesta directamente con la llave \`{\` y termina con \`}\`. NADA más.`;
 
-    // Parse JSON (strip code fences si las pone)
-    let cleaned = (response.content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-    let parsed;
+    let response;
     try {
-      parsed = JSON.parse(cleaned);
+      response = await chat({
+        system: this.basePrompt,
+        messages: [{ role: 'user', content: userMsg }],
+        model: 'claude-sonnet-4-6',
+        max_tokens: 3500
+      });
     } catch (e) {
-      console.error('[AXIOM] failed to parse Claude response as JSON:', e.message);
-      console.error('[AXIOM] raw response:', cleaned.slice(0, 500));
+      console.error('[AXIOM] chat() failed:', e.message);
       return [];
     }
-    return parsed.opportunities || [];
+
+    const raw = (response.content || '').trim();
+    let cleaned = raw;
+    // Strip markdown fences si vienen
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    // Si hay texto antes del primer `{`, recortar
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace > 0 && lastBrace > firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+
+    try {
+      const parsed = JSON.parse(cleaned);
+      const opps = Array.isArray(parsed.opportunities) ? parsed.opportunities : [];
+      // Validate basic shape per opp
+      return opps.filter(o => o && typeof o === 'object' && o.category && o.title && typeof o.score === 'number');
+    } catch (e) {
+      console.error('[AXIOM] JSON parse failed:', e.message);
+      console.error('[AXIOM] cleaned head:', cleaned.slice(0, 300));
+      // Try secondary parse: extract first valid {...} chunk
+      const match = cleaned.match(/\{[\s\S]*"opportunities"\s*:\s*\[[\s\S]*?\]\s*\}/);
+      if (match) {
+        try {
+          const parsed2 = JSON.parse(match[0]);
+          return Array.isArray(parsed2.opportunities) ? parsed2.opportunities : [];
+        } catch (_) {}
+      }
+      return [];
+    }
   }
 
   /**
