@@ -50,39 +50,11 @@ app.use('/api/features', require('./routes/features'));
 app.use('/api/vision', require('./routes/vision'));
 app.use('/api/meshy', require('./routes/meshy'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/axiom', require('./routes/axiom'));
+app.use('/api/qcbot', require('./routes/qcbot'));
 app.use('/api', require('./routes/unified'));
 app.use('/api', require('./routes/public-api'));   // /api/admin/keys + /api/v1/*
 app.use('/webhooks', require('./routes/webhooks'));
-
-// AXIOM scan endpoint
-app.post('/api/axiom/scan', async (req, res) => {
-  try {
-    const { runAxiomScan } = require('./routines/axiom-scanner');
-    runAxiomScan().catch(err => console.error('[AXIOM] scan async error:', err.message));
-    res.json({ started: true, message: 'AXIOM scan iniciado en background' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// AXIOM opportunities endpoint
-app.get('/api/axiom/opportunities', async (req, res) => {
-  try {
-    const { supabase } = require('./core/supabase');
-    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-    const { data, error } = await supabase
-      .from('axiom_opportunities')
-      .select('*')
-      .in('status', ['detected', 'open'])
-      .order('score_total', { ascending: false, nullsFirst: false })
-      .order('discovered_at', { ascending: false })
-      .limit(limit);
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ opportunities: data || [], count: data?.length || 0 });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // MEGAZORD status endpoint
 app.get('/api/megazord/status', async (req, res) => {
@@ -242,13 +214,17 @@ server.listen(PORT, async () => {
       console.warn('[WorkflowManager] init error (non-fatal):', wfErr.message);
     }
 
-    // Boot AXIOM scan para poblar axiom_opportunities al inicio
+    // Boot AXIOM scan + start 6h cron
     try {
       const { runAxiomScan } = require('./routines/axiom-scanner');
       runAxiomScan().then(r => console.log(`✅ AXIOM boot scan: ${r.inserted} oportunidades insertadas`))
         .catch(e => console.warn('[AXIOM] boot scan error:', e.message));
+      // Register 6h cron (single instance — routines/index.js no longer does this)
+      const cron = require('node-cron');
+      cron.schedule('0 */6 * * *', () => runAxiomScan().catch(e => console.error('[AXIOM] cron err:', e.message)), { timezone: 'America/Mexico_City' });
+      console.log('✅ AXIOM cron: cada 6h (00,06,12,18 CDMX)');
     } catch (e) {
-      console.warn('[AXIOM] boot scan init error:', e.message);
+      console.warn('[AXIOM] boot/cron init error:', e.message);
     }
 
     // Routines (cron) — initialized last

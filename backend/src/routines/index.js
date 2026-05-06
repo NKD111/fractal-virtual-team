@@ -5,7 +5,6 @@ const cron = require('node-cron');
 const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
 const DailyStandup = require('./daily-standup');
-const axiomScan = require('./axiom-scan');
 const oracleDaily = require('./oracle-daily-report');
 const securityMonitor = require('./security-monitor');
 const workflows = require('../workflows');
@@ -29,8 +28,6 @@ class RoutineManager {
     this._tasks.push(cron.schedule('0 9 * * 1', () => this.weeklyFinancial().catch(e => console.error('weeklyFinancial:', e.message)), TZ));
 
     // EXTRAS:
-    // AXIOM opportunity scan — cada 6h (00, 06, 12, 18 CDMX)
-    this._tasks.push(cron.schedule('0 */6 * * *', () => this._runAxiomScan().catch(e => console.error('axiom:', e.message)), TZ));
     // Insights scan — Lunes 7:30 AM (antes del Morning Prep)
     this._tasks.push(cron.schedule('30 7 * * 1', () => this._runInsightsScan().catch(e => console.error('insights:', e.message)), TZ));
     // Self-improve agents — Domingo 11 PM (semanal, low-traffic)
@@ -47,8 +44,6 @@ class RoutineManager {
     this._tasks.push(cron.schedule('55 23 * * *', () => this._runDailyKPIs().catch(e => console.error('kpis:', e.message)), TZ));
 
     
-    // AXIOM background scanner (every 6h CDMX)
-    try { axiomScan.start(); console.log('  ✓ AXIOM scanner registered (every 6h CDMX)'); } catch(e) { console.error('axiom-scan start err:', e.message); }
     try { oracleDaily.start(); console.log('  ✓ Oracle daily report cron registered (8 AM CDMX)'); } catch(e) { console.error('oracle-daily err:', e.message); }
     try { securityMonitor.start(); } catch(e) { console.error('security-monitor err:', e.message); }
     try { workflows.start(); } catch(e) { console.error('workflows err:', e.message); }
