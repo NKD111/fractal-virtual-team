@@ -49,9 +49,40 @@ app.use('/api/verification', require('./routes/verification'));
 app.use('/api/features', require('./routes/features'));
 app.use('/api/vision', require('./routes/vision'));
 app.use('/api/meshy', require('./routes/meshy'));
+app.use('/api/projects', require('./routes/projects'));
 app.use('/api', require('./routes/unified'));
 app.use('/api', require('./routes/public-api'));   // /api/admin/keys + /api/v1/*
 app.use('/webhooks', require('./routes/webhooks'));
+
+// AXIOM scan endpoint
+app.post('/api/axiom/scan', async (req, res) => {
+  try {
+    const { runAxiomScan } = require('./routines/axiom-scanner');
+    runAxiomScan().catch(err => console.error('[AXIOM] scan async error:', err.message));
+    res.json({ started: true, message: 'AXIOM scan iniciado en background' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AXIOM opportunities endpoint
+app.get('/api/axiom/opportunities', async (req, res) => {
+  try {
+    const { supabase } = require('./core/supabase');
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const { data, error } = await supabase
+      .from('axiom_opportunities')
+      .select('*')
+      .in('status', ['detected', 'open'])
+      .order('score_total', { ascending: false, nullsFirst: false })
+      .order('discovered_at', { ascending: false })
+      .limit(limit);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ opportunities: data || [], count: data?.length || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // MEGAZORD status endpoint
 app.get('/api/megazord/status', async (req, res) => {
@@ -200,6 +231,25 @@ server.listen(PORT, async () => {
     global.revisionTracker = new (require('./features/revision-tracker'))();
     global.qcBot = new (require('./features/qc-bot'))();
     global.notifications = new (require('./features/smart-notifications'))();
+
+    // WorkflowManager — Supabase Realtime listeners para video/branding/social
+    try {
+      const WorkflowManager = require('./services/workflow-manager');
+      global.workflowManager = new WorkflowManager();
+      await global.workflowManager.initialize();
+      console.log('✅ WorkflowManager: iniciado (video/branding/social/web/print)');
+    } catch (wfErr) {
+      console.warn('[WorkflowManager] init error (non-fatal):', wfErr.message);
+    }
+
+    // Boot AXIOM scan para poblar axiom_opportunities al inicio
+    try {
+      const { runAxiomScan } = require('./routines/axiom-scanner');
+      runAxiomScan().then(r => console.log(`✅ AXIOM boot scan: ${r.inserted} oportunidades insertadas`))
+        .catch(e => console.warn('[AXIOM] boot scan error:', e.message));
+    } catch (e) {
+      console.warn('[AXIOM] boot scan init error:', e.message);
+    }
 
     // Routines (cron) — initialized last
     const RoutineManager = require('./routines');
