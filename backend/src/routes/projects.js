@@ -5,6 +5,11 @@ const express = require('express');
 const router = express.Router();
 const { supabase } = require('../core/supabase');
 
+// Helper: silent audit log (never throws)
+async function auditLog(entry) {
+  try { await supabase.from('audit_log').insert(entry); } catch (_) {}
+}
+
 // GET /api/projects/status — resumen de proyectos activos
 router.get('/status', async (req, res) => {
   try {
@@ -84,10 +89,9 @@ router.post('/', async (req, res) => {
       client_whatsapp,
       project_type,
       brief,
-      status = 'brief_received',
+      status = 'active',
       budget_mxn,
-      assigned_to,
-      notes
+      assigned_to
     } = req.body || {};
 
     if (!client_name) return res.status(400).json({ error: 'client_name requerido' });
@@ -111,14 +115,14 @@ router.post('/', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    // Audit log
-    await supabase.from('audit_log').insert({
+    // Audit log (silently)
+    await auditLog({
       actor: 'api',
       action: 'project_created',
       service: 'projects',
       status: 'success',
       details: { project_id: data.id, client_name, project_type, status }
-    }).catch(() => {});
+    });
 
     // Dispatch workflow según project_type
     let workflowTriggered = null;
@@ -144,8 +148,8 @@ router.post('/', async (req, res) => {
 // PATCH /api/projects/:id — actualizar proyecto
 router.patch('/:id', async (req, res) => {
   try {
-    const allowed = ['status', 'brief', 'budget_mxn', 'assigned_to', 'revision_count',
-                     'deliverable_url', 'paid', 'notes', 'project_type'];
+    const allowed = ['status', 'brief', 'budget_mxn', 'assigned_to',
+                     'deliverable_url', 'project_type', 'name'];
     const updates = {};
     for (const k of allowed) {
       if (req.body[k] !== undefined) updates[k] = req.body[k];
@@ -163,13 +167,13 @@ router.patch('/:id', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    await supabase.from('audit_log').insert({
+    await auditLog({
       actor: 'api',
       action: 'project_updated',
       service: 'projects',
       status: 'success',
       details: { project_id: req.params.id, updates }
-    }).catch(() => {});
+    });
 
     res.json({ ok: true, project: data });
   } catch (err) {
@@ -189,13 +193,13 @@ router.delete('/:id', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    await supabase.from('audit_log').insert({
+    await auditLog({
       actor: 'api',
       action: 'project_deleted',
       service: 'projects',
       status: 'success',
       details: { project_id: req.params.id }
-    }).catch(() => {});
+    });
 
     res.json({ ok: true, deleted: data });
   } catch (err) {
