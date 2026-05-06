@@ -1,6 +1,7 @@
 // backend/src/core/model-routing.js
-// Fractal Virtual Team v4.2 — Intelligent Model Routing (FASE 9)
+// Fractal Virtual Team v4.2 — Intelligent Model Routing (FASE 9 / BLOQUE B)
 // Selecciona el modelo Claude óptimo según el tipo de tarea y agente
+// BLOQUE B: Haiku/Sonnet/Opus routing — reduce API cost ~80%
 
 /**
  * Modelos disponibles con sus características
@@ -64,7 +65,70 @@ const AGENT_MODELS = {
   qcbot:     MODELS.HAIKU,   // QC automático — no necesita mucha inteligencia
   nexus:     MODELS.SONNET,  // Strategy — Sonnet suficiente
   oracle:    MODELS.OPUS,    // Oracle — necesita máxima inteligencia
-  axiom:     MODELS.HAIKU    // Scan automático — rapidez sobre profundidad
+  axiom:     MODELS.SONNET   // Scan automático — Sonnet para análisis de calidad
+};
+
+// ─── BLOQUE B: MODEL_ROUTING — formato canónico del Business OS ─────────────
+// Usado por todos los agentes para seleccionar modelo correctamente
+const MODEL_ROUTING = {
+
+  // Haiku: operativo, logs, notificaciones simples
+  // ~100x más barato que Opus
+  haiku: {
+    model: MODELS.HAIKU,
+    usar_para: [
+      'notificaciones_whatsapp_simples',
+      'logs_del_sistema',
+      'standup_message',
+      'mariana_respuestas_basicas',
+      'confirmaciones_de_entrega',
+      'alertas_de_cron',
+      'status_check',
+      'quick_ack',
+      'cron_notification',
+      'audit_log'
+    ]
+  },
+
+  // Sonnet: producción creativa, agentes operativos
+  // Balance perfecto costo/calidad
+  sonnet: {
+    model: MODELS.SONNET,
+    usar_para: [
+      'carlos_diseno',
+      'diego_editorial',
+      'max_video',
+      'alex_contenido',
+      'sofia_pm',
+      'diana_cliente',
+      'valentina_qa',
+      'nexus_estrategia',
+      'axiom_scan',
+      'briefs_de_parrilla',
+      'copies_y_conceptos',
+      'creative_brief',
+      'design_direction',
+      'content_generation',
+      'client_communication'
+    ]
+  },
+
+  // Opus: SOLO para decisiones estratégicas profundas
+  // Cuesta 15x más que Sonnet — usar con criterio
+  opus: {
+    model: MODELS.OPUS,
+    usar_para: [
+      'oracle_morning_briefing',
+      'oracle_evening_reflection',
+      'oracle_weekly_business_council',
+      'oracle_monthly_review',
+      'oracle_modelo_predictivo',
+      'nexus_decisiones_criticas',
+      'oracle_deep_analysis',
+      'strategic_decision',
+      'financial_analysis'
+    ]
+  }
 };
 
 /**
@@ -158,11 +222,31 @@ function estimateCost({ model, inputTokens = 1000, outputTokens = 500 }) {
   return Math.round(cost * 10000) / 10000; // 4 decimales en USD
 }
 
+/**
+ * getModel — API simplificada para el Business OS
+ * Compatible con el formato del BLOQUE B del Master Plan
+ * @param {string} agente - Nombre del agente (carlos, oracle, mariana, etc.)
+ * @param {string} tipo_tarea - Tipo de tarea (log, notificacion_simple, strategic_analysis, etc.)
+ * @returns {string} Model ID
+ */
+function getModel(agente, tipo_tarea) {
+  if (tipo_tarea === 'log' || tipo_tarea === 'notificacion_simple' ||
+      tipo_tarea === 'standup_message' || tipo_tarea === 'alerta_cron') {
+    return MODEL_ROUTING.haiku.model;
+  }
+  if (agente === 'oracle' || tipo_tarea === 'strategic_analysis') {
+    return MODEL_ROUTING.opus.model;
+  }
+  return MODEL_ROUTING.sonnet.model;
+}
+
 module.exports = {
   MODELS,
   ROUTING_RULES,
   AGENT_MODELS,
+  MODEL_ROUTING,
   selectModel,
+  getModel,
   requiresAdaptiveThinking,
   buildModelConfig,
   estimateCost

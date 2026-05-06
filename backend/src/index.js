@@ -276,6 +276,15 @@ server.listen(PORT, async () => {
     console.warn('[Fase 9] init error (non-fatal):', err.message);
   }
 
+  // ─── BLOQUE F: Pipeline Editorial FIF (7 fases) ──────────────────────────
+  try {
+    const { startParrillaPipelineCrons } = require('./routines/parrilla-pipeline');
+    startParrillaPipelineCrons();
+    console.log('✅ BLOQUE F: Pipeline Editorial FIF activo (7 fases — días 1,5,7,10,17,20)');
+  } catch (err) {
+    console.warn('[Bloque F] init error (non-fatal):', err.message);
+  }
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {

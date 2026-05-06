@@ -1,9 +1,65 @@
 // backend/src/agents/carlos.agent.js
 // Fractal Virtual Team v4.2 — CARLOS (Senior Designer - Branding & Visual Systems)
+// BLOQUE H: JSON prompting + generateFromBrief + generateCarousel
 
 const BaseAgent = require('../core/BaseAgent');
 const CARLOS_PROMPT = require('../prompts/carlos.prompts');
 const higgsfield = require('../core/higgsfield-client');
+
+// ─── SISTEMA DE PROMPTS FIF (BLOQUE H) ────────────────────────────────────────
+// Base siempre presente en cada imagen generada para FIF.
+// Garantiza consistencia visual en toda la parrilla mensual.
+const FIF_VISUAL_SYSTEM = {
+
+  base: `Premium editorial-commercial franchise expo
+    campaign design. Clean white or very light gray
+    background. Strong visual hierarchy. Navy blue
+    #0B2A4A and institutional red #D7193F as main
+    brand colors. White #FFFFFF and light gray
+    #F2F4F7 as backgrounds. Subtle cyan #4FC3E0
+    only as secondary accent very sparingly.
+
+    Visual style: high-end corporate magazine layout,
+    aspirational Mexican franchise business campaign,
+    clean modular composition, structured information
+    blocks, rounded icon cards, thin separator lines,
+    soft curved lines, subtle dot patterns, geometric
+    diamond accents in navy and red, premium white
+    space, strong typographic hierarchy similar to
+    Gotham or Montserrat bold.
+
+    NEVER: neon, cyberpunk, biker aesthetics,
+    glitch effects, chaotic compositions, excessive
+    gradients, dark moody backgrounds, distorted text,
+    fake logos, messy typography, overlaid text on
+    faces, low-quality stock photo style, random
+    colors outside brand palette.`,
+
+  fotografia: `Realistic high-quality expo hall
+    photography. Modern franchise expo in Mexico.
+    Professional Mexican and Latin American business
+    audience. Entrepreneurs, investors, franchise
+    owners and consultants networking. Premium booths
+    in navy, white and red. Warm professional lighting.
+    Natural faces, no distortions, no deformed hands.
+    Aspirational commercial photography quality.
+    Sharp details. Cinematic but clean.`,
+
+  composicion_post: `Format: vertical Instagram post
+    1080x1350px. Composition: white background editorial
+    layout. Left side for headline and structured
+    information modules. Right side with large curved
+    photo window showing expo scene. Bottom area for
+    statistics or CTA. Strong visual balance.
+    Generous white space. Clean corporate finish.`,
+
+  composicion_banner: `Format: ultra-wide horizontal
+    banner 2048x700px. Left 45%: completely clean white
+    space for editable text and logos. NO patterns,
+    NO text, NO stripes on left side. Right 55%:
+    realistic expo photo scene. Soft fade transition.
+    Important faces must NOT be in upper-right corner.`
+};
 
 class CarlosAgent extends BaseAgent {
   constructor() {
@@ -281,6 +337,215 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
         jobId: r.jobId,
         params: r.params
       }))
+    };
+  }
+
+  // ─── BLOQUE H: JSON PROMPTING + BRIEF → IMAGE PIPELINE ───────────────────
+
+  /**
+   * Construye el prompt completo FIF a partir de un brief de parrilla.
+   * Combina FIF_VISUAL_SYSTEM.base + fotografia + composicion correcta + brief específico.
+   *
+   * @param {object} brief - registro de parrilla_briefs
+   * @returns {string} prompt listo para enviar a Higgsfield
+   */
+  buildPromptFromBrief(brief) {
+    const composicion = brief.tipo_pieza === 'banner'
+      ? FIF_VISUAL_SYSTEM.composicion_banner
+      : FIF_VISUAL_SYSTEM.composicion_post;
+
+    return [
+      FIF_VISUAL_SYSTEM.base,
+      FIF_VISUAL_SYSTEM.fotografia,
+      composicion,
+      `BRIEF ESPECÍFICO:\n${brief.prompt_higgsfield || brief.concepto || ''}`,
+      brief.headline ? `Headline concept: "${brief.headline}"` : '',
+      brief.objetivo ? `Visual objective: ${brief.objetivo}` : '',
+      brief.notas_para_carlos ? brief.notas_para_carlos : ''
+    ].filter(Boolean).join('\n\n');
+  }
+
+  /**
+   * Genera imagen(es) a partir de un brief de parrilla_briefs.
+   * Rutea a generateCarousel() si tipo_pieza === 'carousel'.
+   * Para piezas individuales usa buildPromptFromBrief() + GPT Image 2 con fallback Nano Banana.
+   *
+   * @param {object} brief - registro completo de parrilla_briefs
+   * @returns {object} resultado con images/variations + model_used
+   */
+  async generateFromBrief(brief) {
+    if (!brief) throw new Error('generateFromBrief: brief requerido');
+
+    // Routear carousel a su propio flujo
+    if (brief.tipo_pieza === 'carousel') {
+      return this.generateCarousel(brief);
+    }
+
+    // Pieza individual
+    const prompt = this.buildPromptFromBrief(brief);
+    const isBanner = brief.tipo_pieza === 'banner';
+    const aspectRatio = isBanner ? '16:9' : '4:5';
+    const quality = '2k';
+
+    console.log(`🎨 CARLOS [generateFromBrief]: ${brief.tipo_pieza} — "${prompt.substring(0, 80)}..."`);
+
+    // GPT Image 2 primary
+    try {
+      const primaryRatio = aspectRatio === '4:5' ? '3:4' : aspectRatio;
+      const [v1, v2] = await Promise.all([
+        higgsfield.generateImage(prompt, { model: 'gpt_image_2', aspectRatio: primaryRatio, quality }),
+        higgsfield.generateImage(prompt, { model: 'gpt_image_2', aspectRatio: primaryRatio, quality })
+      ]);
+
+      // Save to Supabase if brief has ID
+      if (brief.id) {
+        try {
+          const { supabase } = require('../core/supabase');
+          await supabase.from('parrilla_briefs').update({
+            url_arte_final: v1.resultUrl,
+            url_arte_v2: v2.resultUrl,
+            status: 'listo_qc'
+          }).eq('id', brief.id);
+        } catch (dbErr) {
+          console.warn('[Carlos generateFromBrief] DB update error (non-fatal):', dbErr.message);
+        }
+      }
+
+      return { success: true, images: [v1, v2], model_used: 'gpt_image_2', prompt };
+    } catch (e) {
+      console.warn(`[Carlos] GPT Image 2 falló (${e.message}), usando Nano Banana Pro...`);
+    }
+
+    // Fallback Nano Banana Pro
+    try {
+      const [f1, f2] = await Promise.all([
+        higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality }),
+        higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality })
+      ]);
+      return { success: true, images: [f1, f2], model_used: 'nano_banana_2', prompt };
+    } catch (fallbackErr) {
+      console.error('[Carlos] Ambos modelos fallaron:', fallbackErr.message);
+      return { success: false, error: fallbackErr.message, prompt };
+    }
+  }
+
+  /**
+   * Genera un carousel completo usando JSON prompting.
+   * Paso 1: Claude genera JSON con specs de 5-7 slides.
+   * Paso 2: Se genera cada slide con el mismo estilo base FIF.
+   *
+   * @param {object} brief - registro de parrilla_briefs con tipo_pieza === 'carousel'
+   * @returns {object} { success, images: [{slide, url, specs}], model_used }
+   */
+  async generateCarousel(brief) {
+    console.log(`🎨 CARLOS [generateCarousel]: generando carousel FIF — "${brief.headline || brief.concepto}"`);
+
+    // Paso 1: Generar JSON con specs de slides
+    let slides = {};
+    try {
+      const jsonPrompt = `Genera el JSON de especificaciones para
+un carousel de Instagram de FIF (Feria Internacional de Franquicias)
+con este brief:
+
+Headline: ${brief.headline || ''}
+Concepto: ${brief.concepto || ''}
+Objetivo: ${brief.objetivo || ''}
+Copy de apoyo: ${brief.copy_apoyo || ''}
+CTA: ${brief.cta || ''}
+
+El JSON debe tener entre 5-7 slides.
+Para cada slide incluir:
+- tipo: cover/contenido/datos/cta
+- headline_slide (corto, máximo 8 palabras, impacto)
+- visual_prompt (en inglés, para GPT Image 2, 2 oraciones)
+- composicion (descripción del layout de este slide)
+- elementos_graficos (iconos, módulos o datos a incluir)
+
+Todos los slides deben compartir el mismo
+estilo visual FIF para verse como una serie cohesiva.
+Responde SOLO en JSON válido, sin texto extra.
+Formato: { "slide_1": {...}, "slide_2": {...}, ... }`;
+
+      const rawJson = await this.think(jsonPrompt, { skipFormatting: true });
+      // Limpiar markdown si Claude envuelve en ```json
+      const clean = rawJson.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      slides = JSON.parse(clean);
+    } catch (jsonErr) {
+      console.warn('[Carlos generateCarousel] JSON generation error:', jsonErr.message);
+      // Fallback: slides básicos si Claude falla
+      slides = {
+        slide_1: { tipo: 'cover', headline_slide: brief.headline || 'FIF 2025', visual_prompt: 'Premium franchise expo hall, Mexico City. Navy and red brand colors.', composicion: 'Full bleed expo photo with headline overlay area bottom', elementos_graficos: 'FIF logo area top, large headline' },
+        slide_2: { tipo: 'contenido', headline_slide: brief.objetivo || 'Tu próximo negocio', visual_prompt: 'Professional entrepreneurs networking at franchise expo. Warm lighting.', composicion: 'Split layout: left info modules, right expo photo', elementos_graficos: '3 benefit icons, supporting copy' },
+        slide_3: { tipo: 'cta', headline_slide: brief.cta || '¡Regístrate ya!', visual_prompt: 'Aspirational franchise expo booth, navy red white colors. Premium feel.', composicion: 'Clean white background, centered headline, bold CTA button area', elementos_graficos: 'CTA button, date/location info, FIF branding' }
+      };
+    }
+
+    // Paso 2: Generar cada slide como imagen
+    const images = [];
+    for (const [key, slide] of Object.entries(slides)) {
+      const slidePrompt = `${FIF_VISUAL_SYSTEM.base}
+
+${FIF_VISUAL_SYSTEM.fotografia}
+
+${FIF_VISUAL_SYSTEM.composicion_post}
+
+${slide.visual_prompt}
+
+Layout: ${slide.composicion}
+Include: ${slide.elementos_graficos}
+This is ${key} of a coordinated carousel series.
+Must match the visual style of all other slides in the series.`;
+
+      try {
+        const img = await higgsfield.generateImage(slidePrompt, {
+          model: 'gpt_image_2',
+          aspectRatio: '3:4',
+          quality: '2k'
+        });
+        images.push({ slide: key, url: img.resultUrl, specs: slide, model: 'gpt_image_2' });
+      } catch (imgErr) {
+        // Fallback por slide individual
+        try {
+          const imgFb = await higgsfield.generateImage(slidePrompt, {
+            model: 'nano_banana_2',
+            aspectRatio: '4:5',
+            quality: '2k'
+          });
+          images.push({ slide: key, url: imgFb.resultUrl, specs: slide, model: 'nano_banana_2' });
+        } catch (fbErr) {
+          console.warn(`[Carlos carousel] slide ${key} falló:`, fbErr.message);
+          images.push({ slide: key, url: null, specs: slide, error: fbErr.message });
+        }
+      }
+    }
+
+    // Actualizar parrilla_brief si tiene ID
+    const successImages = images.filter(i => i.url);
+    if (brief.id && successImages.length > 0) {
+      try {
+        const { supabase } = require('../core/supabase');
+        await supabase.from('parrilla_briefs').update({
+          url_arte_final: successImages[0]?.url,
+          url_arte_v2: successImages[1]?.url || null,
+          url_arte_v3: successImages[2]?.url || null,
+          status: 'listo_qc',
+          notas_revision: `Carousel ${images.length} slides generados (${successImages.length} exitosos)`
+        }).eq('id', brief.id);
+      } catch (dbErr) {
+        console.warn('[Carlos generateCarousel] DB update error (non-fatal):', dbErr.message);
+      }
+    }
+
+    const modelUsed = images.find(i => i.model)?.model || 'gpt_image_2';
+    console.log(`✅ CARLOS [carousel]: ${successImages.length}/${images.length} slides generados con ${modelUsed}`);
+
+    return {
+      success: successImages.length > 0,
+      images,
+      total_slides: images.length,
+      successful_slides: successImages.length,
+      model_used: modelUsed,
+      slide_specs: slides
     };
   }
 

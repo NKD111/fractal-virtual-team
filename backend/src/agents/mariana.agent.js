@@ -1,5 +1,6 @@
 // backend/src/agents/mariana.agent.js
 // Fractal Virtual Team v4.2 — MARIANA UNIFICADA (Hub Coordinator)
+// BLOQUE C: Transparencia IA + Protocolo de Brief
 
 const BaseAgent = require('../core/BaseAgent');
 const MARIANA_PROMPT = require('../prompts/mariana.prompts');
@@ -544,14 +545,103 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
     }
   }
 
+  // ─── BLOQUE C: TRANSPARENCIA IA ─────────────────────────────────────────────
+
+  /**
+   * Verifica si es el PRIMER contacto con este remitente (nunca ha habido historial)
+   */
+  isFirstContact(history) {
+    return !history || history.length === 0;
+  }
+
+  /**
+   * Genera el mensaje de identificación obligatorio para primer contacto
+   * Daniel Carreón: "La gente no es tonta. Nunca intentes hacerte pasar por humana."
+   */
+  buildTransparencyGreeting(clientName = null) {
+    const nombre = clientName ? ` ${clientName}` : '';
+    return `Hola${nombre} 👋 Soy Mariana, la asistente virtual de Fractal MX 🤖 Estoy aquí para ayudarte con lo que necesites.\n¿En qué te puedo apoyar?`;
+  }
+
+  /**
+   * Protocolo de Brief — Recoge información antes de producir
+   * REGLA: NUNCA iniciar producción sin brief confirmado por escrito
+   */
+  async collectBrief(message, sender, history) {
+    const content = message.content || message.text || '';
+    const historyText = history.slice(0, 5).map(h =>
+      `Cliente: "${(h.message_in || '').substring(0, 100)}" → Mariana: "${(h.message_out || '').substring(0, 100)}"`
+    ).join('\n') || '';
+
+    const briefPrompt = `${this.basePrompt}
+
+═══ PROTOCOLO DE BRIEF (OBLIGATORIO) ═══
+El cliente necesita un servicio. ANTES de producir cualquier cosa,
+debes completar este brief haciéndole preguntas clave.
+
+PREGUNTAS QUE DEBES HACER (si no están respondidas):
+1. ¿Qué necesitas exactamente?
+2. ¿Cuál es la fecha límite?
+3. ¿Tienes referencias visuales (imágenes, URLs)?
+4. ¿Hay restricciones de contenido o cosas que NO debe incluir?
+
+Cuando tengas TODAS las respuestas, confirma el brief así:
+"Perfecto, déjame confirmar lo que necesitas: [resumen del brief]. ¿Es correcto?"
+
+Solo cuando el cliente confirme → escalar a NKD para aprobación de producción.
+NUNCA iniciar producción sin esta confirmación por escrito.
+
+═══ HISTORIAL ═══
+${historyText}
+
+═══ MENSAJE ACTUAL ═══
+"${content}"
+
+¿Qué preguntas del brief faltan? Halas de forma natural y amable.
+Si ya tienes toda la info, presenta el brief para confirmación del cliente.
+Tono: profesional CDMX, cálido, directo:`;
+
+    const response = await this.claude.messages.create({
+      model: this.model,
+      max_tokens: 400,
+      messages: [{ role: 'user', content: briefPrompt }]
+    });
+
+    return response.content[0].text;
+  }
+
   /**
    * Responde a clientes (modo profesional)
+   * BLOQUE C: incluye identificación IA en primer contacto + protocolo de brief
    */
   async respondToClient(message, sender, history, intent) {
     const content = message.content || message.text || '';
     const historyText = history.slice(0, 10).map(h =>
       `[${new Date(h.timestamp).toLocaleDateString('es-MX')}] ${h.message_in} → ${h.message_out}`
     ).join('\n') || 'Sin historial previo';
+
+    // ── BLOQUE C: PRIMER CONTACTO — Identificación obligatoria como IA ─────────
+    if (this.isFirstContact(history)) {
+      return this.buildTransparencyGreeting(sender.name !== 'unknown' ? sender.name : null);
+    }
+
+    // ── BLOQUE C: Si el cliente pide precio — escalar a NKD, no dar precio ─────
+    if (intent.needs_pricing) {
+      await this.notifyNeiky({
+        title: '💰 Cliente solicita precio',
+        message: `${sender.name} (${sender.company || sender.channel}) pregunta por precios.\nMensaje: "${content.substring(0, 150)}"`,
+        urgency: 'medium'
+      });
+    }
+
+    // ── BLOQUE C: Si es una solicitud de producción — usar protocolo de brief ──
+    const isProductionRequest = ['request', 'pricing_request'].includes(intent.type) ||
+      ['diseño', 'arte', 'parrilla', 'video', 'logo', 'contenido', 'branding'].some(k =>
+        content.toLowerCase().includes(k));
+
+    if (isProductionRequest) {
+      return this.collectBrief(message, sender, history);
+    }
 
     const clientPrompt = `${this.basePrompt}
 
@@ -560,12 +650,13 @@ Estás hablando con: ${sender.name}
 Empresa: ${sender.company || 'Desconocida'}
 Canal: ${sender.channel}
 
-═══ INSTRUCCIONES ESPECIALES ═══
+═══ INSTRUCCIONES ESPECIALES (BLOQUE C) ═══
 - Tono: cálido pero profesional
 - Resuelve dudas con eficiencia
 - NUNCA des precios sin consultar a Neiky primero
-- Si piden algo grande: di que lo revisas y vuelves con el equipo
-- Si necesitas escalar: identifica al agente correcto
+- Si preguntan si eres humana: CONFIRMAR que eres IA sin dudar. NUNCA mentir.
+- Si piden hablar con persona real: escalar a Neiky inmediatamente
+- Si piden algo de producción: iniciar protocolo de brief antes de producir
 - Mantén energía positiva siempre
 
 ═══ HISTORIAL RECIENTE ═══
@@ -573,7 +664,7 @@ ${historyText}
 
 ═══ INTENT DETECTADO ═══
 Tipo: ${intent.type} | Urgencia: ${intent.urgency}/5 | Tema: ${intent.topic}
-Necesita precio: ${intent.needs_pricing ? 'SÍ — consulta a Neiky antes de responder precio' : 'No'}
+Necesita precio: ${intent.needs_pricing ? 'SÍ — di que lo consultas y vuelves' : 'No'}
 
 ═══ MENSAJE ═══
 "${content}"
@@ -602,18 +693,29 @@ Responde como Mariana, profesional pero cálida, máximo 4-5 líneas:`;
 
   /**
    * Responde a remitentes desconocidos
+   * BLOQUE C: SIEMPRE se identifica como IA en el primer mensaje
    */
   async respondToUnknown(message, channel) {
     const content = message.content || message.text || '';
 
+    // ── BLOQUE C: Primer contacto = identificación obligatoria como IA ─────────
+    // Daniel Carreón: "La gente no es tonta. Nunca intentes hacerte pasar por humana."
     const unknownPrompt = `${this.basePrompt}
 
 ═══ CONTEXTO ═══
 Recibiste un mensaje de un número/email DESCONOCIDO.
 Canal: ${channel}
 
+═══ REGLA OBLIGATORIA (BLOQUE C) ═══
+SIEMPRE comenzar identificándote como IA de Fractal MX en el PRIMER mensaje:
+"Hola 👋 Soy Mariana, la asistente virtual de Fractal MX 🤖"
+NUNCA pretender ser humana. NUNCA fingir tener emociones para manipular.
+Si preguntan si eres IA o humana: CONFIRMAR que eres IA sin dudar.
+Si piden hablar con persona real: decir que lo conectas con el equipo humano.
+
 ═══ INSTRUCCIONES ═══
 - Sé profesional pero cautelosa
+- Incluye la identificación IA obligatoria al inicio
 - Pregunta de qué empresa son y cómo nos contactaron
 - Pregunta qué necesitan
 - NO compartas info sensible
@@ -623,7 +725,7 @@ Canal: ${channel}
 ═══ MENSAJE ═══
 "${content}"
 
-Saludo profesional, identifica al remitente, máximo 3 líneas:`;
+Saludo profesional con identificación IA, identifica al remitente, máximo 3 líneas:`;
 
     const response = await this.claude.messages.create({
       model: this.model,

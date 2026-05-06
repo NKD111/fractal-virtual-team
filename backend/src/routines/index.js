@@ -1,5 +1,6 @@
 // backend/src/routines/index.js
 // C1-C3: Morning Prep, Nightly Maintenance, Weekly Financial + 3 extras
+// BLOQUE E: Evening Reflection, Weekly Council, Metric Snapshot, Monthly Review
 
 const cron = require('node-cron');
 const { supabase } = require('../core/supabase');
@@ -44,11 +45,33 @@ class RoutineManager {
     this._tasks.push(cron.schedule('55 23 * * *', () => this._runDailyKPIs().catch(e => console.error('kpis:', e.message)), TZ));
 
     
+    // ── BLOQUE E: 4 nuevos crons del Business OS ───────────────────────────────
+    // E1: Evening Reflection — 10 PM CDMX diario
+    const { eveningReflection } = require('./evening-reflection');
+    this._tasks.push(cron.schedule('0 22 * * *', () => eveningReflection().catch(e => console.error('eveningReflection:', e.message)), TZ));
+    console.log('  ✓ Evening Reflection cron: 22:00 CDMX diario');
+
+    // E2: Weekly Business Council — Lunes 9 AM CDMX
+    const { weeklyBusinessCouncil } = require('./weekly-council');
+    this._tasks.push(cron.schedule('0 9 * * 1', () => weeklyBusinessCouncil().catch(e => console.error('weeklyCouncil:', e.message)), TZ));
+    console.log('  ✓ Weekly Business Council cron: Lunes 9:00 CDMX');
+
+    // E3: Metric Snapshot — 11 PM CDMX diario (después de nightly maintenance)
+    const { saveMetricSnapshot } = require('./metric-snapshot');
+    this._tasks.push(cron.schedule('0 23 * * *', () => saveMetricSnapshot().catch(e => console.error('metricSnapshot:', e.message)), TZ));
+    console.log('  ✓ Metric Snapshot cron: 23:00 CDMX diario');
+
+    // E4: Monthly Review — Día 1 de cada mes, 10 AM CDMX
+    const { monthlyReview } = require('./monthly-review');
+    this._tasks.push(cron.schedule('0 10 1 * *', () => monthlyReview().catch(e => console.error('monthlyReview:', e.message)), TZ));
+    console.log('  ✓ Monthly Review cron: día 1 de cada mes 10:00 CDMX');
+    // ──────────────────────────────────────────────────────────────────────────
+
     try { oracleDaily.start(); console.log('  ✓ Oracle daily report cron registered (8 AM CDMX)'); } catch(e) { console.error('oracle-daily err:', e.message); }
     try { securityMonitor.start(); } catch(e) { console.error('security-monitor err:', e.message); }
     try { workflows.start(); } catch(e) { console.error('workflows err:', e.message); }
     this._initialized = true;
-    console.log(`✅ ROUTINES: ${this._tasks.length} schedules activos`);
+    console.log(`✅ ROUTINES: ${this._tasks.length} schedules activos (incl. BLOQUE E x4)`);
   }
 
   // C1
