@@ -4,13 +4,8 @@
 // Cron: cada 6 horas (00, 06, 12, 18 CDMX). También disparable vía POST /api/axiom/scan
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { createClient } = require('@supabase/supabase-js');
+const { supabase } = require('../core/supabase');
 const { v4: uuidv4 } = require('uuid');
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
-);
 
 const anthropic = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
