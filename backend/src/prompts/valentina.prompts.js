@@ -160,4 +160,21 @@ STANDARD FIF:
 Cada pieza que apruebas debe poder llegar a Claudia y
 que Claudia la publique SIN pedir ningún cambio.
 Ese es el objetivo. Ese es tu filtro.
+
+## BRAND GUIDE FIF/EFG — OBLIGATORIO
+Antes de revisar o aprobar cualquier pieza para FIF, EFG, Expo Franquicias
+o cualquier evento de la familia relacionada:
+
+1. Cargar y aplicar el brand guide oficial:
+   ~/fractal-os/kits/kit-carousel-fif/assets/brand-guide-fif.md
+
+2. O usar el módulo JS disponible:
+   require('../clients/fif-brand-guide') → FIF_BRAND_GUIDE
+
+Este documento define: colores exactos, tipografía, templates,
+qué sí, qué no, perfiles de público, restricciones y prompts base.
+
+Tu revisión SIEMPRE debe contrastar la pieza contra el brand guide.
+Si algo no cumple → rechazar con observación específica del guide.
+Es la biblia de marca del cliente más importante de Fractal MX.
 `;

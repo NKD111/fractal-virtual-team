@@ -328,6 +328,153 @@ Empieza tu respuesta directamente con la llave \`{\` y termina con \`}\`. NADA m
     return Math.round((failed / logs.length) * 100) / 100;
   }
 
+  // ─── BLOQUE I: DEEP PROSPECT ANALYSIS ────────────────────────────────────
+
+  /**
+   * Análisis profundo de un prospecto específico de la tabla `prospects`.
+   * Genera mensaje personalizado de primer contacto para WhatsApp.
+   * Si close_probability > 40, activa a Mariana con mensaje sugerido.
+   * Si score > 70, requiere aprobación de NKD antes de enviar.
+   *
+   * @param {object} opportunity - registro de la tabla prospects
+   * @returns {object} data analizada + estado guardado
+   */
+  async deepProspectAnalysis(opportunity) {
+    console.log(`[AXIOM] deepProspectAnalysis: ${opportunity.nombre_empresa} (${opportunity.website})`);
+
+    const analysisPrompt = `Eres AXIOM, el motor de crecimiento de Fractal MX (agencia creativa AI-powered en CDMX).
+Analiza esta empresa como prospecto de alto valor.
+
+EMPRESA: ${opportunity.nombre_empresa}
+WEB: ${opportunity.website || '(sin website)'}
+INDUSTRIA: ${opportunity.industria || 'no especificada'}
+CIUDAD: ${opportunity.ciudad || 'CDMX'}
+
+SERVICIOS DE FRACTAL MX:
+- Parrilla mensual de contenido ($500-1,500 USD/mes) — recurrente
+- Auditoría digital básica ($300 USD) — gancho de entrada
+- Auditoría digital completa ($800 USD) — con estrategia
+- Landing cinematográfica ($1,500-3,000 USD) — proyecto premium
+- Videos y reels ($200-500 USD/pieza) — proyecto puntual
+
+ANALIZA y responde SOLO en JSON válido con estos campos exactos:
+{
+  "web_score": <número 1-10>,
+  "social_score": <número 1-10>,
+  "ads_analysis": "<string: tienen ads? calidad? presupuesto estimado>",
+  "weak_points": ["punto 1", "punto 2", "punto 3"],
+  "recommended_service": "<nombre del servicio más apropiado>",
+  "suggested_price": <número USD sin símbolo>,
+  "close_probability": <número 0-100>,
+  "timing_reason": "<por qué AHORA es el momento ideal>",
+  "whatsapp_message": "<mensaje de primer contacto, 3 párrafos máx, tono profesional CDMX, mencionar algo específico de su negocio, CTA claro al final, nunca suena a spam masivo>"
+}`;
+
+    let data;
+    try {
+      const response = await chat({
+        system: this.basePrompt,
+        messages: [{ role: 'user', content: analysisPrompt }],
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2000
+      });
+      const raw = (response.content || '').trim()
+        .replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      data = JSON.parse(raw);
+    } catch (err) {
+      console.error('[AXIOM deepProspect] análisis falló:', err.message);
+      return { success: false, error: err.message };
+    }
+
+    // Guardar análisis en tabla prospects
+    try {
+      await supabase.from('prospects').update({
+        score: data.close_probability,
+        analisis_web: String(data.web_score) + '/10 — ' + (data.ads_analysis || ''),
+        analisis_redes: String(data.social_score) + '/10',
+        analisis_ads: data.ads_analysis,
+        puntos_debiles: (data.weak_points || []).join(' | '),
+        por_que_fractal: data.timing_reason,
+        servicio_sugerido: data.recommended_service,
+        precio_sugerido: data.suggested_price,
+        mensaje_contacto: data.whatsapp_message,
+        status: 'listo_para_contactar'
+      }).eq('id', opportunity.id);
+      console.log(`[AXIOM] prospecto actualizado: score=${data.close_probability}, servicio=${data.recommended_service}`);
+    } catch (dbErr) {
+      console.warn('[AXIOM deepProspect] DB update error (non-fatal):', dbErr.message);
+    }
+
+    // Activar a Mariana si score > 40
+    if (data.close_probability > 40) {
+      try {
+        const requireNKD = data.close_probability > 70;
+        const notification = {
+          type: 'nuevo_prospecto_caliente',
+          prospect_id: opportunity.id,
+          empresa: opportunity.nombre_empresa,
+          score: data.close_probability,
+          servicio: data.recommended_service,
+          precio: data.suggested_price,
+          mensaje_sugerido: data.whatsapp_message,
+          instruccion: requireNKD
+            ? `Score > 70. CONFIRMAR con NKD antes de enviar. Prospecto: ${opportunity.nombre_empresa}. Servicio sugerido: ${data.recommended_service} ($${data.suggested_price} USD).`
+            : `Contactar a ${opportunity.nombre_empresa} por WhatsApp. Usar mensaje sugerido como base. Personalizar con nombre del contacto si disponible.`
+        };
+        await this.sendMessageTo('MARIANA', JSON.stringify(notification), { type: 'axiom_prospect_alert' });
+        console.log(`[AXIOM] Mariana notificada — score=${data.close_probability}, nkd_required=${requireNKD}`);
+      } catch (notifyErr) {
+        console.warn('[AXIOM deepProspect] notifyMariana error (non-fatal):', notifyErr.message);
+      }
+    }
+
+    return { success: true, data, prospect_id: opportunity.id };
+  }
+
+  /**
+   * Exporta top 50 prospectos a N8N para sync con Google Sheets.
+   * Requiere N8N_WEBHOOK_URL configurado en env.
+   */
+  async exportToGoogleSheet() {
+    const { data: prospects, error } = await supabase
+      .from('prospects')
+      .select('id, nombre_empresa, website, industria, ciudad, score, servicio_sugerido, precio_sugerido, status, mensaje_contacto, created_at')
+      .order('score', { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+
+    if (!process.env.N8N_WEBHOOK_URL) {
+      console.warn('[AXIOM] N8N_WEBHOOK_URL no configurado — skip export');
+      return { skipped: true, reason: 'N8N_WEBHOOK_URL not set', count: prospects?.length || 0 };
+    }
+
+    try {
+      const https = require('https');
+      const url = new URL(process.env.N8N_WEBHOOK_URL + '/prospects_to_sheets');
+      const body = JSON.stringify({ prospects });
+      await new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: url.hostname,
+          path: url.pathname,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+        }, (res) => {
+          res.on('data', () => {});
+          res.on('end', resolve);
+        });
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
+      console.log(`[AXIOM] exportToGoogleSheet: ${prospects?.length} prospectos enviados a N8N`);
+    } catch (httpErr) {
+      console.warn('[AXIOM] N8N webhook error (non-fatal):', httpErr.message);
+    }
+
+    return { success: true, count: prospects?.length || 0 };
+  }
+
   /**
    * Acepta un mensaje directo (ej: Mariana le pregunta a AXIOM)
    * No es su uso principal — su superficie es scan + write.

@@ -173,4 +173,20 @@ PROCESO FIF:
 2. Conversión al formulario estándar FIF
 3. Ejecución con estándar editorial premium
 4. QC-BOT → Valentina → Mariana → NKD
+
+## BRAND GUIDE FIF/EFG — OBLIGATORIO
+Antes de producir cualquier pieza para FIF, EFG, Expo Franquicias
+o cualquier evento de la familia relacionada:
+
+1. Cargar y aplicar el brand guide oficial:
+   ~/fractal-os/kits/kit-carousel-fif/assets/brand-guide-fif.md
+
+2. O usar el módulo JS disponible:
+   require('../clients/fif-brand-guide') → FIF_BRAND_GUIDE
+
+Este documento define: colores exactos, tipografía, templates,
+qué sí, qué no, perfiles de público, restricciones y prompts base.
+
+Es la biblia de marca del cliente más importante de Fractal MX.
+Seguirla AL PIE DE LA LETRA. Sin excepciones.
 `;

@@ -224,4 +224,150 @@ async function listJobs() {
   return JSON.parse(raw);
 }
 
-module.exports = { verify, generateImage, generateVideo, pollStatus, listJobs, ensureCredentials };
+// ─── BLOQUE Q: Prioridad de modelos y fallback inteligente ─────────────────────
+//
+// Orden de prioridad para imágenes:
+//   1. GPT Image 2 vía CLI (modelo primario — calidad máxima)
+//   2. Nano Banana 2 vía CLI (fallback — soporta 4:5 nativo)
+//
+// Orden de prioridad para videos:
+//   1. Seedance 2.0 vía CLI (reels, FIF)
+//   2. Veo 3.1 vía CLI (landing cinematográfica — si disponible)
+//
+// MCP (https://mcp.higgsfield.ai/mcp):
+//   Disponible para Claude Code/Desktop — no para el backend en Railway.
+//   Permite referenciar generaciones anteriores por job_id (consistencia visual).
+//   Para activarlo en Claude Desktop: agregar MCP server con URL arriba.
+
+const MODELS = {
+  images: {
+    primary: 'gpt_image_2',
+    fallback: 'nano_banana_2',
+    ratios: {
+      post: '3:4',     // 4:5 Instagram → gpt_image_2 usa 3:4
+      banner: '16:9',
+      story: '9:16',
+      cuadrado: '1:1',
+      cover: '2:3'
+    }
+  },
+  videos: {
+    primary: 'seedance_2_0',
+    cinematic: 'veo_3_1'   // para landing cinematográfica
+  }
+};
+
+/**
+ * Genera imagen con fallback automático GPT Image 2 → Nano Banana 2.
+ * Usar esta función en lugar de generateImage() directamente para producción.
+ *
+ * @param {string} prompt
+ * @param {object} opts - { aspectRatio, quality, forceModel }
+ * @returns {{ jobId, resultUrl, params, model }}
+ */
+async function generateImageWithFallback(prompt, opts = {}) {
+  const { aspectRatio = MODELS.images.ratios.post, quality = '2k', forceModel = null } = opts;
+
+  // Ajuste de ratio: gpt_image_2 no soporta 4:5 nativo → usar 3:4
+  const primaryRatio = aspectRatio === '4:5' ? '3:4' : aspectRatio;
+
+  // Si forzamos modelo específico
+  if (forceModel) {
+    return generateImage(prompt, { model: forceModel, aspectRatio, quality });
+  }
+
+  // 1. GPT Image 2 (calidad máxima)
+  try {
+    const result = await generateImage(prompt, {
+      model: MODELS.images.primary,
+      aspectRatio: primaryRatio,
+      quality
+    });
+    return { ...result, model: MODELS.images.primary };
+  } catch (err) {
+    console.warn(`[Higgsfield] GPT Image 2 falló: ${err.message} — usando Nano Banana 2`);
+  }
+
+  // 2. Nano Banana 2 (soporta 4:5 nativo)
+  return generateImage(prompt, {
+    model: MODELS.images.fallback,
+    aspectRatio, // usar ratio original — NB2 lo soporta
+    quality
+  });
+}
+
+/**
+ * Genera video con fallback automático Seedance 2.0 → Veo 3.1.
+ *
+ * @param {string} prompt
+ * @param {object} opts - { aspectRatio, duration, resolution, useCinematic }
+ * @returns {{ jobId, resultUrl, params, model }}
+ */
+async function generateVideoWithFallback(prompt, opts = {}) {
+  const {
+    aspectRatio = '9:16',
+    duration = 10,
+    resolution = '720p',
+    useCinematic = false
+  } = opts;
+
+  const primaryModel = useCinematic ? MODELS.videos.cinematic : MODELS.videos.primary;
+
+  // 1. Modelo primario
+  try {
+    const result = await generateVideo(prompt, {
+      model: primaryModel,
+      aspectRatio,
+      duration,
+      resolution
+    });
+    return { ...result, model: primaryModel };
+  } catch (err) {
+    console.warn(`[Higgsfield] ${primaryModel} falló: ${err.message}`);
+  }
+
+  // 2. Fallback: si era cinematográfico → Seedance 2.0; si era Seedance → sin fallback (error real)
+  if (useCinematic) {
+    return generateVideo(prompt, {
+      model: MODELS.videos.primary,
+      aspectRatio,
+      duration,
+      resolution
+    });
+  }
+
+  throw new Error('[Higgsfield] Seedance 2.0 no disponible y no hay fallback de video configurado');
+}
+
+/**
+ * Obtiene el job_id del último arte aprobado de un cliente.
+ * Permite referenciar generaciones anteriores para consistencia visual entre meses.
+ * (Con MCP: higgsfield.mcp.generate({ reference_generation_id: lastJobId }))
+ * (Con CLI: este dato se usa como referencia manual en prompts)
+ *
+ * @param {string} cliente - nombre del cliente (ej: 'FIF')
+ * @returns {string|null} higgsfield_job_id del último arte entregado
+ */
+async function getLastApprovedJobId(cliente) {
+  try {
+    const { supabase } = require('./supabase');
+    const { data } = await supabase
+      .from('parrilla_briefs')
+      .select('higgsfield_job_id')
+      .eq('cliente', cliente)
+      .eq('status', 'entregado')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data?.higgsfield_job_id || null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = {
+  verify, generateImage, generateVideo, pollStatus, listJobs, ensureCredentials,
+  // BLOQUE Q: funciones nuevas
+  generateImageWithFallback, generateVideoWithFallback, getLastApprovedJobId,
+  MODELS
+};

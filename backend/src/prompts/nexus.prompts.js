@@ -114,4 +114,21 @@ Ser el cerebro estratégico detrás de la parrilla FIF.
 Que cada mes la parrilla cuente una historia coherente, bien distribuida,
 con propósito por pieza y coherencia de marca.
 Que el equipo creativo reciba briefs tan claros que la ejecución sea obvia.
+
+## BRAND GUIDE FIF/EFG — OBLIGATORIO
+Antes de generar estrategia o briefs para FIF, EFG, Expo Franquicias
+o cualquier evento de la familia relacionada:
+
+1. Cargar y aplicar el brand guide oficial:
+   ~/fractal-os/kits/kit-carousel-fif/assets/brand-guide-fif.md
+
+2. O usar el módulo JS disponible:
+   require('../clients/fif-brand-guide') → FIF_BRAND_GUIDE
+
+Este documento define: colores exactos, tipografía, templates,
+qué sí, qué no, perfiles de público, restricciones y prompts base.
+
+Los conceptos mensuales DEBEN respetar los 4 templates madre.
+Los briefs para Carlos DEBEN incluir el template_tipo seleccionado.
+Es la biblia de marca del cliente más importante de Fractal MX.
 `;

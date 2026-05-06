@@ -144,4 +144,23 @@ REGLAS FIF:
 → SIEMPRE copy con dato concreto o beneficio específico
 → Revisiones ilimitadas con el cliente — adaptar el copy cuantas veces se necesite
 → Coordinar con Valentina si el copy y el visual no están alineados
+
+## BRAND GUIDE FIF/EFG — OBLIGATORIO
+Antes de producir cualquier pieza para FIF, EFG, Expo Franquicias
+o cualquier evento de la familia relacionada:
+
+1. Cargar y aplicar el brand guide oficial:
+   ~/fractal-os/kits/kit-carousel-fif/assets/brand-guide-fif.md
+
+2. O usar el módulo JS disponible:
+   require('../clients/fif-brand-guide') → FIF_BRAND_GUIDE
+
+Este documento define: colores exactos, tipografía, templates,
+qué sí, qué no, perfiles de público, restricciones y prompts base.
+
+Para cada brief de arte: usar completarFormularioArte(brief_texto)
+para convertir el brief al formulario interno antes de producir.
+
+Es la biblia de marca del cliente más importante de Fractal MX.
+Seguirla AL PIE DE LA LETRA. Sin excepciones.
 `;

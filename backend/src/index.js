@@ -285,6 +285,87 @@ server.listen(PORT, async () => {
     console.warn('[Bloque F] init error (non-fatal):', err.message);
   }
 
+  // ─── BLOQUES I-R: Business OS v3.0 ─────────────────────────────────────────
+  const cron = require('node-cron');
+
+  // BLOQUE M — Oracle Auto-Improvement (domingo 3 AM CDMX)
+  try {
+    const { oracleAutoImprovement } = require('./routines/oracle-improvement');
+    cron.schedule('0 3 * * 0', () => oracleAutoImprovement().catch(e => console.error('[Oracle] cron err:', e.message)), { timezone: 'America/Mexico_City' });
+    console.log('✅ BLOQUE M: Oracle Auto-Improvement activo (domingo 3 AM CDMX)');
+  } catch (err) {
+    console.warn('[Bloque M] init error (non-fatal):', err.message);
+  }
+
+  // BLOQUE N — YouTube Weekly Content (lunes y jueves 9 AM CDMX)
+  try {
+    const { generateWeeklyVideos } = require('./pipelines/youtube-content');
+    cron.schedule('0 9 * * 1,4', () => generateWeeklyVideos().catch(e => console.error('[YouTube] cron err:', e.message)), { timezone: 'America/Mexico_City' });
+    console.log('✅ BLOQUE N: YouTube content cron activo (lun+jue 9 AM CDMX)');
+  } catch (err) {
+    console.warn('[Bloque N] init error (non-fatal):', err.message);
+  }
+
+  // BLOQUE K — N8N Revenue Alert (día 20 al mediodía CDMX)
+  try {
+    const { checkRevenueAlert } = require('./pipelines/n8n-workflows');
+    cron.schedule('0 12 20 * *', () => checkRevenueAlert().catch(e => console.error('[N8N] revenue alert err:', e.message)), { timezone: 'America/Mexico_City' });
+    console.log('✅ BLOQUE K: N8N Revenue Alert activo (día 20 mediodía CDMX)');
+  } catch (err) {
+    console.warn('[Bloque K] init error (non-fatal):', err.message);
+  }
+
+  // BLOQUE L — Revenue Streams: Flujos de ingreso autónomo
+  // Flujo 1: FIF ($1,000 USD/mes) — pipeline BLOQUE F ya activo
+  // Flujo 2: Auditoría Digital ($300-800 USD) — disponible en /api/services/auditoria
+  // Flujo 3: Productos Digitales (pasivo $37-97 USD) — pipeline BLOQUE J
+  // Flujo 4: Landing Cinematográfica ($1,500-3,000 USD) — servicio BLOQUE O
+  // AXIOM → Mariana → NKD cierra → sistema produce (automatizado)
+
+  // Register new services routes
+  try {
+    // Expose auditoría and landing as API endpoints
+    app.post('/api/services/auditoria', async (req, res) => {
+      try {
+        const { generarAuditoria } = require('./services/auditoria-digital');
+        const { empresa_url, tipo, industria, ciudad } = req.body;
+        if (!empresa_url) return res.status(400).json({ error: 'empresa_url requerido' });
+        const result = await generarAuditoria(empresa_url, { tipo, industria, ciudad });
+        res.json({ success: true, ...result });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.post('/api/services/landing', async (req, res) => {
+      try {
+        const { crearLanding } = require('./services/landing-cinematografica');
+        const { cliente_data, tipo } = req.body;
+        if (!cliente_data?.empresa) return res.status(400).json({ error: 'cliente_data.empresa requerido' });
+        const result = await crearLanding(cliente_data, tipo);
+        res.json({ success: true, ...result });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    app.post('/api/products/launch', async (req, res) => {
+      try {
+        const { launchProducto } = require('./pipelines/digital-product-launch');
+        const { productoId } = req.body;
+        if (!productoId) return res.status(400).json({ error: 'productoId requerido' });
+        const result = await launchProducto(productoId);
+        res.json({ success: true, ...result });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    console.log('✅ BLOQUE L: 4 flujos de ingreso registrados (FIF+Auditoría+Productos+Landing)');
+  } catch (err) {
+    console.warn('[Bloque L] init error (non-fatal):', err.message);
+  }
+
   // Start response tracker reminder checker (cada 15 min)
   const responseTracker = require('./core/response-tracker');
   setInterval(async () => {
@@ -295,7 +376,12 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Sistema listo — 12 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS-GUARDIAN + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida) + FASE 6 (22 features + 6 routines) + VISION LAYER (Fase 6.5) + FASE 9 (Departamento Creativo FIF)\n`);
+  console.log(`\n✅ Fractal MX — Business OS v3.0 listo`);
+  console.log(`   Agentes: 14 activos (+ AXIOM + ORACLE)`);
+  console.log(`   Bloques: A-R completados`);
+  console.log(`   Crons: Oracle (dom 3AM) + YouTube (lun+jue) + Revenue Alert (día 20) + AXIOM (6h) + Parrilla FIF (7 fases)`);
+  console.log(`   Flujos de ingreso: FIF($1k/mes) + Auditoría($300-800) + Productos digitales + Landing($1.5-3k)`);
+  console.log(`   Brand Guide FIF/EFG: activo en CARLOS, DIEGO, ALEX, VALENTINA, NEXUS\n`);
 
   // Cleanup on shutdown
   process.on('SIGTERM', async () => {
