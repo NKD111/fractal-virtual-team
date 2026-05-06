@@ -93,6 +93,7 @@ router.post('/', async (req, res) => {
     if (!client_name) return res.status(400).json({ error: 'client_name requerido' });
 
     const insertData = {
+      name: `${project_type || 'Proyecto'} — ${client_name}`,
       client_name,
       client_whatsapp: client_whatsapp || null,
       project_type: project_type || null,
