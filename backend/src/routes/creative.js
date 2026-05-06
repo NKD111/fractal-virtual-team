@@ -1,0 +1,398 @@
+// backend/src/routes/creative.js
+// Fractal Virtual Team v4.2 — Creative Department API (FASE 9)
+// Endpoints para flujo creativo FIF/Vanexpo y general
+
+const express = require('express');
+const router = express.Router();
+const { supabase } = require('../core/supabase');
+const FIF_BRAND_SYSTEM = require('../clients/fif-brand-system');
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function auditLog(action, details = {}) {
+  try {
+    await supabase.from('audit_log').insert({
+      agent: 'creative-api',
+      action,
+      details,
+      created_at: new Date().toISOString()
+    });
+  } catch (_) {}
+}
+
+// ─── GET /api/creative/status ─────────────────────────────────────────────────
+router.get('/status', async (req, res) => {
+  try {
+    const nexusReady = !!(global.nexus?.think);
+
+    // Proyectos activos con workflow creativo
+    let activeBriefs = [];
+    try {
+      const { data } = await supabase
+        .from('projects')
+        .select('id, name, client_id, brief, created_at, updated_at')
+        .eq('status', 'active')
+        .not('brief', 'is', null)
+        .order('updated_at', { ascending: false })
+        .limit(10);
+      activeBriefs = (data || []).filter(p => p.brief?.workflow_status);
+    } catch (_) {}
+
+    res.json({
+      ok: true,
+      nexus_ready: nexusReady,
+      brand_system: 'FIF v1.0 loaded',
+      active_briefs: activeBriefs.length,
+      endpoints: {
+        brief:    'POST /api/creative/brief   — nuevo brief FIF',
+        status:   'GET  /api/creative/brief/:id — estado de entregable',
+        list:     'GET  /api/creative/briefs  — todos los briefs activos',
+        parrilla: 'POST /api/creative/parrilla — estrategia parrilla mensual',
+        review:   'POST /api/creative/review  — registrar revisión QC/Valentina'
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/creative/brief ─────────────────────────────────────────────────
+// Recibe nuevo brief, crea proyecto en Supabase, asigna agente, notifica equipo.
+// Body: { type, client, agent, brief, deadline_internal?, note? }
+//   type: 'arte_publicitario'|'carrusel'|'infografia'|'video_reel'|'banner_web'|
+//         'material_impreso'|'parrilla_mensual'
+//   client: 'fif'|'central_interactiva'|'ccm'
+//   agent: 'carlos'|'diego'|'max'|'alex'
+//   brief: { tipo_pieza, publico, mensaje, datos, formato, deadline_cliente }
+router.post('/brief', async (req, res) => {
+  try {
+    const {
+      type,
+      client = 'fif',
+      agent,
+      brief = {},
+      deadline_internal,
+      note,
+      created_by = 'mariana'
+    } = req.body || {};
+
+    if (!type || !agent) {
+      return res.status(400).json({ error: 'type y agent son requeridos' });
+    }
+
+    // Validar que el brief tenga información mínima
+    const requiredFields = ['tipo_pieza', 'publico', 'mensaje'];
+    const missingFields = requiredFields.filter(f => !brief[f]);
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        error: 'Brief incompleto',
+        missing: missingFields,
+        hint: 'Mariana debe preguntar a NKD antes de asignar'
+      });
+    }
+
+    // Workflow status inicial
+    const workflowStatus = {
+      phase: 'assigned',
+      assigned_to: agent,
+      assigned_at: new Date().toISOString(),
+      qcbot_approved: false,
+      valentina_approved: false,
+      nkd_approved: false,
+      delivered_to_client: false
+    };
+
+    // Crear proyecto en Supabase
+    // status debe ser 'active' — el workflow va en brief.workflow_status
+    const projectPayload = {
+      name: `${type.toUpperCase()} — ${client.toUpperCase()} — ${new Date().toISOString().split('T')[0]}`,
+      status: 'active',
+      client_id: null, // resuelto por el sistema si aplica
+      brief: {
+        ...brief,
+        type,
+        client,
+        brand_system: client === 'fif' ? 'fif-brand-system' : null,
+        deadline_internal: deadline_internal || null,
+        note: note || null,
+        created_by,
+        workflow_status: workflowStatus
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .insert(projectPayload)
+      .select()
+      .single();
+
+    if (projectError) {
+      console.error('[creative/brief] Supabase error:', projectError.message);
+      return res.status(500).json({ error: projectError.message });
+    }
+
+    // Notificar al agente asignado si está disponible globalmente
+    let agentNotified = false;
+    try {
+      const agentInstance = global[agent];
+      if (agentInstance?.think) {
+        const briefSummary = JSON.stringify(brief, null, 2);
+        const msg = `NUEVO BRIEF ASIGNADO — ${type.toUpperCase()} para ${client.toUpperCase()}\n\n${briefSummary}\n\nDeadline interno: ${deadline_internal || 'Por confirmar con Sofia'}`;
+        agentInstance.think(msg, { projectId: project.id, client })
+          .catch(e => console.error(`[creative/brief] agent notify error:`, e.message));
+        agentNotified = true;
+      }
+    } catch (_) {}
+
+    await auditLog('brief_created', {
+      project_id: project.id,
+      type,
+      client,
+      agent,
+      created_by
+    });
+
+    res.json({
+      ok: true,
+      project_id: project.id,
+      assigned_to: agent,
+      workflow_status: workflowStatus.phase,
+      agent_notified: agentNotified,
+      brand_system: client === 'fif' ? FIF_BRAND_SYSTEM.quality_standard : null
+    });
+  } catch (err) {
+    console.error('[creative/brief]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/creative/brief/:id ──────────────────────────────────────────────
+router.get('/brief/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('projects')
+      .select('id, name, status, brief, created_at, updated_at')
+      .eq('id', id)
+      .single();
+
+    if (error) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const workflowStatus = data.brief?.workflow_status || {};
+    res.json({
+      ok: true,
+      project: {
+        id: data.id,
+        name: data.name,
+        status: data.status,
+        workflow_status: workflowStatus,
+        assigned_to: workflowStatus.assigned_to,
+        phase: workflowStatus.phase,
+        qcbot_approved: workflowStatus.qcbot_approved,
+        valentina_approved: workflowStatus.valentina_approved,
+        nkd_approved: workflowStatus.nkd_approved,
+        delivered_to_client: workflowStatus.delivered_to_client,
+        brief_summary: {
+          type: data.brief?.type,
+          client: data.brief?.client,
+          deadline_internal: data.brief?.deadline_internal
+        },
+        created_at: data.created_at,
+        updated_at: data.updated_at
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/creative/briefs ─────────────────────────────────────────────────
+// Listar todos los briefs activos con su workflow status
+router.get('/briefs', async (req, res) => {
+  try {
+    const { client, agent, phase } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+
+    const { data, error } = await supabase
+      .from('projects')
+      .select('id, name, status, brief, created_at, updated_at')
+      .eq('status', 'active')
+      .not('brief', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    let briefs = (data || []).filter(p => p.brief?.workflow_status);
+
+    // Filtros opcionales
+    if (client) briefs = briefs.filter(p => p.brief?.client === client);
+    if (agent) briefs = briefs.filter(p => p.brief?.workflow_status?.assigned_to === agent);
+    if (phase) briefs = briefs.filter(p => p.brief?.workflow_status?.phase === phase);
+
+    res.json({
+      ok: true,
+      count: briefs.length,
+      briefs: briefs.map(p => ({
+        id: p.id,
+        name: p.name,
+        type: p.brief?.type,
+        client: p.brief?.client,
+        phase: p.brief?.workflow_status?.phase,
+        assigned_to: p.brief?.workflow_status?.assigned_to,
+        deadline_internal: p.brief?.deadline_internal,
+        updated_at: p.updated_at
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/creative/review ────────────────────────────────────────────────
+// Registra revisión de QC-BOT o Valentina sobre un entregable
+// Body: { project_id, reviewer: 'qcbot'|'valentina'|'nkd', approved: bool, feedback? }
+router.post('/review', async (req, res) => {
+  try {
+    const { project_id, reviewer, approved, feedback } = req.body || {};
+
+    if (!project_id || !reviewer || approved === undefined) {
+      return res.status(400).json({ error: 'project_id, reviewer y approved son requeridos' });
+    }
+
+    const allowedReviewers = ['qcbot', 'valentina', 'nkd'];
+    if (!allowedReviewers.includes(reviewer)) {
+      return res.status(400).json({ error: `reviewer debe ser: ${allowedReviewers.join(', ')}` });
+    }
+
+    // Obtener el proyecto actual
+    const { data: project, error: fetchError } = await supabase
+      .from('projects')
+      .select('id, brief')
+      .eq('id', project_id)
+      .single();
+
+    if (fetchError) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+    const brief = project.brief || {};
+    const workflowStatus = brief.workflow_status || {};
+
+    // Actualizar el estado de revisión
+    const reviewKey = `${reviewer}_approved`;
+    const reviewTimestamp = `${reviewer}_reviewed_at`;
+    workflowStatus[reviewKey] = approved;
+    workflowStatus[reviewTimestamp] = new Date().toISOString();
+    if (feedback) workflowStatus[`${reviewer}_feedback`] = feedback;
+
+    // Determinar la nueva fase
+    if (!approved) {
+      workflowStatus.phase = `${reviewer}_rejected`;
+    } else if (reviewer === 'qcbot') {
+      workflowStatus.phase = 'pending_valentina';
+    } else if (reviewer === 'valentina') {
+      workflowStatus.phase = 'pending_nkd';
+    } else if (reviewer === 'nkd') {
+      workflowStatus.phase = 'nkd_approved';
+    }
+
+    brief.workflow_status = workflowStatus;
+
+    // Actualizar en Supabase
+    const { error: updateError } = await supabase
+      .from('projects')
+      .update({ brief, updated_at: new Date().toISOString() })
+      .eq('id', project_id);
+
+    if (updateError) return res.status(500).json({ error: updateError.message });
+
+    // Registrar en qc_checks si es QC-BOT
+    if (reviewer === 'qcbot') {
+      try {
+        await supabase.from('qc_checks').insert({
+          task_id: project_id,
+          check_type: 'creative_fif',
+          status: approved ? 'approved' : 'rejected',
+          qc_report: feedback || (approved ? '✅ APROBADO' : '❌ RECHAZADO'),
+          reviewed_at: new Date().toISOString()
+        });
+      } catch (_) {}
+    }
+
+    await auditLog('review_registered', {
+      project_id,
+      reviewer,
+      approved,
+      new_phase: workflowStatus.phase
+    });
+
+    res.json({
+      ok: true,
+      project_id,
+      reviewer,
+      approved,
+      new_phase: workflowStatus.phase,
+      next_step: approved
+        ? reviewer === 'nkd' ? 'Entregar al cliente' : `Enviar a ${reviewer === 'qcbot' ? 'Valentina' : 'NKD'}`
+        : `Devolver a ${workflowStatus.assigned_to} con feedback`
+    });
+  } catch (err) {
+    console.error('[creative/review]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/creative/parrilla ──────────────────────────────────────────────
+// Genera estrategia editorial mensual FIF usando NEXUS
+// Body: { month, eventData, registrationPhase?, priorityAudiences?, clientNotes? }
+router.post('/parrilla', async (req, res) => {
+  try {
+    if (!global.nexus?.generateParrillaFIF && !global.nexus?.think) {
+      return res.status(503).json({ error: 'NEXUS no inicializado' });
+    }
+
+    const {
+      month,
+      eventData,
+      registrationPhase,
+      priorityAudiences,
+      clientNotes
+    } = req.body || {};
+
+    if (!month) {
+      return res.status(400).json({ error: 'month es requerido (e.g. "Mayo 2026")' });
+    }
+
+    let plan;
+    if (global.nexus.generateParrillaFIF) {
+      plan = await global.nexus.generateParrillaFIF({
+        month, eventData, registrationPhase, priorityAudiences, clientNotes
+      });
+    } else {
+      // Fallback: usar think directamente
+      const prompt = `Genera el plan editorial mensual FIF para ${month}.
+Datos del evento: ${JSON.stringify(eventData || {})}
+Fase de registro: ${registrationPhase || 'No especificada'}
+Audiencias prioritarias: ${(priorityAudiences || []).join(', ')}
+Notas: ${clientNotes || 'Sin notas'}`;
+      plan = await global.nexus.think(prompt, { client: 'fif', month });
+    }
+
+    await auditLog('parrilla_generated', { month, client: 'fif' });
+
+    res.json({
+      ok: true,
+      month,
+      plan,
+      generated_at: new Date().toISOString(),
+      brand_system_reference: 'fif-brand-system.js',
+      delivery_deadline: `Día 20 del mes a claudia@centralinteractiva.com`
+    });
+  } catch (err) {
+    console.error('[creative/parrilla]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;

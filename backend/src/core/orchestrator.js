@@ -29,7 +29,7 @@ function getQCBot() {
   return agentInstances['qcbot'];
 }
 
-const ALL_SLUGS = ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto', 'qcbot'];
+const ALL_SLUGS = ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto', 'qcbot', 'nexus'];
 
 // Routing rules: which agent handles which topic keywords
 const ROUTING_RULES = [

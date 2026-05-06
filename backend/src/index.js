@@ -52,6 +52,7 @@ app.use('/api/meshy', require('./routes/meshy'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/axiom', require('./routes/axiom'));
 app.use('/api/qcbot', require('./routes/qcbot'));
+app.use('/api/creative', require('./routes/creative'));
 app.use('/api', require('./routes/unified'));
 app.use('/api', require('./routes/public-api'));   // /api/admin/keys + /api/v1/*
 app.use('/webhooks', require('./routes/webhooks'));
@@ -71,7 +72,7 @@ app.get('/', (req, res) => {
   res.json({
     name: 'Fractal Virtual Team v4.2',
     status: 'online',
-    agents: ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto', 'qcbot'],
+    agents: ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto', 'qcbot', 'nexus'],
     endpoints: {
       webhook_meta: 'POST /webhook/meta',
       webhook_twilio: 'POST /webhook/twilio',
@@ -245,7 +246,7 @@ server.listen(PORT, async () => {
     const { getAgent } = require('./core/orchestrator');
     const agentContext = require('./agents/agent-context');
     const agentNames = ['mariana', 'diana', 'carlos', 'alex', 'sofia', 'lucas',
-                        'diego', 'max', 'valentina', 'roberto', 'qcbot'];
+                        'diego', 'max', 'valentina', 'roberto', 'qcbot', 'nexus'];
     for (const name of agentNames) {
       try {
         const inst = getAgent(name);
@@ -259,9 +260,20 @@ server.listen(PORT, async () => {
         console.warn(`  ✗ ${name}: ${e.message}`);
       }
     }
-    console.log('🧠 FASE 8.5: 11 agentes globales con contexto de negocio');
+    // NEXUS también disponible como global.nexus (alias limpio)
+    if (global['nexus']) global.nexus = global['nexus'];
+    console.log('🧠 FASE 8.5: 12 agentes globales con contexto de negocio (incl. NEXUS)');
   } catch (err) {
     console.error('[Fase 8.5] context injection error:', err.message);
+  }
+
+  // ─── FASE 9: Departamento Creativo FIF ──────────────────────────────────────
+  try {
+    const { startParrillaFIFCrons } = require('./routines/parrilla-fif');
+    startParrillaFIFCrons();
+    console.log('✅ FASE 9: Departamento Creativo FIF activo (parrilla crons + /api/creative)');
+  } catch (err) {
+    console.warn('[Fase 9] init error (non-fatal):', err.message);
   }
 
   // Start response tracker reminder checker (cada 15 min)
@@ -274,7 +286,7 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Sistema listo — 11 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida) + FASE 6 (22 features + 6 routines) + VISION LAYER (Fase 6.5)\n`);
+  console.log(`\n✅ Sistema listo — 12 agentes activos + promise tracker + proactive scheduler + response tracker + intelligence engine (10 sistemas) + MEGAZORD (7 sistemas) + NEXUS-GUARDIAN + ATLAS (Guardian 24/7) + ORACLE (Inteligencia Compartida) + FASE 6 (22 features + 6 routines) + VISION LAYER (Fase 6.5) + FASE 9 (Departamento Creativo FIF)\n`);
 
   // Cleanup on shutdown
   process.on('SIGTERM', async () => {
