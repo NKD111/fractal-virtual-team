@@ -123,22 +123,29 @@ class AxiomAgent extends BaseAgent {
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [clients, projects, messages, events, promises, agentLogs] = await Promise.all([
-      supabase.from('clients').select('id, name, tier, whatsapp, phone, last_contacted_at, lifetime_value, quality_rating').limit(100),
-      supabase.from('projects').select('id, name, status, deadline, value_mxn, clients(id, name, tier)').not('status', 'in', '("completed","cancelled")').limit(80),
-      supabase.from('messages').select('id, conversation_id, role, content, created_at').gte('created_at', since7d).order('created_at', { ascending: false }).limit(200),
-      supabase.from('system_events').select('id, event_type, severity, service_key, details, started_at').gte('started_at', since24h).limit(100),
-      supabase.from('pending_promises').select('id, promise_text, execute_at, user_phone, status').eq('status', 'pending').lte('execute_at', new Date(Date.now() + 7 * 86400000).toISOString()).limit(50),
+    const [clients, projects, messages, events, promises, agentLogs] = await Promise.allSettled([
+      // Intentar clients primero, fallback a conversations si no existe
+      supabase.from('clients').select('id, name, tier, whatsapp, phone, last_contacted_at, lifetime_value, quality_rating').limit(100)
+        .then(r => r.error ? supabase.from('conversations').select('id, client_name, client_whatsapp, status, assigned_agent, last_message_at').limit(100) : r),
+      supabase.from('projects').select('id, client_name, client_whatsapp, project_type, status, budget_mxn, created_at').not('status', 'in', '("completed","cancelled","deleted")').limit(80),
+      // messages → fallback a conversations si tabla messages no existe
+      supabase.from('messages').select('id, conversation_id, role, content, created_at').gte('created_at', since7d).order('created_at', { ascending: false }).limit(200)
+        .then(r => r.error ? { data: [] } : r),
+      supabase.from('system_events').select('id, event_type, severity, service_key, details, started_at').gte('started_at', since24h).limit(100)
+        .then(r => r.error ? { data: [] } : r),
+      supabase.from('pending_promises').select('id, promise_text, execute_at, user_phone, status').eq('status', 'pending').lte('execute_at', new Date(Date.now() + 7 * 86400000).toISOString()).limit(50)
+        .then(r => r.error ? { data: [] } : r),
       supabase.from('agent_logs').select('id, agent_id, action, success, error_message, created_at').gte('created_at', since24h).limit(100)
+        .then(r => r.error ? { data: [] } : r)
     ]);
 
     return {
-      clients: clients.data || [],
-      projects: projects.data || [],
-      recent_messages: messages.data || [],
-      recent_events: events.data || [],
-      pending_promises: promises.data || [],
-      agent_logs: agentLogs.data || []
+      clients: (clients.status === 'fulfilled' ? clients.value?.data : null) || [],
+      projects: (projects.status === 'fulfilled' ? projects.value?.data : null) || [],
+      recent_messages: (messages.status === 'fulfilled' ? messages.value?.data : null) || [],
+      recent_events: (events.status === 'fulfilled' ? events.value?.data : null) || [],
+      agent_logs: (agentLogs.status === 'fulfilled' ? agentLogs.value?.data : null) || [],
+      pending_promises: (promises.status === 'fulfilled' ? promises.value?.data : null) || []
     };
   }
 
@@ -163,7 +170,13 @@ class AxiomAgent extends BaseAgent {
       agent_failure_rate_24h: this.calculateAgentFailureRate(context.agent_logs || [])
     };
 
+    const now = new Date();
+    const dayNames = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const timeContext = `Hoy es ${dayNames[now.getDay()]}, ${now.toLocaleDateString('es-MX')}. Hora CDMX: ${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}.`;
+    const hasData = compactContext.clients_count > 0 || compactContext.active_projects.length > 0 || compactContext.recent_messages_count > 0;
+
     const userMsg = `SCAN INPUT (run ${runId}):
+${timeContext}
 
 \`\`\`json
 ${JSON.stringify(compactContext, null, 2)}
@@ -172,7 +185,8 @@ ${JSON.stringify(compactContext, null, 2)}
 INSTRUCCIONES:
 - Aplica las heurísticas de tu prompt.
 - Devuelve un OBJETO JSON con la propiedad "opportunities" = array.
-- Máximo 10 oportunidades. Si NO hay datos suficientes para detectar nada real, devuelve { "opportunities": [] }.
+- ${hasData ? 'Máximo 10 oportunidades basadas en los datos.' : 'NO hay datos de clientes aún — genera 4-6 oportunidades heurísticas basadas en el contexto temporal (día de la semana, hora del día) y en las mejores prácticas para agencias creativas mexicanas en frío. Fractal MX necesita oportunidades de acción inmediata aunque no haya datos aún.'}
+- NUNCA devuelvas un array vacío. Siempre al menos 3 oportunidades.
 - NO incluyas markdown fences. NO incluyas texto explicativo antes ni después del JSON.
 - Cada opp debe tener exactamente estas claves:
   category, title, description, score (0-10 numeric), urgency (low|medium|high|critical),
