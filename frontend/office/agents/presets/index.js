@@ -95,8 +95,7 @@ export const AGENT_PRESETS = {
     accessory: 'visor',
     role: 'Opportunity Scanner',
     description: 'Bot autónomo — escanea oportunidades cada 6h',
-    is_bot: true,
-    placeholder: true
+    is_bot: true
   }
 };
 
