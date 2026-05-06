@@ -98,13 +98,16 @@ router.get('/report', async (req, res) => {
 
     // Últimas consultas del día para contexto
     const today = new Date().toISOString().split('T')[0];
-    const { data: todayQueries } = await supabase
-      .from('oracle_queries')
-      .select('agent_name, model_used, actual_cost, query_type, created_at')
-      .gte('created_at', today)
-      .order('created_at', { ascending: false })
-      .limit(20)
-      .catch(() => ({ data: [] }));
+    let todayQueries = [];
+    try {
+      const { data: qData } = await supabase
+        .from('oracle_queries')
+        .select('agent_name, model_used, actual_cost, query_type, created_at')
+        .gte('created_at', today)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      todayQueries = qData || [];
+    } catch (_) {}
 
     const totalCostToday = (todayQueries || []).reduce(
       (s, q) => s + Number(q.actual_cost || 0), 0
