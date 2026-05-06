@@ -5,6 +5,7 @@ const cron = require('node-cron');
 const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
 const DailyStandup = require('./daily-standup');
+const axiomScan = require('./axiom-scan');
 
 const TZ = { timezone: 'America/Mexico_City' };
 
@@ -40,6 +41,9 @@ class RoutineManager {
     // Daily KPIs — 11:55 PM
     this._tasks.push(cron.schedule('55 23 * * *', () => this._runDailyKPIs().catch(e => console.error('kpis:', e.message)), TZ));
 
+    
+    // AXIOM background scanner (every 6h CDMX)
+    try { axiomScan.start(); console.log('  ✓ AXIOM scanner registered (every 6h CDMX)'); } catch(e) { console.error('axiom-scan start err:', e.message); }
     this._initialized = true;
     console.log(`✅ ROUTINES: ${this._tasks.length} schedules activos`);
   }

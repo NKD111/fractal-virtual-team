@@ -175,8 +175,33 @@ Tono: profesional pero cercano. Máximo 5 puntos clave. Emojis con moderación.`
 
     try {
       const twRes = await sendTwilioMessage(phone, message);
-      diag.channels.twilio = { ok: true, sid: twRes?.sid, status: twRes?.status };
-      console.log('  ✓ Twilio:', diag.channels.twilio);
+      const sid = twRes?.sid;
+      // Poll real delivery status for up to 10s — initial 'queued' doesn't mean
+      // WhatsApp delivered (sandbox opt-in, bad format, blocked, etc). Avoids
+      // silent-success false positive that hid the +52 vs +521 bug for weeks.
+      let realStatus = twRes?.status;
+      let errorCode = null;
+      let errorMessage = null;
+      if (sid && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+        const twilio = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 1000));
+          try {
+            const m = await twilio.messages(sid).fetch();
+            realStatus = m.status;
+            errorCode = m.errorCode || null;
+            errorMessage = m.errorMessage || null;
+            if (['delivered', 'read', 'failed', 'undelivered'].includes(realStatus)) break;
+          } catch (_) {}
+        }
+      }
+      const succeeded = ['delivered', 'read', 'sent'].includes(realStatus);
+      diag.channels.twilio = { ok: succeeded, sid, status: realStatus, errorCode, errorMessage };
+      if (succeeded) {
+        console.log('  ✓ Twilio:', diag.channels.twilio);
+      } else {
+        console.error('  ✗ Twilio (real status):', JSON.stringify(diag.channels.twilio).slice(0, 300));
+      }
     } catch (twErr) {
       diag.channels.twilio = {
         ok: false,
@@ -184,7 +209,7 @@ Tono: profesional pero cercano. Máximo 5 puntos clave. Emojis con moderación.`
         code: twErr.code || null,
         details: twErr.response?.data || null
       };
-      console.error('  ✗ Twilio:', JSON.stringify(diag.channels.twilio).slice(0, 300));
+      console.error('  ✗ Twilio (threw):', JSON.stringify(diag.channels.twilio).slice(0, 300));
     }
 
     const sent = diag.channels.meta?.ok || diag.channels.twilio?.ok;
