@@ -3,6 +3,7 @@
 
 const BaseAgent = require('../core/BaseAgent');
 const CARLOS_PROMPT = require('../prompts/carlos.prompts');
+const higgsfield = require('../core/higgsfield-client');
 
 class CarlosAgent extends BaseAgent {
   constructor() {
@@ -150,6 +151,57 @@ Recuerda: son iguales en jerarquía, el debate es constructivo, buscan lo mejor 
 Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
 
     return this.think(debatePrompt);
+  }
+
+  // ─── HIGGSFIELD IMAGE GENERATION (Fase B) ─────────────────────────────
+  /**
+   * Genera imagen FIF con Higgsfield Soul V2 (primary) o fallback a descripción.
+   * @param {string} prompt
+   * @param {object} opts  { aspectRatio, quality, briefId }
+   * @returns {{ resultUrl, jobId, source, error? }}
+   */
+  async generateFIFImage(prompt, opts = {}) {
+    console.log(`🎨 CARLOS: generando imagen FIF con Higgsfield — "${prompt.substring(0, 60)}..."`);
+    try {
+      const result = await higgsfield.generateImage(prompt, {
+        aspectRatio: opts.aspectRatio || '3:4',
+        quality: opts.quality || '2k'
+      });
+      console.log(`✅ CARLOS: imagen generada → ${result.resultUrl}`);
+
+      // Save to Supabase assets table if briefId provided
+      if (opts.briefId) {
+        try {
+          const { supabase } = require('../core/supabase');
+          await supabase.from('assets').insert({
+            project_id: opts.projectId || null,
+            brief_id: opts.briefId,
+            type: 'image',
+            url: result.resultUrl,
+            source: 'higgsfield',
+            model: result.model,
+            prompt,
+            metadata: { job_id: result.jobId, params: result.params },
+            created_by: 'carlos',
+            status: 'ready'
+          });
+        } catch (dbErr) {
+          console.warn('[Carlos] asset save error (non-fatal):', dbErr.message);
+        }
+      }
+
+      return { ...result, source: 'higgsfield' };
+    } catch (err) {
+      console.warn(`⚠️ CARLOS: Higgsfield error — ${err.message}. Describiendo imagen sin generar.`);
+      // Fallback: return a description so the workflow doesn't break
+      return {
+        source: 'description_fallback',
+        error: err.message,
+        prompt,
+        resultUrl: null,
+        description: `[CARLOS] Imagen lista para generar: ${prompt}`
+      };
+    }
   }
 
   // ─── VISION (Fase 6.5) ─────────────────────────────────────────────────

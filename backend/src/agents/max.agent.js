@@ -3,6 +3,7 @@
 
 const BaseAgent = require('../core/BaseAgent');
 const MAX_PROMPT = require('../prompts/max.prompts');
+const higgsfield = require('../core/higgsfield-client');
 
 class MaxAgent extends BaseAgent {
   constructor() {
@@ -91,6 +92,56 @@ Como editor, evalúa:
 Da tu evaluación honesta. Si el material es insuficiente, dilo claro.`;
 
     return this.think(evalPrompt);
+  }
+
+  // ─── HIGGSFIELD VIDEO GENERATION (Fase B) ──────────────────────────────
+  /**
+   * Genera video FIF con Higgsfield Seedance 2.0 (primary).
+   * @param {string} prompt
+   * @param {object} opts  { aspectRatio, duration, resolution, briefId, projectId }
+   * @returns {{ resultUrl, jobId, source, error? }}
+   */
+  async generateFIFVideo(prompt, opts = {}) {
+    console.log(`🎬 MAX: generando video FIF con Higgsfield — "${prompt.substring(0, 60)}..."`);
+    try {
+      const result = await higgsfield.generateVideo(prompt, {
+        aspectRatio: opts.aspectRatio || '9:16',
+        duration: opts.duration || 10,
+        resolution: opts.resolution || '720p'
+      });
+      console.log(`✅ MAX: video generado → ${result.resultUrl}`);
+
+      // Save to Supabase assets table if briefId provided
+      if (opts.briefId) {
+        try {
+          const { supabase } = require('../core/supabase');
+          await supabase.from('assets').insert({
+            project_id: opts.projectId || null,
+            brief_id: opts.briefId,
+            type: 'video',
+            url: result.resultUrl,
+            source: 'higgsfield',
+            model: result.model,
+            prompt,
+            metadata: { job_id: result.jobId, params: result.params },
+            created_by: 'max',
+            status: 'ready'
+          });
+        } catch (dbErr) {
+          console.warn('[Max] asset save error (non-fatal):', dbErr.message);
+        }
+      }
+
+      return { ...result, source: 'higgsfield' };
+    } catch (err) {
+      console.warn(`⚠️ MAX: Higgsfield error — ${err.message}`);
+      return {
+        source: 'error',
+        error: err.message,
+        prompt,
+        resultUrl: null
+      };
+    }
   }
 
   /**
