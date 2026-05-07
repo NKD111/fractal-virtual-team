@@ -52,9 +52,20 @@ function normalizeText(str) {
 function routeMessage(text) {
   const normalized = normalizeText(text);
 
-  // Always route Fermín directly to Mariana first
+  // Match keyword: short keywords (≤3 chars) require word-boundary to avoid false positives
+  // e.g. "iva" in "creativa", "sat" in "saturado", "rfc" in "refactoring"
+  function kwMatch(kw) {
+    const normKw = normalizeText(kw);
+    if (normKw.length <= 3) {
+      // Word boundary: keyword must be surrounded by non-word chars or at string edge
+      const re = new RegExp(`(?:^|[^a-z])${normKw}(?:[^a-z]|$)`);
+      return re.test(normalized);
+    }
+    return normalized.includes(normKw);
+  }
+
   for (const rule of ROUTING_RULES) {
-    if (rule.keywords.some(kw => normalized.includes(normalizeText(kw)))) {
+    if (rule.keywords.some(kwMatch)) {
       return rule.agent;
     }
   }
