@@ -15,6 +15,12 @@ const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
 const { fase4_subirADrive, fase7_llenarTablasYEntregar } = require('../services/google-drive-delivery');
 
+// FASE 2 — Agentes de calidad avanzados
+const { auditConsistency } = require('../agents/consistency-auditor');
+const { simulateClientReaction } = require('../agents/client-simulator');
+const { reviewEmotionalImpact } = require('../agents/emotional-reviewer');
+const { validateCTR, isCTRApplicable } = require('../agents/ctr-validator');
+
 const TZ = { timezone: 'America/Mexico_City' };
 
 function getMesActual() {
@@ -397,45 +403,166 @@ async function fase4_produccion() {
   }
 }
 
-// ─── FASE 5: QA — Triggered cuando arte llega (llamado externamente) ─────────
+// ─── FASE 5: QA — Pipeline de 4 capas (FASE 2 Upgrade v4.0) ─────────────────
+// Capa 1: QC-BOT         → specs técnicas básicas
+// Capa 2: Consistency    → coherencia de marca vs artes anteriores
+// Capa 3: Emotional      → impacto emocional en el público objetivo
+// Capa 4: Client Sim     → probabilidad de aprobación del cliente real
+// Capa 5: VALENTINA      → dirección de arte (último filtro humano-simulado)
 async function fase5_qa(brief_id) {
-  console.log(`🔍 QA: brief_id=${brief_id}`);
+  console.log(`🔍 QA (4 capas): brief_id=${brief_id}`);
+
+  const qaLog = [];
+  const logQA = (capa, status, detail) => {
+    const entry = `[Capa ${capa}] ${status}: ${detail}`;
+    qaLog.push(entry);
+    console.log(`  ${entry}`);
+  };
 
   try {
     const { data: brief } = await supabase
       .from('parrilla_briefs').select('*').eq('id', brief_id).single();
     if (!brief) throw new Error('Brief no encontrado');
 
-    // QC básico: verificar que hay URL de arte
+    // ── CAPA 0: Verificación básica ───────────────────────────────────────────
     if (!brief.url_arte_final) {
       await updateBriefStatus(brief_id, 'rework', { notas_revision: 'Sin URL de arte final' });
-      return { passed: false, reason: 'Sin arte' };
+      return { passed: false, reason: 'Sin arte', qa_log: qaLog };
     }
 
-    // Valentina review si está disponible
-    if (global.valentina?.reviewArt) {
-      const review = await global.valentina.reviewArt({
-        image_url: brief.url_arte_final,
-        brief,
-        standard: '¿Esto justifica $1,000 USD/mes?'
-      });
-
-      if (review.approved) {
-        await updateBriefStatus(brief_id, 'aprobado_qa');
-        return { passed: true };
-      } else {
-        await updateBriefStatus(brief_id, 'rework', { notas_revision: review.notes });
-        return { passed: false, reason: review.notes };
+    // ── CAPA 1: QC-BOT — specs técnicas ──────────────────────────────────────
+    let qcPassed = true;
+    if (global.qcBot?.reviewDeliverable) {
+      try {
+        const qc = await global.qcBot.reviewDeliverable({
+          deliverableType: brief.tipo_pieza || 'branding',
+          content: `URL: ${brief.url_arte_final}\nBrief: ${brief.concepto}\nHeadline: ${brief.headline}`
+        });
+        qcPassed = qc.passed !== false;
+        logQA(1, qcPassed ? '✅' : '❌', `QC-BOT score: ${qc.score}/10`);
+        if (!qcPassed) {
+          const issues = (qc.issues || []).join('; ');
+          await updateBriefStatus(brief_id, 'rework', { notas_revision: `[QC] ${issues}` });
+          return { passed: false, reason: 'QC specs', issues: qc.issues, qa_log: qaLog };
+        }
+      } catch (e) {
+        logQA(1, '⚠️', `QC-BOT error (skip): ${e.message}`);
       }
+    } else {
+      logQA(1, '⏭️', 'QC-BOT no disponible — skip');
     }
 
-    // Sin Valentina: auto-aprobar si hay arte
-    await updateBriefStatus(brief_id, 'aprobado_qa');
-    return { passed: true };
+    // ── CAPA 2: CONSISTENCY AUDITOR — coherencia de marca ─────────────────────
+    try {
+      const consistency = await auditConsistency(brief, 'FIF');
+      logQA(2, consistency.score >= 70 ? '✅' : '❌',
+        `Consistency score: ${consistency.score}/100 — ${consistency.recommendation}`);
+
+      if (consistency.score < 70) {
+        const issues = (consistency.issues || []).slice(0, 3).join('; ');
+        await updateBriefStatus(brief_id, 'rework', {
+          notas_revision: `[CONSISTENCY] ${issues} | ${consistency.details || ''}`
+        });
+        return { passed: false, reason: 'Inconsistencia de marca', issues: consistency.issues, qa_log: qaLog };
+      }
+    } catch (e) {
+      logQA(2, '⚠️', `Consistency error (skip): ${e.message}`);
+    }
+
+    // ── CAPA 3: EMOTIONAL IMPACT REVIEWER ────────────────────────────────────
+    try {
+      const emotional = await reviewEmotionalImpact(brief, 'FIF');
+      logQA(3, emotional.score >= 6 ? '✅' : '❌',
+        `Emotional score: ${emotional.score}/10 — ${emotional.recommendation}`);
+
+      if (emotional.score < 6) {
+        await updateBriefStatus(brief_id, 'rework', {
+          notas_revision: `[EMOTIONAL] ${emotional.notes} | Fix: ${emotional.quick_fix}`
+        });
+        return { passed: false, reason: 'Impacto emocional insuficiente', notes: emotional.notes, qa_log: qaLog };
+      }
+    } catch (e) {
+      logQA(3, '⚠️', `Emotional error (skip): ${e.message}`);
+    }
+
+    // ── CAPA 4: CTR VALIDATOR — solo para banners y piezas de conversión ──────
+    if (isCTRApplicable(brief.tipo_pieza)) {
+      try {
+        const ctr = await validateCTR(brief, 'instagram');
+        logQA(4, ctr.score >= 50 ? '✅' : '❌',
+          `CTR score: ${ctr.score}/100 — CTR estimado: ${ctr.ctr_estimate}`);
+
+        if (ctr.score < 50) {
+          await updateBriefStatus(brief_id, 'rework', {
+            notas_revision: `[CTR] ${(ctr.issues || []).join('; ')} | Fix: ${ctr.quick_fix}`
+          });
+          return { passed: false, reason: 'CTR bajo', issues: ctr.issues, qa_log: qaLog };
+        }
+      } catch (e) {
+        logQA(4, '⚠️', `CTR error (skip): ${e.message}`);
+      }
+    } else {
+      logQA(4, '⏭️', `CTR skip — tipo_pieza "${brief.tipo_pieza}" no aplica`);
+    }
+
+    // ── CAPA 5: CLIENT EXPECTATION SIMULATOR ─────────────────────────────────
+    try {
+      const simulation = await simulateClientReaction(brief, 'luis_tendero_fif');
+      logQA(5, simulation.approval_probability >= 60 ? '✅' : '❌',
+        `Prob. aprobación: ${simulation.approval_probability}% — "${simulation.first_reaction}"`);
+
+      if (simulation.approval_probability < 60) {
+        await updateBriefStatus(brief_id, 'rework', {
+          notas_revision: `[SIMULATOR] Prob. ${simulation.approval_probability}% | ` +
+            `Cambios: ${(simulation.requested_changes || []).slice(0, 2).join('; ')} | ` +
+            `Fix: ${simulation.quick_fix}`
+        });
+        return {
+          passed: false,
+          reason: 'Probabilidad de aprobación baja',
+          simulation,
+          qa_log: qaLog
+        };
+      }
+    } catch (e) {
+      logQA(5, '⚠️', `Simulator error (skip): ${e.message}`);
+    }
+
+    // ── CAPA 6: VALENTINA — dirección de arte (último filtro) ─────────────────
+    if (global.valentina?.reviewArt) {
+      try {
+        const valentina = await global.valentina.reviewArt({
+          image_url: brief.url_arte_final,
+          brief,
+          standard: '¿Esto justifica $1,000 USD/mes?'
+        });
+        logQA(6, valentina.approved ? '✅' : '❌',
+          `Valentina: ${valentina.approved ? 'APROBADO' : 'RECHAZADO'} — ${valentina.notes || ''}`);
+
+        if (!valentina.approved) {
+          await updateBriefStatus(brief_id, 'rework', {
+            notas_revision: `[VALENTINA] ${valentina.notes}`
+          });
+          return { passed: false, reason: 'Rechazado por Valentina', notes: valentina.notes, qa_log: qaLog };
+        }
+      } catch (e) {
+        logQA(6, '⚠️', `Valentina error (skip): ${e.message}`);
+      }
+    } else {
+      logQA(6, '⏭️', 'Valentina no disponible — auto-aprobando');
+    }
+
+    // ── TODAS LAS CAPAS PASADAS ───────────────────────────────────────────────
+    await updateBriefStatus(brief_id, 'aprobado_qa', {
+      notas_revision: `QA 6 capas: ${qaLog.join(' | ')}`
+    });
+
+    console.log(`✅ QA completo (6 capas): brief_id=${brief_id} APROBADO`);
+    return { passed: true, qa_log: qaLog };
 
   } catch (err) {
     console.error('❌ Fase 5 QA error:', err.message);
-    return { passed: false, error: err.message };
+    return { passed: false, error: err.message, qa_log: qaLog };
   }
 }
 
