@@ -17,10 +17,21 @@
 
 'use strict';
 
-const { chat }        = require('./anthropic');
-const memoryEngine    = require('./memory-engine');
-const { notifyNeiky } = require('./whatsapp');
-const { supabase }    = require('./supabase');
+const { chat }          = require('./anthropic');
+const { MODELS }        = require('./model-routing');  // UPGRADE 2: routing por nivel
+const memoryEngine      = require('./memory-engine');
+const { notifyNeiky }   = require('./whatsapp');
+const { supabase }      = require('./supabase');
+
+// UPGRADE 2: mapa de modelo por nivel de autoridad
+// Nivel 1 (autónomo)  → Sonnet — suficiente para decisiones operativas
+// Nivel 2 (propone)   → Opus   — decisión estratégica con implicaciones de negocio
+// Nivel 3 (escala)    → Opus   — siempre máxima inteligencia cuando involucra a NKD
+const NIVEL_MODELS = {
+  1: MODELS.SONNET,
+  2: MODELS.OPUS,
+  3: MODELS.OPUS
+};
 
 // ── Lazy-load obsidian-sync (no crash si no está en Railway) ──────────────────
 let obsidianSync = null;
@@ -177,12 +188,15 @@ Responde SOLO en JSON válido, sin markdown, sin explicaciones fuera del JSON:
 
   let decision;
   try {
+    // UPGRADE 2: nivel 1 → Sonnet (ahorro ~40%), nivel 2+ → Opus
+    const modelToUse = NIVEL_MODELS[nivelFinal] || MODELS.SONNET;
     const response = await chat({
-      model: 'claude-opus-4-7',
+      model: modelToUse,
       system,
       messages: [{ role: 'user', content: promptBody }],
       maxTokens: 800
     });
+    console.log(`[ORACLE] modelo usado: ${modelToUse} (nivel ${nivelFinal})`)
 
     const raw = (response.content || '').trim()
       .replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();

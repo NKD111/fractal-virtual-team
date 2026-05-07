@@ -240,13 +240,125 @@ function getModel(agente, tipo_tarea) {
   return MODEL_ROUTING.sonnet.model;
 }
 
+// ─── UPGRADE 2: smartCall + classifyTask ─────────────────────────────────────
+// Mapa de tareas a tier de modelo — actualizar cuando se añadan nuevas tareas
+
+const TASK_MODEL_MAP = {
+  // HAIKU — validaciones mecánicas, formato, conteos
+  log:                      MODELS.HAIKU,
+  notification:             MODELS.HAIKU,
+  status_check:             MODELS.HAIKU,
+  format_conversion:        MODELS.HAIKU,
+  data_extraction:          MODELS.HAIKU,
+  simple_validation:        MODELS.HAIKU,
+  count:                    MODELS.HAIKU,
+  sort:                     MODELS.HAIKU,
+  cron_notification:        MODELS.HAIKU,
+  audit_log:                MODELS.HAIKU,
+  standup_message:          MODELS.HAIKU,
+  qa_consistency:           MODELS.HAIKU,   // binary brand check
+  qa_ctr:                   MODELS.HAIKU,   // numeric score check
+
+  // SONNET — producción creativa y análisis operativo
+  copy_generation:          MODELS.SONNET,
+  brief_translation:        MODELS.SONNET,
+  image_prompt:             MODELS.SONNET,
+  qa_emotional:             MODELS.SONNET,  // needs nuance
+  client_simulation:        MODELS.SONNET,  // needs nuance
+  content_script:           MODELS.SONNET,
+  prospect_analysis:        MODELS.SONNET,
+  report_generation:        MODELS.SONNET,
+  oracle_nivel_1:           MODELS.SONNET,  // autónomo — sonnet es suficiente
+  oracle_arte_rechazado:    MODELS.SONNET,
+  oracle_brief_vago:        MODELS.SONNET,
+  oracle_error_sistema:     MODELS.SONNET,
+  oracle_qa_loop:           MODELS.SONNET,
+
+  // OPUS — solo estratégico/crítico/NKD-involved
+  oracle_weekly_council:    MODELS.OPUS,
+  oracle_monthly_review:    MODELS.OPUS,
+  oracle_auto_improvement:  MODELS.OPUS,
+  oracle_nivel_2:           MODELS.OPUS,    // propone a NKD
+  oracle_nivel_3:           MODELS.OPUS,    // siempre escala
+  oracle_strategic:         MODELS.OPUS,
+  campaign_arc_planning:    MODELS.OPUS,
+};
+
+/**
+ * Clasifica una tarea por nombre y devuelve el modelo óptimo
+ * @param {string} taskName
+ * @returns {string} Model ID
+ */
+function classifyTask(taskName) {
+  if (!taskName) return MODELS.SONNET;
+
+  // Exact match first
+  if (TASK_MODEL_MAP[taskName]) return TASK_MODEL_MAP[taskName];
+
+  // Prefix/substring match
+  const lower = taskName.toLowerCase();
+  if (lower.startsWith('oracle_nivel_1') || lower.includes('arte_rechazado') || lower.includes('brief_vago') || lower.includes('error_sistema')) return MODELS.SONNET;
+  if (lower.startsWith('oracle_nivel_') || lower.includes('oracle_weekly') || lower.includes('oracle_monthly')) return MODELS.OPUS;
+  if (lower.startsWith('log') || lower.includes('notification') || lower.includes('status_check')) return MODELS.HAIKU;
+
+  return MODELS.SONNET; // default seguro
+}
+
+/**
+ * smartCall — wrapper que elige modelo automáticamente y trackea costo
+ * Reemplaza llamadas directas a claude API cuando se quiere routing automático
+ *
+ * @param {string} taskName - Nombre de la tarea (ver TASK_MODEL_MAP)
+ * @param {Object} callParams - Params para chat() — system, messages, maxTokens
+ * @param {Object} opts - Opciones adicionales: forceModel, agente, cliente
+ * @returns {Promise<{content, model_used, cost_usd, duration_ms}>}
+ */
+async function smartCall(taskName, callParams, opts = {}) {
+  const { chat } = require('./anthropic'); // lazy require para evitar circular
+  const { logCost } = require('./telemetry');
+
+  const model = opts.forceModel || classifyTask(taskName);
+  const start = Date.now();
+
+  const result = await chat({
+    ...callParams,
+    model
+  });
+
+  const duration = Date.now() - start;
+  const cost = estimateCost({
+    model,
+    inputTokens: result.inputTokens || 0,
+    outputTokens: result.outputTokens || 0
+  });
+
+  // Log en background — nunca bloquea el flujo
+  logCost({
+    provider: 'anthropic',
+    endpoint: 'smartCall',
+    model,
+    input_tokens: result.inputTokens || 0,
+    output_tokens: result.outputTokens || 0,
+    task_id: taskName,
+    agent: opts.agente || null,
+    context: { duration_ms: duration, task: taskName, cliente: opts.cliente }
+  }).catch(() => {});
+
+  console.log(`[smartCall] ${taskName} → ${model.split('-').slice(-2).join('-')} → $${cost.toFixed(5)} → ${duration}ms`);
+
+  return { ...result, model_used: model, cost_usd: cost, duration_ms: duration };
+}
+
 module.exports = {
   MODELS,
   ROUTING_RULES,
   AGENT_MODELS,
   MODEL_ROUTING,
+  TASK_MODEL_MAP,
   selectModel,
   getModel,
+  classifyTask,
+  smartCall,
   requiresAdaptiveThinking,
   buildModelConfig,
   estimateCost

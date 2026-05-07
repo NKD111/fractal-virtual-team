@@ -19,6 +19,10 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// UPGRADE 3: Circuit breaker para Higgsfield
+// Si falla 3 veces consecutivas → OPEN, usa fallback textual
+const { breakers } = require('./circuit-breaker');
+
 const execFileAsync = promisify(execFile);
 
 // ─── Binary resolution ─────────────────────────────────────────────────────────
@@ -276,24 +280,47 @@ async function generateImageWithFallback(prompt, opts = {}) {
     return generateImage(prompt, { model: forceModel, aspectRatio, quality });
   }
 
-  // 1. GPT Image 2 (calidad máxima)
-  try {
-    const result = await generateImage(prompt, {
-      model: MODELS.images.primary,
-      aspectRatio: primaryRatio,
-      quality
-    });
-    return { ...result, model: MODELS.images.primary };
-  } catch (err) {
-    console.warn(`[Higgsfield] GPT Image 2 falló: ${err.message} — usando Nano Banana 2`);
-  }
+  // UPGRADE 3: Circuit breaker envuelve todos los intentos de imagen
+  // OPEN → fallback textual inmediato (no esperar timeouts)
+  return breakers.higgsfield.execute(
+    // ── Intento principal: GPT Image 2 → Nano Banana 2 ───────────────────────
+    async () => {
+      // 1. GPT Image 2 (calidad máxima)
+      try {
+        const result = await generateImage(prompt, {
+          model: MODELS.images.primary,
+          aspectRatio: primaryRatio,
+          quality
+        });
+        return { ...result, model: MODELS.images.primary };
+      } catch (err) {
+        console.warn(`[Higgsfield] GPT Image 2 falló: ${err.message} — probando Nano Banana 2`);
+      }
 
-  // 2. Nano Banana 2 (soporta 4:5 nativo)
-  return generateImage(prompt, {
-    model: MODELS.images.fallback,
-    aspectRatio, // usar ratio original — NB2 lo soporta
-    quality
-  });
+      // 2. Nano Banana 2 (soporta 4:5 nativo)
+      const result = await generateImage(prompt, {
+        model: MODELS.images.fallback,
+        aspectRatio,
+        quality
+      });
+      return { ...result, model: MODELS.images.fallback };
+    },
+
+    // ── Fallback final: descripción textual (pipeline continúa) ──────────────
+    async () => {
+      console.warn('[Higgsfield] circuit OPEN — retornando arte en descripción textual');
+      return {
+        jobId:      null,
+        resultUrl:  null,
+        model:      'text_fallback',
+        fallback:   true,
+        description: `ARTE PENDIENTE — Higgsfield no disponible.\n` +
+                     `Prompt para producción manual: ${prompt.slice(0, 300)}\n` +
+                     `Specs: ${aspectRatio}, ${quality}`,
+        message: 'Higgsfield temporalmente no disponible. Arte descrito para producción manual.'
+      };
+    }
+  );
 }
 
 /**

@@ -7,7 +7,9 @@ const { chat } = require('../core/anthropic');
 const { supabase } = require('../core/supabase');
 const contextLoader = require('../core/context-loader');
 
-const MODEL = 'claude-sonnet-4-6';
+// UPGRADE 2: Haiku para validación binaria de marca (67% más barato que Sonnet)
+// Brand check es determinístico con reglas fijas — Haiku es suficiente
+const MODEL = 'claude-haiku-4-5';
 
 /**
  * Obtiene los últimos N artes aprobados de un cliente.

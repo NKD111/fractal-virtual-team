@@ -261,4 +261,46 @@ router.get('/business-os', async (req, res) => {
   }
 });
 
+// ── GET /api/dashboard/circuit-breakers ──────────────────────────────────────
+// UPGRADE 3: Estado en tiempo real de todos los circuit breakers
+// Muestra qué servicios están caídos, cuántos fallos tienen y error rate
+router.get('/circuit-breakers', (req, res) => {
+  try {
+    const { breakers } = require('../core/circuit-breaker');
+    const status = Object.entries(breakers).reduce((acc, [key, cb]) => {
+      acc[key] = cb.getStatus();
+      return acc;
+    }, {});
+
+    const openCount = Object.values(status).filter(s => s.state === 'OPEN').length;
+    const degraded  = openCount > 0;
+
+    res.json({
+      success:        true,
+      timestamp:      new Date().toISOString(),
+      sistema_status: degraded ? 'DEGRADADO' : 'OPERACIONAL',
+      servicios_caidos: openCount,
+      breakers:       status
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /api/dashboard/circuit-breakers/:name/reset ─────────────────────────
+// Permite reset manual de un circuito específico desde el dashboard
+router.post('/circuit-breakers/:name/reset', (req, res) => {
+  try {
+    const { breakers } = require('../core/circuit-breaker');
+    const { name } = req.params;
+    if (!breakers[name]) {
+      return res.status(404).json({ error: `Circuit breaker '${name}' no encontrado` });
+    }
+    breakers[name].reset();
+    res.json({ success: true, message: `Circuit breaker '${name}' reseteado`, status: breakers[name].getStatus() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;
