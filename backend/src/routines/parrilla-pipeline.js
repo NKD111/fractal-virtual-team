@@ -23,6 +23,16 @@ const { validateCTR, isCTRApplicable } = require('../agents/ctr-validator');
 
 const { decideArteRechazado } = require('../core/oracle-decision');
 
+// UPGRADE 1: Response caching + timeout helper
+const { cachedQACall } = require('../core/claude-cache');
+
+/** Promesa que rechaza después de `ms` milisegundos — usada en Promise.race */
+function timeoutPromise(ms, name) {
+  return new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Timeout: ${name} (${ms}ms)`)), ms)
+  );
+}
+
 const TZ = { timezone: 'America/Mexico_City' };
 
 function getMesActual() {
@@ -628,6 +638,205 @@ async function fase5_qa(brief_id) {
   }
 }
 
+// ─── FASE 5 TURBO: QA paralelo — capas 2-5 simultáneas ──────────────────────
+// UPGRADE 1: Reduce latencia de ~39s → <8s
+//
+// Estructura:
+//   Capa 1 (QC-BOT)    → secuencial PRE (falla rápido si specs no pasan)
+//   Capas 2-5          → PARALELAS con timeout 8s individual
+//   Capa 6 (Valentina) → secuencial POST (solo si todo lo anterior pasó)
+//
+// Si una capa hace timeout → fail open (skip, no bloquear)
+// Si 2+ capas fallan      → rework, instrucciones via ORACLE
+// Si todas pasan          → aprobado_qa
+async function fase5_qa_turbo(brief_id) {
+  const startTime = Date.now();
+  console.log(`⚡ QA TURBO (paralelo): brief_id=${brief_id}`);
+
+  const qaLog = [];
+  const logQA = (capa, status, detail) => {
+    const entry = `[Capa ${capa}] ${status}: ${detail}`;
+    qaLog.push(entry);
+    console.log(`  ${entry}`);
+  };
+
+  const QA_TIMEOUT_MS = 8000;
+
+  try {
+    const { data: brief } = await supabase
+      .from('parrilla_briefs').select('*').eq('id', brief_id).single();
+    if (!brief) throw new Error('Brief no encontrado');
+
+    if (!brief.url_arte_final) {
+      await updateBriefStatus(brief_id, 'rework', { notas_revision: 'Sin URL de arte final' });
+      return { passed: false, reason: 'Sin arte', qa_log: qaLog };
+    }
+
+    // ── CAPA 1: QC-BOT — secuencial pre-guard ────────────────────────────────
+    if (global.qcBot?.reviewDeliverable) {
+      try {
+        const qc = await Promise.race([
+          global.qcBot.reviewDeliverable({
+            deliverableType: brief.tipo_pieza || 'branding',
+            content: `URL: ${brief.url_arte_final}\nBrief: ${brief.concepto}\nHeadline: ${brief.headline}`
+          }),
+          timeoutPromise(QA_TIMEOUT_MS, 'qcbot')
+        ]);
+        logQA(1, qc.passed !== false ? '✅' : '❌', `QC-BOT score: ${qc.score}/10`);
+        if (qc.passed === false) {
+          const issues = (qc.issues || []).join('; ');
+          await updateBriefStatus(brief_id, 'rework', { notas_revision: `[QC] ${issues}` });
+          return { passed: false, reason: 'QC specs', issues: qc.issues, qa_log: qaLog };
+        }
+      } catch (e) {
+        logQA(1, '⚠️', `QC-BOT skip: ${e.message}`);
+      }
+    } else {
+      logQA(1, '⏭️', 'QC-BOT no disponible');
+    }
+
+    // ── CAPAS 2-5: PARALELAS con cache + timeout ──────────────────────────────
+    console.log(`  ⚡ Lanzando capas 2-5 en paralelo (timeout: ${QA_TIMEOUT_MS}ms)...`);
+    const parallelStart = Date.now();
+
+    const [r_consistency, r_emotional, r_ctr, r_simulation] = await Promise.allSettled([
+
+      // Capa 2: Consistency — con cache (mismo arte = mismo resultado)
+      Promise.race([
+        cachedQACall('consistency', brief, () => auditConsistency(brief, 'FIF')),
+        timeoutPromise(QA_TIMEOUT_MS, 'consistency')
+      ]),
+
+      // Capa 3: Emotional — sin cache (nuance — puede variar)
+      Promise.race([
+        reviewEmotionalImpact(brief, 'FIF'),
+        timeoutPromise(QA_TIMEOUT_MS, 'emotional')
+      ]),
+
+      // Capa 4: CTR — con cache, solo si aplica
+      isCTRApplicable(brief.tipo_pieza)
+        ? Promise.race([
+            cachedQACall('ctr', brief, () => validateCTR(brief, 'instagram')),
+            timeoutPromise(QA_TIMEOUT_MS, 'ctr')
+          ])
+        : Promise.resolve({ skipped: true, reason: `tipo_pieza ${brief.tipo_pieza} no aplica CTR` }),
+
+      // Capa 5: Client Simulator — con cache (misma pieza = misma reacción)
+      Promise.race([
+        cachedQACall('simulator', brief, () => simulateClientReaction(brief, 'luis_tendero_fif')),
+        timeoutPromise(QA_TIMEOUT_MS, 'simulation')
+      ])
+    ]);
+
+    const parallelMs = Date.now() - parallelStart;
+    console.log(`  ⚡ Capas 2-5 completadas en ${parallelMs}ms`);
+
+    // ── Evaluar resultados paralelos ──────────────────────────────────────────
+    const failures = [];
+
+    // Capa 2: Consistency
+    if (r_consistency.status === 'fulfilled') {
+      const consistency = r_consistency.value;
+      const ok = consistency.score >= 70;
+      logQA(2, ok ? '✅' : '❌', `Consistency: ${consistency.score}/100`);
+      if (!ok) failures.push({ capa: 2, name: 'consistency', data: consistency, issues: consistency.issues });
+    } else {
+      logQA(2, '⚠️', `skip: ${r_consistency.reason?.message}`);
+    }
+
+    // Capa 3: Emotional
+    if (r_emotional.status === 'fulfilled') {
+      const emotional = r_emotional.value;
+      const ok = emotional.score >= 6;
+      logQA(3, ok ? '✅' : '❌', `Emotional: ${emotional.score}/10`);
+      if (!ok) failures.push({ capa: 3, name: 'emotional', data: emotional, issues: emotional.notes });
+    } else {
+      logQA(3, '⚠️', `skip: ${r_emotional.reason?.message}`);
+    }
+
+    // Capa 4: CTR (puede ser skipped)
+    if (r_ctr.status === 'fulfilled') {
+      const ctr = r_ctr.value;
+      if (ctr.skipped) {
+        logQA(4, '⏭️', ctr.reason);
+      } else {
+        const ok = ctr.score >= 50;
+        logQA(4, ok ? '✅' : '❌', `CTR: ${ctr.score}/100`);
+        if (!ok) failures.push({ capa: 4, name: 'ctr', data: ctr, issues: ctr.issues });
+      }
+    } else {
+      logQA(4, '⚠️', `skip: ${r_ctr.reason?.message}`);
+    }
+
+    // Capa 5: Simulation
+    if (r_simulation.status === 'fulfilled') {
+      const sim = r_simulation.value;
+      const ok = sim.approval_probability >= 60;
+      logQA(5, ok ? '✅' : '❌', `Simulator: ${sim.approval_probability}%`);
+      if (!ok) failures.push({ capa: 5, name: 'simulator', data: sim, issues: sim.requested_changes });
+    } else {
+      logQA(5, '⚠️', `skip: ${r_simulation.reason?.message}`);
+    }
+
+    // ── Si hay fallos → ORACLE genera instrucciones consolidadas ─────────────
+    if (failures.length > 0) {
+      const issuesSummary = failures.map(f =>
+        `[${f.name.toUpperCase()}] ${Array.isArray(f.issues) ? f.issues.slice(0, 2).join('; ') : f.issues || 'ver datos'}`
+      ).join(' | ');
+
+      let oDecision = null;
+      try {
+        oDecision = await decideArteRechazado(brief, `parallel_qa_${failures.length}fallas`, failures.map(f => f.issues).flat().filter(Boolean));
+      } catch { /* non-fatal */ }
+
+      await updateBriefStatus(brief_id, 'rework', {
+        notas_revision: oDecision?.mensaje_carlos || issuesSummary
+      });
+
+      const totalMs = Date.now() - startTime;
+      console.log(`❌ QA TURBO: ${failures.length} falla(s) en ${totalMs}ms`);
+      return { passed: false, failures, reason: oDecision?.razon || issuesSummary, oracle_decision: oDecision, qa_log: qaLog, duration_ms: totalMs };
+    }
+
+    // ── CAPA 6: Valentina — post-guard ────────────────────────────────────────
+    if (global.valentina?.reviewArt) {
+      try {
+        const valentina = await Promise.race([
+          global.valentina.reviewArt({ image_url: brief.url_arte_final, brief, standard: '¿Esto justifica $1,000 USD/mes?' }),
+          timeoutPromise(10000, 'valentina')
+        ]);
+        logQA(6, valentina.approved ? '✅' : '❌', `Valentina: ${valentina.notes || ''}`);
+        if (!valentina.approved) {
+          let oDecision = null;
+          try { oDecision = await decideArteRechazado(brief, 'valentina_art_direction', valentina.notes); } catch {}
+          await updateBriefStatus(brief_id, 'rework', {
+            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA] ${valentina.notes}`
+          });
+          const totalMs = Date.now() - startTime;
+          return { passed: false, reason: oDecision?.razon || 'Rechazado por Valentina', oracle_decision: oDecision, qa_log: qaLog, duration_ms: totalMs };
+        }
+      } catch (e) {
+        logQA(6, '⚠️', `Valentina skip: ${e.message}`);
+      }
+    } else {
+      logQA(6, '⏭️', 'Valentina no disponible');
+    }
+
+    // ── APROBADO ──────────────────────────────────────────────────────────────
+    const totalMs = Date.now() - startTime;
+    await updateBriefStatus(brief_id, 'aprobado_qa', {
+      notas_revision: `QA TURBO ${totalMs}ms: ${qaLog.join(' | ')}`
+    });
+
+    console.log(`✅ QA TURBO completado: brief_id=${brief_id} APROBADO en ${totalMs}ms`);
+    return { passed: true, qa_log: qaLog, duration_ms: totalMs };
+
+  } catch (err) {
+    console.error('❌ Fase 5 QA Turbo error:', err.message);
+    return { passed: false, error: err.message, qa_log: qaLog };
+  }
+}
+
 // ─── FASE 6: DÍA 17 — Revisión final NKD ───────────────────────────────────
 async function fase6_revisionNKD() {
   const mes = getMesActual();
@@ -747,6 +956,7 @@ module.exports = {
   fase3_aprobacionNKD,
   fase4_produccion,
   fase5_qa,
+  fase5_qa_turbo,   // UPGRADE 1: versión paralela <8s
   fase6_revisionNKD,
   fase7_entregaClaudia,
   fase7b_llenarTablasTrigger

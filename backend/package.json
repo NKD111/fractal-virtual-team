@@ -21,6 +21,7 @@
     "graphology-metrics": "^2.4.0",
     "ioredis": "^5.10.1",
     "moment-timezone": "^0.5.45",
+    "node-cache": "^5.1.2",
     "node-cron": "^3.0.3",
     "nodemailer": "^8.0.7",
     "openai": "^6.35.0",
