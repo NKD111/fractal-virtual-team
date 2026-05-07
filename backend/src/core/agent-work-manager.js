@@ -124,17 +124,29 @@ const AGENT_ROSTER = {
       'marketing automation para agencias creativas',
     ]
   },
+  axiom:     {
+    nombre: 'AXIOM', rol: 'Opportunity Scanner / Business Intelligence',
+    area:   'intelligence',
+    topics: [
+      'detección de prospectos B2B México 2026',
+      'señales de compra redes sociales y web',
+      'competidores agencias digitales CDMX análisis',
+      'upsell patterns en agencias creativas',
+      'tendencias CRM y lead scoring LATAM',
+    ]
+  },
 };
 
 const IDLE_THRESHOLD_HOURS = 2;
 
 // ─── getTeamStatus ────────────────────────────────────────────────────────────
-// Consulta tasks reales en Supabase + sugerencias pendientes por agente
+// Consulta tasks reales en Supabase + sugerencias pendientes por agente.
+// AXIOM tiene su propia tabla (axiom_opportunities) — se maneja por separado.
 async function getTeamStatus() {
   const agentNames = Object.keys(AGENT_ROSTER);
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  const [tasksRes, suggestionsRes] = await Promise.allSettled([
+  const [tasksRes, suggestionsRes, axiomRes] = await Promise.allSettled([
     supabase
       .from('tasks')
       .select('id, title, status, updated_at, metadata')
@@ -147,11 +159,32 @@ async function getTeamStatus() {
       .select('id, title, description, result, metadata, created_at')
       .eq('metadata->>task_type', 'agent_suggestion')
       .eq('status', 'pending')
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }),
+
+    // AXIOM: obtener su último scan y oportunidades abiertas
+    supabase
+      .from('axiom_opportunities')
+      .select('id, title, urgency, score, status, detected_at, updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(5)
   ]);
 
-  const tasks       = tasksRes.status === 'fulfilled' ? (tasksRes.value?.data || []) : [];
-  const suggestions = suggestionsRes.status === 'fulfilled' ? (suggestionsRes.value?.data || []) : [];
+  const tasks          = tasksRes.status === 'fulfilled' ? (tasksRes.value?.data || []) : [];
+  const suggestions    = suggestionsRes.status === 'fulfilled' ? (suggestionsRes.value?.data || []) : [];
+  const axiomOpps      = axiomRes.status === 'fulfilled' ? (axiomRes.value?.data || []) : [];
+
+  // ── Status de AXIOM desde sus oportunidades ──────────────────────────────
+  const lastAxiomOpp   = axiomOpps[0] || null;
+  const openOpps       = axiomOpps.filter(o => o.status === 'open').length;
+  const axiomStatus    = lastAxiomOpp
+    ? (Date.now() - new Date(lastAxiomOpp.updated_at).getTime() < 6 * 3_600_000 ? 'working' : 'idle')
+    : 'idle';
+  const axiomTask = lastAxiomOpp ? {
+    id:         lastAxiomOpp.id,
+    title:      `Escaneando oportunidades — ${openOpps} opp${openOpps !== 1 ? 's' : ''} abiertas`,
+    status:     axiomStatus === 'working' ? 'in_progress' : 'completed',
+    updated_at: lastAxiomOpp.updated_at
+  } : null;
 
   // Agrupar por agente
   const latestTaskByAgent  = {};
@@ -168,9 +201,25 @@ async function getTeamStatus() {
 
   const now = Date.now();
   return agentNames.map(agent => {
-    const roster     = AGENT_ROSTER[agent];
-    const task       = latestTaskByAgent[agent] || null;
-    const agentSugs  = suggestionsByAgent[agent] || [];
+    const roster = AGENT_ROSTER[agent];
+
+    // AXIOM: usar datos de axiom_opportunities
+    if (agent === 'axiom') {
+      return {
+        agent,
+        ...roster,
+        status:      axiomStatus,
+        task:        axiomTask,
+        suggestions: [],
+        axiom_meta: {
+          open_opportunities: openOpps,
+          last_scan: lastAxiomOpp?.updated_at || null
+        }
+      };
+    }
+
+    const task      = latestTaskByAgent[agent] || null;
+    const agentSugs = suggestionsByAgent[agent] || [];
 
     let status;
     if (!task) {
@@ -180,7 +229,7 @@ async function getTeamStatus() {
       status = age < IDLE_THRESHOLD_HOURS * 3_600_000 ? 'working' : 'idle';
     } else if (task.status === 'pending') {
       status = 'pending';
-    } else if (task.status === 'completed' || task.status === 'completed') {
+    } else if (task.status === 'completed') {
       const age = now - new Date(task.updated_at).getTime();
       status = age < 30 * 60_000 ? 'just_finished' : 'idle';
     } else {
@@ -208,6 +257,23 @@ async function assignAutoWork(agentNames) {
   const newSuggestions = [];
 
   await Promise.all(batch.map(async ({ agent, nombre, rol, area, topics }) => {
+
+    // ── AXIOM: lógica propia — lanza scanCycle, no research genérico ────────
+    if (agent === 'axiom') {
+      try {
+        console.log('[AgentWorkManager] AXIOM → lanzando scanCycle en background');
+        const AxiomAgent = require('../agents/axiom.agent');
+        const axiom = new AxiomAgent();
+        const result = await axiom.scanCycle();
+        const suggestion = `AXIOM detectó ${result.opportunities_count} oportunidades (${result.urgent_count} urgentes). Responde "prospecto top" para ver las mejores.`;
+        newSuggestions.push({ agent, nombre, topic: 'scan_cycle', suggestion, sug_id: null });
+        console.log(`[AgentWorkManager] AXIOM scan done — ${result.opportunities_count} opps`);
+      } catch (axiomErr) {
+        console.error('[AgentWorkManager] AXIOM scanCycle error:', axiomErr.message);
+      }
+      return; // no continuar al research genérico
+    }
+
     const topic = topics[Math.floor(Math.random() * topics.length)];
     try {
       // 1. Marcar tarea activa
@@ -330,18 +396,36 @@ async function markSuggestionSent(sugId) {
 
 // ─── formatTeamStatusMessage ──────────────────────────────────────────────────
 // Reporta al user: status real + sugerencias pendientes (no dumps de research)
+// AXIOM se muestra en sección especial con sus oportunidades abiertas.
 function formatTeamStatusMessage(teamStatus, newSuggestions = []) {
-  const working  = teamStatus.filter(a => a.status === 'working' || a.status === 'pending');
-  const finished = teamStatus.filter(a => a.status === 'just_finished');
-  const idle     = teamStatus.filter(a => a.status === 'idle');
+  // Separar AXIOM del resto del equipo creativo
+  const axiomEntry   = teamStatus.find(a => a.agent === 'axiom');
+  const teamCreativo = teamStatus.filter(a => a.agent !== 'axiom');
+
+  const working  = teamCreativo.filter(a => a.status === 'working' || a.status === 'pending');
+  const finished = teamCreativo.filter(a => a.status === 'just_finished');
+  const idle     = teamCreativo.filter(a => a.status === 'idle');
 
   // Recolectar sugerencias previas no enviadas
-  const existingSugs = teamStatus.flatMap(a => a.suggestions || []);
+  const existingSugs = teamCreativo.flatMap(a => a.suggestions || []);
 
   const lines = ['*📊 STATUS REAL DEL EQUIPO*\n'];
 
+  // ── AXIOM: siempre visible con sus métricas ───────────────────────────────
+  if (axiomEntry) {
+    const openOpps  = axiomEntry.axiom_meta?.open_opportunities ?? '?';
+    const lastScan  = axiomEntry.axiom_meta?.last_scan
+      ? new Date(axiomEntry.axiom_meta.last_scan).toLocaleString('es-MX', { timeZone: 'America/Mexico_City', dateStyle: 'short', timeStyle: 'short' })
+      : 'sin scan reciente';
+    const statusBadge = axiomEntry.status === 'working' ? '🔍 escaneando' : '💤 en espera';
+    lines.push(`*🤖 AXIOM* (Business Intelligence) — ${statusBadge}`);
+    lines.push(`   ${openOpps} oportunidades abiertas · último scan: ${lastScan}`);
+    lines.push(`   → "axiom scan" para lanzar nuevo escaneo · "prospecto top" para ver pipeline`);
+    lines.push('');
+  }
+
   if (working.length > 0) {
-    lines.push('*En este momento trabajando:*');
+    lines.push('*Equipo creativo trabajando ahora:*');
     working.forEach(a => lines.push(`• ${a.nombre} — ${a.task?.title || 'tarea asignada'}`));
     lines.push('');
   }
