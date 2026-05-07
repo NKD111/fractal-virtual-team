@@ -44,12 +44,17 @@ const ROUTING_RULES = [
 ];
 
 // Detect which agent should handle the message
+// Normaliza texto para comparación sin acentos: "métricas" == "metricas", "campaña" == "campana"
+function normalizeText(str) {
+  return (str || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 function routeMessage(text) {
-  const lower = text.toLowerCase();
+  const normalized = normalizeText(text);
 
   // Always route Fermín directly to Mariana first
   for (const rule of ROUTING_RULES) {
-    if (rule.keywords.some(kw => lower.includes(kw))) {
+    if (rule.keywords.some(kw => normalized.includes(normalizeText(kw)))) {
       return rule.agent;
     }
   }
