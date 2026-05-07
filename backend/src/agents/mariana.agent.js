@@ -917,7 +917,9 @@ Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en for
     }
 
     // ─── "cuánto va el mes" ───────────────────────────────────────────────────
-    if (t.includes('cuanto va') || t.includes('cuanto lleva') || t.includes('revenue') || t.includes('como va el mes')) {
+    // Solo captura si la intención es explícitamente preguntar por revenue
+    // t === 'revenue' evita que "habla del revenue con el cliente" lo intercepte
+    if (t.includes('cuanto va') || t.includes('cuanto lleva') || t === 'revenue' || t.includes('como va el mes') || t.includes('cuanto llevamos')) {
       return this._cmdRevenueMes();
     }
 
@@ -932,8 +934,12 @@ Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en for
     }
 
     // ─── "SI" — confirmar upsell pendiente ────────────────────────────────────
-    if (t === 'si' || t === 'sí' || t === 'yes' || t === 'ok' || t === 'dale') {
-      return this._cmdConfirmarUpsell(message);
+    // Solo "si"/"sí" solos Y con upsell pendiente en oracle_memory.
+    // "ok", "dale", "yes" son demasiado casuales para interceptar.
+    if (t === 'si' || t === 'sí') {
+      const r = await this._cmdConfirmarUpsell(message);
+      if (r !== null) return r;
+      // No había upsell pendiente → dejar pasar al LLM normalmente
     }
 
     // ─── "ayuda" ──────────────────────────────────────────────────────────────
@@ -1186,7 +1192,8 @@ Responde "ayuda" para ver todos los comandos.`;
       });
 
       if (!upsellMemory) {
-        return `✅ Recibido! No encontré un upsell pendiente reciente.\nSi quieres lanzar uno específico, usa "cuánto va el mes" para contexto.`;
+        // No hay upsell pendiente — no interceptar, dejar pasar a conversación normal
+        return null;
       }
 
       const data = JSON.parse(upsellMemory.contenido);
@@ -1201,7 +1208,8 @@ Responde "ayuda" para ver todos los comandos.`;
 
       return `✅ *¡Activado!*\nMariana está preparando la propuesta formal para *${data.cliente}* — ${data.servicio}.\n\nTe la mando en unos minutos. 🚀`;
     } catch (e) {
-      return `✅ ¡Entendido! Dame un momento... (${e.message})`;
+      console.warn('[Mariana] _cmdConfirmarUpsell error:', e.message);
+      return null; // Error de DB → no interceptar, dejar pasar a LLM
     }
   }
 
