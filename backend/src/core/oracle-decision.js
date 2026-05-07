@@ -181,8 +181,7 @@ Responde SOLO en JSON válido, sin markdown, sin explicaciones fuera del JSON:
       model: 'claude-opus-4-7',
       system,
       messages: [{ role: 'user', content: promptBody }],
-      maxTokens: 800,
-      thinking: { type: 'adaptive' }
+      maxTokens: 800
     });
 
     const raw = (response.content || '').trim()
