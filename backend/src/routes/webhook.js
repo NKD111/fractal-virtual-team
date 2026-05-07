@@ -47,13 +47,14 @@ router.post('/meta', async (req, res) => {
       text = `[mensaje tipo: ${message.type}]`;
     }
 
-    // Log raw webhook
-    await supabase.from('webhooks_log').insert({
+    // Log raw webhook; capturar ID para marcar processed=true al finalizar
+    const { data: metaLog } = await supabase.from('webhooks_log').insert({
       source: 'meta_whatsapp',
       event_type: message.type,
       payload: body,
       processed: false
-    });
+    }).select('id').single();
+    const metaLogId = metaLog?.id || null;
 
     // Process y enviar respuesta de vuelta a quien escribió
     const response = await processIncoming({ from, text, channel: 'whatsapp', mediaUrl });
@@ -62,12 +63,10 @@ router.post('/meta', async (req, res) => {
       console.log(`[Webhook Meta] Respuesta enviada a ${from}: "${response.substring(0, 60)}..."`);
     }
 
-    // Mark processed
-    await supabase.from('webhooks_log')
-      .update({ processed: true })
-      .eq('source', 'meta_whatsapp')
-      .order('created_at', { ascending: false })
-      .limit(1);
+    // Mark processed — usar ID capturado, no order+limit (no válido en update)
+    if (metaLogId) {
+      await supabase.from('webhooks_log').update({ processed: true }).eq('id', metaLogId);
+    }
 
   } catch (err) {
     console.error('[Webhook Meta] Error:', err.message);
@@ -79,6 +78,7 @@ router.post('/meta', async (req, res) => {
 router.post('/twilio', async (req, res) => {
   res.status(200).end(); // ACK vacío — sendStatus(200) manda "OK" como body y Twilio lo reenvía
 
+  let logId = null;
   try {
     const { From, Body, MediaUrl0 } = req.body;
     if (!From || !Body) return;
@@ -88,11 +88,14 @@ router.post('/twilio', async (req, res) => {
 
     console.log(`[Webhook Twilio] From=${From} Body="${text.substring(0, 80)}"`);
 
-    await supabase.from('webhooks_log').insert({
+    // Insert con processed=false; capturar ID para marcarlo true al finalizar
+    const { data: logEntry } = await supabase.from('webhooks_log').insert({
       source: 'twilio_whatsapp',
       event_type: 'message',
-      payload: req.body
-    });
+      payload: req.body,
+      processed: false
+    }).select('id').single();
+    logId = logEntry?.id || null;
 
     // Procesar mensaje y obtener respuesta de Mariana
     const response = await processIncoming({
@@ -107,8 +110,19 @@ router.post('/twilio', async (req, res) => {
       await sendTwilioMessage(From, response);
       console.log(`[Webhook Twilio] Respuesta enviada a ${From}`);
     }
+
+    // Marcar como procesado exitosamente
+    if (logId) {
+      await supabase.from('webhooks_log').update({ processed: true }).eq('id', logId);
+    }
   } catch (err) {
     console.error('[Webhook Twilio] Error:', err.message);
+    // Marcar como fallido pero procesado (evita reintento infinito)
+    if (logId) {
+      await supabase.from('webhooks_log')
+        .update({ processed: true, error: err.message.slice(0, 200) })
+        .eq('id', logId);
+    }
   }
 });
 

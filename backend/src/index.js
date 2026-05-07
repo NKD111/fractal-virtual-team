@@ -36,6 +36,77 @@ app.use((req, res, next) => {
   next();
 });
 
+// ─── Feature Flags ────────────────────────────────────────────────────────────
+// Controla módulos no críticos vía env vars en Railway.
+// Para activar un módulo: ENABLE_AXIOM=true en Railway Variables.
+// Por defecto todos son false → 503 hasta que se confirme que funcionan.
+function moduleDisabled(moduleName) {
+  return (req, res) => res.status(503).json({
+    status: 'disabled',
+    module: moduleName,
+    reason: 'Module paused until core pipeline is stable',
+    enable_with: `Set ENABLE_${moduleName}=true in Railway Variables`
+  });
+}
+
+const FLAGS = {
+  AXIOM:     process.env.ENABLE_AXIOM     === 'true',
+  MESHY:     process.env.ENABLE_MESHY     === 'true',
+  OBSIDIAN:  process.env.ENABLE_OBSIDIAN  === 'true',
+  VISION:    process.env.ENABLE_VISION    !== 'false', // default ON (bajo demanda)
+  QCBOT:     process.env.ENABLE_QCBOT     !== 'false', // default ON
+};
+
+console.log(`[Flags] AXIOM=${FLAGS.AXIOM} MESHY=${FLAGS.MESHY} OBSIDIAN=${FLAGS.OBSIDIAN}`);
+
+// ─── /api/health ──────────────────────────────────────────────────────────────
+// Health check principal — ruta canónica según v6 plan.
+// Chequea servicios críticos y devuelve 200 (ok) o 503 (degraded).
+app.get('/api/health', async (req, res) => {
+  const start = Date.now();
+  const critical = {};
+  const optional = {};
+  const { supabase } = require('./core/supabase');
+
+  // Supabase (crítico)
+  try {
+    const { error } = await supabase.from('conversations').select('id', { count: 'exact', head: true }).limit(1);
+    critical.supabase = error ? `degraded: ${error.message.slice(0,60)}` : 'ok';
+  } catch (e) { critical.supabase = `error: ${e.message.slice(0,60)}`; }
+
+  // Claude API key (crítico)
+  critical.claude = process.env.ANTHROPIC_API_KEY ? 'ok' : 'missing';
+
+  // WhatsApp / Twilio (crítico — canal principal con Neiky)
+  critical.twilio = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ? 'ok' : 'missing';
+
+  // WhatsApp / Meta (opcional — producción futura)
+  optional.meta_wa = process.env.META_ACCESS_TOKEN ? 'configured' : 'not_configured';
+
+  // Higgsfield (opcional — PENDING API key)
+  optional.higgsfield = process.env.HIGGSFIELD_API_KEY ? 'configured' : 'not_configured';
+
+  // Cloudinary (opcional)
+  optional.cloudinary = process.env.CLOUDINARY_API_KEY ? 'configured' : 'not_configured';
+
+  // Flags activos
+  const flags = { ...FLAGS };
+
+  // Determinación de estado global
+  const criticalFailed = Object.values(critical).some(v => v !== 'ok');
+  const httpStatus = criticalFailed ? 503 : 200;
+
+  res.status(httpStatus).json({
+    status: criticalFailed ? 'degraded' : 'ok',
+    timestamp: new Date().toISOString(),
+    duration_ms: Date.now() - start,
+    critical,
+    optional,
+    flags,
+    version: 'Fractal MX v6 (stabilization)'
+  });
+});
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/webhook', require('./routes/webhook'));
 app.use('/api/agents', require('./routes/agents'));
@@ -49,12 +120,12 @@ app.use('/api/oracle', require('./routes/oracle'));
 app.use('/api/verification', require('./routes/verification'));
 app.use('/api/features', require('./routes/features'));
 app.use('/api/vision', require('./routes/vision'));
-app.use('/api/meshy', require('./routes/meshy'));
+app.use('/api/meshy', FLAGS.MESHY ? require('./routes/meshy') : moduleDisabled('MESHY'));
 app.use('/api/projects', require('./routes/projects'));
-app.use('/api/axiom', require('./routes/axiom'));
-app.use('/api/qcbot', require('./routes/qcbot'));
+app.use('/api/axiom', FLAGS.AXIOM ? require('./routes/axiom') : moduleDisabled('AXIOM'));
+app.use('/api/qcbot', FLAGS.QCBOT ? require('./routes/qcbot') : moduleDisabled('QCBOT'));
 app.use('/api/creative', require('./routes/creative'));
-app.use('/api/obsidian', require('./routes/obsidian'));
+app.use('/api/obsidian', FLAGS.OBSIDIAN ? require('./routes/obsidian') : moduleDisabled('OBSIDIAN'));
 app.use('/api', require('./routes/unified'));
 app.use('/api', require('./routes/public-api'));   // /api/admin/keys + /api/v1/*
 app.use('/webhooks', require('./routes/webhooks'));
@@ -81,7 +152,8 @@ app.get('/', (req, res) => {
       webhook_gmail: 'POST /webhook/gmail',
       agents: 'GET /api/agents',
       dashboard: 'GET /api/dashboard',
-      health: 'GET /webhook/health',
+      health: 'GET /api/health',
+      health_legacy: 'GET /webhook/health',
       models: 'GET /api/models/status',
       classify: 'POST /api/models/classify'
     }
@@ -217,17 +289,20 @@ server.listen(PORT, async () => {
       console.warn('[WorkflowManager] init error (non-fatal):', wfErr.message);
     }
 
-    // Boot AXIOM scan + start 6h cron
-    try {
-      const { runAxiomScan } = require('./routines/axiom-scanner');
-      runAxiomScan().then(r => console.log(`✅ AXIOM boot scan: ${r.inserted} oportunidades insertadas`))
-        .catch(e => console.warn('[AXIOM] boot scan error:', e.message));
-      // Register 6h cron (single instance — routines/index.js no longer does this)
-      const cron = require('node-cron');
-      cron.schedule('0 */6 * * *', () => runAxiomScan().catch(e => console.error('[AXIOM] cron err:', e.message)), { timezone: 'America/Mexico_City' });
-      console.log('✅ AXIOM cron: cada 6h (00,06,12,18 CDMX)');
-    } catch (e) {
-      console.warn('[AXIOM] boot/cron init error:', e.message);
+    // Boot AXIOM scan + start 6h cron — solo si ENABLE_AXIOM=true
+    if (FLAGS.AXIOM) {
+      try {
+        const { runAxiomScan } = require('./routines/axiom-scanner');
+        runAxiomScan().then(r => console.log(`✅ AXIOM boot scan: ${r.inserted} oportunidades insertadas`))
+          .catch(e => console.warn('[AXIOM] boot scan error:', e.message));
+        const cron = require('node-cron');
+        cron.schedule('0 */6 * * *', () => runAxiomScan().catch(e => console.error('[AXIOM] cron err:', e.message)), { timezone: 'America/Mexico_City' });
+        console.log('✅ AXIOM cron: cada 6h (00,06,12,18 CDMX)');
+      } catch (e) {
+        console.warn('[AXIOM] boot/cron init error:', e.message);
+      }
+    } else {
+      console.log('⏸  AXIOM: desactivado (ENABLE_AXIOM != true) — 57 errores silenciados');
     }
 
     // Routines (cron) — initialized last
