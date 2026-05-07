@@ -53,6 +53,7 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/axiom', require('./routes/axiom'));
 app.use('/api/qcbot', require('./routes/qcbot'));
 app.use('/api/creative', require('./routes/creative'));
+app.use('/api/obsidian', require('./routes/obsidian'));
 app.use('/api', require('./routes/unified'));
 app.use('/api', require('./routes/public-api'));   // /api/admin/keys + /api/v1/*
 app.use('/webhooks', require('./routes/webhooks'));

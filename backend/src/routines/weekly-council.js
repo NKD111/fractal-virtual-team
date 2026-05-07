@@ -5,6 +5,7 @@
 
 const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
+const obsidianSync = require('../services/obsidian-sync');
 
 function getWeekNumber() {
   const now = new Date();
@@ -126,6 +127,12 @@ Formato: WhatsApp (sin markdown, sin asteriscos). Máximo 300 palabras.`,
     } catch (emailErr) {
       console.warn('[WeeklyCouncil] email skip:', emailErr.message);
     }
+
+    // ── Sync automático a BOVEDA NKD ────────────────────────────────
+    obsidianSync.saveCouncilDecisions(council, [
+      { titulo: 'Semáforo semanal', accion: council.substring(0, 150), contexto: `Semana ${getWeekNumber()} — Revenue: $${semana.revenue}` },
+      { titulo: 'Siguiente paso prioritario', accion: `Revisión de pipeline. Top oportunidad: ${semana.top_opportunity}`, contexto: 'Business Council semanal' }
+    ]).catch(err => console.warn('[WeeklyCouncil] Obsidian sync skipped:', err.message));
 
     console.log('✅ Weekly Business Council enviado a NKD');
     return { success: true, semana, council };
