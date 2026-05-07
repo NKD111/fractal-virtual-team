@@ -79,6 +79,7 @@ router.get('/financials', async (req, res) => {
 const agentRegistry  = require('../core/agent-registry');
 const memoryEngine   = require('../core/memory-engine');
 const pipelineEngine = require('../core/pipeline-engine');
+const { calculateHealthScore } = require('../core/health-score');
 
 router.get('/business-os', async (req, res) => {
   try {
@@ -144,6 +145,9 @@ router.get('/business-os', async (req, res) => {
       pipelineEngine.getAllPipelinesStatus(month)
     ]);
 
+    // Health Score v5 — cálculo en tiempo real si no hay snapshot reciente
+    const healthResult = await calculateHealthScore().catch(() => null);
+
     const registryStatus = agentRegistry.getSystemStatus();
 
     const victorias    = memoriaVictorias.status    === 'fulfilled' ? memoriaVictorias.value    : 0;
@@ -207,6 +211,12 @@ router.get('/business-os', async (req, res) => {
         system_health:      snapshot?.system_health || 'unknown',
         proyectos_activos:  projects.length
       },
+      health: healthResult ? {
+        score:          healthResult.score,
+        emoji:          healthResult.emoji,
+        interpretation: healthResult.interpretation,
+        breakdown:      healthResult.breakdown
+      } : { score: snapshot?.health_score || 0, emoji: '⬜', interpretation: 'calculando...' },
       calidad: {
         tasa_aprobacion_qa:  tasaQA,
         tasa_aprobacion_nkd: tasaNKD,

@@ -54,6 +54,8 @@ const SITUACION_NIVELES = {
   cambio_alcance:     3,   // Cliente pide cambio de alcance → siempre NKD
   decision_financiera: 3,  // Cualquier cosa con dinero > $500 USD
   conflicto_cliente:  3,   // Problema grave con cliente → siempre NKD
+  consejo_estrategico: 2,  // Mariana pide consejo desde WhatsApp → ORACLE observa + notifica NKD
+  valentina_design_plugin: 1, // Arte falla Design Plugin → instrucciones a Carlos
 };
 
 // ── Prompts por situación ─────────────────────────────────────────────────────
@@ -143,6 +145,19 @@ Conflicto activo con cliente. Prepara resumen ejecutivo y opciones para NKD.
 
 CLIENTE: ${ctx.cliente || 'no especificado'}
 SITUACIÓN: ${JSON.stringify(ctx)}`,
+
+  consejo_estrategico: (ctx) => `
+NKD solicita una observación estratégica sobre el estado actual del negocio.
+Analiza los datos y genera UNA observación concreta y accionable.
+No platitudes — algo específico y útil para esta semana.
+
+DATOS ACTUALES DEL SISTEMA:
+Pipeline FIF: ${ctx.pipeline_briefs || '?'} piezas del mes
+Revenue del mes: $${ctx.revenue_month || 0} USD
+Día del mes: ${ctx.dia_del_mes || '?'}/31
+Top score AXIOM: ${ctx.top_score || 0}/100
+
+Genera: observación estratégica en 2-3 líneas + acción concreta recomendada.`,
 };
 
 // ── Core function ─────────────────────────────────────────────────────────────
