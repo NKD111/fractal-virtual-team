@@ -2062,7 +2062,8 @@ Sé concreta y entrega el resultado directamente. Máximo 600 caracteres.`;
     const statusNow = task?.status || 'working';
 
     // Si la tarea ya completó, no mandar el 3-min update (ya se notificó al terminar)
-    if (statusNow === 'completed' || statusNow === 'cancelled') {
+    // Status válidos del schema: pending|classifying|working|reviewing|delivered|failed
+    if (statusNow === 'delivered' || statusNow === 'failed' || statusNow === 'completed' || statusNow === 'cancelled') {
       console.log(`[Mariana] _sendTaskStatusUpdate skip — tarea ya ${statusNow}`);
       return;
     }

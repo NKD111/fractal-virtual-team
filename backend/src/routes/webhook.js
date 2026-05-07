@@ -4,6 +4,50 @@ const { processIncoming } = require('../core/orchestrator');
 const { supabase } = require('../core/supabase');
 const { sendTwilioMessage, sendMetaMessage } = require('../core/whatsapp');
 
+// ─── Rate limiter en memoria (sin dependencias extra) ──────────────────────────
+// Ventana deslizante: max 30 requests / 60 segundos por IP
+const _rateLimitMap = new Map();
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW = 60_000; // 1 min
+
+function _checkRateLimit(ip) {
+  const now = Date.now();
+  let bucket = _rateLimitMap.get(ip);
+
+  if (!bucket) {
+    bucket = { count: 0, windowStart: now };
+    _rateLimitMap.set(ip, bucket);
+  }
+
+  // Reset ventana si expiró
+  if (now - bucket.windowStart > RATE_LIMIT_WINDOW) {
+    bucket.count = 0;
+    bucket.windowStart = now;
+  }
+
+  bucket.count++;
+
+  // Limpiar IPs inactivas cada 5 min para evitar memory leak
+  if (_rateLimitMap.size > 500) {
+    for (const [k, v] of _rateLimitMap) {
+      if (now - v.windowStart > 5 * 60_000) _rateLimitMap.delete(k);
+    }
+  }
+
+  return bucket.count <= RATE_LIMIT_MAX;
+}
+
+function rateLimitMiddleware(req, res, next) {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+  if (!_checkRateLimit(ip)) {
+    console.warn(`[Webhook] Rate limit exceeded — IP: ${ip}`);
+    return res.status(429).json({ error: 'Too many requests', retry_after: '60s' });
+  }
+  next();
+}
+
+router.use(rateLimitMiddleware);
+
 // ─── META CLOUD API (Production WhatsApp) ─────────────────────────────────────
 
 // Webhook verification
@@ -30,6 +74,12 @@ router.post('/meta', async (req, res) => {
     const value = body.entry[0].changes[0].value;
     const message = value.messages[0];
     const from = message.from; // phone number
+
+    // Deduplicación Meta — ignorar entrega duplicada del mismo mensaje
+    if (_isDuplicateMeta(message.id)) {
+      console.log(`[Webhook Meta] Dedup — message.id=${message.id} ya procesado, ignorando`);
+      return;
+    }
 
     let text = '';
     let mediaUrl = null;
@@ -59,7 +109,7 @@ router.post('/meta', async (req, res) => {
     // Process y enviar respuesta de vuelta a quien escribió
     const response = await processIncoming({ from, text, channel: 'whatsapp', mediaUrl });
     if (response && typeof response === 'string') {
-      await sendMetaMessage(from, response);
+      await sendMetaMessage(from, _truncateWA(response));
       console.log(`[Webhook Meta] Respuesta enviada a ${from}: "${response.substring(0, 60)}..."`);
     }
 
@@ -75,18 +125,58 @@ router.post('/meta', async (req, res) => {
 
 // ─── TWILIO (Sandbox / dev WhatsApp) ──────────────────────────────────────────
 
+// Dedup cache en memoria: MessageSid → timestamp. Limpiamos entradas > 10min.
+const _twilioSeenSids = new Map();
+function _isDuplicateTwilio(sid) {
+  if (!sid) return false;
+  const now = Date.now();
+  // Limpiar entradas viejas (> 10 min)
+  for (const [k, ts] of _twilioSeenSids) {
+    if (now - ts > 600_000) _twilioSeenSids.delete(k);
+  }
+  if (_twilioSeenSids.has(sid)) return true;
+  _twilioSeenSids.set(sid, now);
+  return false;
+}
+
+// Dedup cache Meta: MessageId → timestamp
+const _metaSeenIds = new Map();
+function _isDuplicateMeta(msgId) {
+  if (!msgId) return false;
+  const now = Date.now();
+  for (const [k, ts] of _metaSeenIds) {
+    if (now - ts > 600_000) _metaSeenIds.delete(k);
+  }
+  if (_metaSeenIds.has(msgId)) return true;
+  _metaSeenIds.set(msgId, now);
+  return false;
+}
+
+// Trunca mensajes WA al límite de 4096 chars
+const MAX_WA = 4096;
+function _truncateWA(text) {
+  if (!text || text.length <= MAX_WA) return text;
+  return text.substring(0, MAX_WA - 40) + '\n…_(mensaje truncado)_';
+}
+
 router.post('/twilio', async (req, res) => {
   res.status(200).end(); // ACK vacío — sendStatus(200) manda "OK" como body y Twilio lo reenvía
 
   let logId = null;
   try {
-    const { From, Body, MediaUrl0 } = req.body;
+    const { From, Body, MediaUrl0, MessageSid } = req.body;
     if (!From || !Body) return;
+
+    // Deduplicación: ignorar reintentos de Twilio con el mismo MessageSid
+    if (_isDuplicateTwilio(MessageSid)) {
+      console.log(`[Webhook Twilio] Dedup — MessageSid=${MessageSid} ya procesado, ignorando reintento`);
+      return;
+    }
 
     // Decodificar por si viene URL-encoded (sandbox/simulación) o tiene caracteres especiales
     const text = (() => { try { return decodeURIComponent(Body); } catch { return Body; } })();
 
-    console.log(`[Webhook Twilio] From=${From} Body="${text.substring(0, 80)}"`);
+    console.log(`[Webhook Twilio] From=${From} SID=${MessageSid} Body="${text.substring(0, 80)}"`);
 
     // Insert con processed=false; capturar ID para marcarlo true al finalizar
     const { data: logEntry } = await supabase.from('webhooks_log').insert({
@@ -107,7 +197,7 @@ router.post('/twilio', async (req, res) => {
 
     // Enviar respuesta de Mariana de vuelta al WhatsApp de quien escribió
     if (response && typeof response === 'string') {
-      await sendTwilioMessage(From, response);
+      await sendTwilioMessage(From, _truncateWA(response));
       console.log(`[Webhook Twilio] Respuesta enviada a ${From}`);
     }
 

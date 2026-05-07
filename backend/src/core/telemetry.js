@@ -256,9 +256,34 @@ function idempotent(key, factory) {
   return result;
 }
 
+// ── CRON HEARTBEAT — watchdog para crons en producción ─────────────────────
+/**
+ * Registra que un cron se ejecutó. Requiere tabla cron_heartbeat (013_hardening.sql).
+ * Si la tabla no existe todavía, falla silenciosamente.
+ * @param {string} cronName — identificador único del cron
+ * @param {'ok'|'error'} status
+ * @param {string|null} errorMsg
+ */
+async function recordCronHeartbeat(cronName, status = 'ok', errorMsg = null) {
+  try {
+    await supabase.from('cron_heartbeat').upsert({
+      cron_name:   cronName,
+      last_run:    new Date().toISOString(),
+      last_status: status,
+      last_error:  errorMsg || null,
+      updated_at:  new Date().toISOString()
+    }, { onConflict: 'cron_name', ignoreDuplicates: false })
+    .then(async () => {
+      // Increment run_count separately (upsert doesn't support increment natively)
+      await supabase.rpc('increment_cron_count', { p_cron_name: cronName }).catch(() => {});
+    });
+  } catch (_) { /* silencioso — telemetría no debe bloquear */ }
+}
+
 module.exports = {
   audit, logCost, logEmailSent, logImageGen,
   wrapAnthropic, getCostsToday, getCostsMonth, idempotent,
   getCostsByAgent, getLatencyByTask, getErrorRate,
+  recordCronHeartbeat,
   PRICING
 };

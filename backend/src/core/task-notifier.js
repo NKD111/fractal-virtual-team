@@ -30,17 +30,17 @@ const NEIKY_PHONE   = process.env.NEIKY_WHATSAPP || '+525534189583';
  */
 async function registerNeikyTask(description, assignedTo = 'MARIANA', meta = {}) {
   try {
+    // ID único legible: task_<timestamp>_<random>
+    const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
     const { data, error } = await supabase.from('tasks').insert({
-      title:       description.substring(0, 200),
-      description: description,
-      status:      'in_progress',
-      metadata: {
-        task_source:    'neiky_whatsapp',
-        task_type:      'neiky_assignment',
-        assigned_agent: assignedTo,
-        requested_at:   new Date().toISOString(),
-        ...meta
-      }
+      id:             taskId,
+      source:         meta.channel || 'whatsapp',   // NOT NULL en schema
+      message:        description,                   // NOT NULL en schema
+      agent_assigned: assignedTo,
+      supervisor:     'MARIANA',
+      status:         'working',                     // valid: pending|classifying|working|reviewing|delivered|failed
+      needs_visual:   meta.needs_visual || false,
+      brief:          meta.brief || null
     }).select('id').single();
 
     if (error) throw error;
@@ -69,10 +69,11 @@ async function notifyTaskComplete(taskId, description, result, agent = 'MARIANA'
     try {
       const resultText = typeof result === 'object'
         ? JSON.stringify(result, null, 2) : String(result || '');
+      // Schema real: status='delivered', delivered=[{type,content,ts}], completed_at
       await supabase.from('tasks')
         .update({
-          status:       'completed',
-          result:       resultText.substring(0, 2000),
+          status:       'delivered',
+          delivered:    [{ type: 'text', content: resultText.substring(0, 2000), ts: new Date().toISOString() }],
           completed_at: new Date().toISOString()
         })
         .eq('id', taskId);
@@ -145,10 +146,10 @@ ${mediaUrls.length > 0 ? '\n🖼 *Archivos:*\n' + mediaUrls.map((u, i) => `  ${i
 async function markTaskFailed(taskId, errorMsg) {
   if (!taskId) return;
   try {
+    // Schema: status='failed', error=TEXT (no 'cancelled', no 'result' column)
     await supabase.from('tasks').update({
-      status: 'cancelled',
-      result: `ERROR: ${errorMsg}`,
-      metadata: supabase.rpc ? undefined : undefined // se mantiene el metadata original
+      status: 'failed',
+      error:  String(errorMsg || 'unknown error').substring(0, 500)
     }).eq('id', taskId);
   } catch (err) {
     console.warn('[TaskNotifier] markTaskFailed:', err.message);
