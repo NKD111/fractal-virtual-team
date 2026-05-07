@@ -104,8 +104,11 @@ router.post('/brief', async (req, res) => {
 
     // Crear proyecto en Supabase
     // status debe ser 'active' — el workflow va en brief.workflow_status
+    // client_name es requerido por el schema; usamos el nombre del cliente como fallback
+    const clientNameMap = { fif: 'FIF / Vanexpo', central_interactiva: 'Central Interactiva', ccm: 'Centro Convenciones Morelos' };
     const projectPayload = {
       name: `${type.toUpperCase()} — ${client.toUpperCase()} — ${new Date().toISOString().split('T')[0]}`,
+      client_name: clientNameMap[client] || client.toUpperCase(),
       status: 'active',
       client_id: null, // resuelto por el sistema si aplica
       brief: {
@@ -459,6 +462,184 @@ router.post('/design-plugin-audit', async (req, res) => {
     });
   } catch (err) {
     console.error('[creative/design-plugin-audit]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/creative/test-generate ────────────────────────────────────────
+// Test de generación end-to-end. Crea un creative_job, llama a Carlos,
+// guarda el resultado y notifica a NKD por WhatsApp.
+// Body: { brief, client?, dryRun? }
+// DÍA 3 — Plan Estabilización v6
+router.post('/test-generate', async (req, res) => {
+  const { brief: briefText, client = 'FIF', dryRun = false } = req.body || {};
+
+  if (!briefText) {
+    return res.status(400).json({ error: 'brief requerido. Ej: "Arte FIF sobre registros abiertos, fondo blanco, paleta navy"' });
+  }
+
+  // Validar credenciales de generación
+  const higgsConfigured = process.env.HIGGSFIELD_API_KEY &&
+                          process.env.HIGGSFIELD_API_KEY !== 'PENDING' &&
+                          process.env.HIGGSFIELD_API_KEY !== '';
+
+  if (!higgsConfigured && !dryRun) {
+    return res.status(503).json({
+      error: 'HIGGSFIELD_API_KEY no configurado',
+      action: 'Agrega HIGGSFIELD_API_KEY en Railway Variables → Redeploy → reintentar',
+      dry_run_available: true,
+      hint: 'Usa { "dryRun": true } para validar el pipeline sin generar imagen real'
+    });
+  }
+
+  // Registrar el job
+  const { data: job, error: jobError } = await supabase
+    .from('creative_jobs')
+    .insert({
+      client: client.toUpperCase(),
+      status: dryRun ? 'dry_run' : 'processing',
+      brief: briefText,
+      source: 'api'
+    })
+    .select()
+    .single();
+
+  if (jobError) {
+    // creative_jobs puede no existir aún → retornar info sin fallar
+    console.warn('[test-generate] creative_jobs insert error:', jobError.message);
+    if (dryRun) {
+      return res.json({
+        status: 'dry_run',
+        job_id: null,
+        message: 'Pipeline válido. creative_jobs tabla aún no creada (correr 012_creative_jobs.sql)',
+        higgsfield: higgsConfigured ? '✅' : '❌ PENDING',
+        brief: briefText
+      });
+    }
+  }
+
+  const jobId = job?.id || null;
+
+  if (dryRun) {
+    return res.json({
+      status: 'dry_run',
+      job_id: jobId,
+      brief: briefText,
+      higgsfield: higgsConfigured ? '✅ configured' : '❌ PENDING',
+      message: 'Dry run OK — pipeline validado. Quita dryRun para generar imagen real.'
+    });
+  }
+
+  // Responder inmediatamente — generación corre en background
+  res.json({
+    status: 'generating',
+    job_id: jobId,
+    brief: briefText,
+    message: 'Carlos está generando. Recibirás el resultado por WhatsApp en ~2 min.'
+  });
+
+  // Generación en background
+  setImmediate(async () => {
+    try {
+      const CarlosAgent = require('../agents/carlos.agent');
+      const { notifyNeiky } = require('../core/whatsapp');
+
+      const carlos = new CarlosAgent();
+
+      const clientMap = {
+        'FIF': 'FIF', 'EFG': 'EFG', 'FRACTAL': 'FRACTAL',
+        'CENTRAL_INTERACTIVA': 'FIF', 'CCM': 'FIF'
+      };
+
+      const carlosBrief = {
+        cliente: clientMap[client.toUpperCase()] || 'FIF',
+        tipo_pieza: 'post_informativo',
+        headline: briefText.substring(0, 80),
+        concepto: briefText,
+        cta: 'REGÍSTRATE AHORA',
+        fecha: '',
+        mes: new Date().toISOString().substring(0, 7),
+      };
+
+      const result = await carlos.generateFromBrief(carlosBrief);
+
+      const imageUrl = result?.images?.[0]?.resultUrl ||
+                       result?.images?.[0]?.url ||
+                       result?.images?.[0]?.image_url || null;
+
+      // Actualizar job
+      if (jobId) {
+        await supabase.from('creative_jobs').update({
+          status: result?.success ? 'pending_approval' : 'failed',
+          image_url: imageUrl || null,
+          typo_spec: result?.typo_spec || null,
+          error_message: result?.success ? null : (result?.error || 'Carlos falló sin razón específica'),
+          updated_at: new Date().toISOString()
+        }).eq('id', jobId);
+      }
+
+      if (result?.success && imageUrl) {
+        await notifyNeiky(
+          `🎨 *Arte generado — listo para revisión*\n\n` +
+          `*Cliente:* ${client.toUpperCase()}\n` +
+          `*Brief:* "${briefText.substring(0, 80)}"\n` +
+          `*Job:* ${jobId ? jobId.substring(0, 8) : 'N/A'}\n\n` +
+          `🖼 Imagen: ${imageUrl}\n\n` +
+          `Responde:\n` +
+          `• *apruebo job_${jobId ? jobId.substring(0, 8) : '?'}* — para aprobar\n` +
+          `• *ajustar ${jobId ? jobId.substring(0, 8) : '?'} [qué cambiar]* — para modificar`
+        );
+      } else {
+        // Fallback: enviar spec tipográfico
+        const spec = result?.typo_spec;
+        const specText = spec?.capas?.length
+          ? spec.capas.map(c => `• ${c.elemento}: "${c.texto || '—'}" | ${c.fuente} ${c.peso}`).join('\n')
+          : '(spec no generado)';
+
+        await notifyNeiky(
+          `⚠️ *Arte: no se pudo generar imagen* (${result?.error || 'Higgsfield no disponible'})\n\n` +
+          `*Brief:* "${briefText.substring(0, 80)}"\n\n` +
+          `📝 *Spec para producción manual:*\n${specText}\n\n` +
+          `_Configura HIGGSFIELD_API_KEY en Railway para habilitar generación automática._`
+        );
+      }
+
+    } catch (err) {
+      console.error('[test-generate background]', err.message);
+      if (jobId) {
+        await supabase.from('creative_jobs').update({
+          status: 'failed',
+          error_message: err.message,
+          updated_at: new Date().toISOString()
+        }).eq('id', jobId).catch(() => {});
+      }
+      const { notifyNeiky } = require('../core/whatsapp');
+      notifyNeiky(`❌ Error en test-generate:\n${err.message}\nJob: ${jobId || 'N/A'}`).catch(() => {});
+    }
+  });
+});
+
+// ─── GET /api/creative/jobs ───────────────────────────────────────────────────
+// Lista creative_jobs recientes. Filtros: status, client, limit
+router.get('/jobs', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const { status, client } = req.query;
+
+    let q = supabase
+      .from('creative_jobs')
+      .select('id, client, status, brief, image_url, cost_usd, created_at, updated_at')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (status) q = q.eq('status', status);
+    if (client) q = q.ilike('client', `%${client}%`);
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message, hint: 'Correr 012_creative_jobs.sql en Supabase' });
+
+    res.json({ jobs: data || [], count: data?.length || 0 });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

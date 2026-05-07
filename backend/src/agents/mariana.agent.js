@@ -1093,6 +1093,39 @@ Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en for
       return this._cmdEquipoStatus(true);
     }
 
+    // ─── "crea arte [descripción]" ────────────────────────────────────────────
+    // DÍA 5 — flujo WhatsApp → brief → imagen → aprobación
+    const creaArteMatch = t.match(/^crea\s+arte\s+(.+)$/i) ||
+                          t.match(/^genera\s+(?:un\s+)?arte\s+(.+)$/i);
+    if (creaArteMatch) {
+      const descripcion = text.trim().replace(/^crea\s+arte\s*/i, '')
+                                      .replace(/^genera\s+(?:un\s+)?arte\s*/i, '');
+      return this._cmdCrearArte(descripcion);
+    }
+
+    // ─── "apruebo job_XXXXXXXX" — aprobar creative_job ────────────────────────
+    // Distinto de "apruebo N" (parrilla_briefs). Job IDs tienen formato UUID.
+    const aprueboJobMatch = t.match(/^apruebo\s+job_([a-f0-9\-]{6,36})$/i);
+    if (aprueboJobMatch) {
+      return this._cmdAprueboJob(aprueboJobMatch[1]);
+    }
+
+    // ─── "ajustar XXXXXXXX [notas]" — solicitar revisión de creative_job ─────
+    const ajustarMatch = t.match(/^ajustar\s+([a-f0-9\-]{6,36})\s+(.+)$/i);
+    if (ajustarMatch) {
+      return this._cmdAjustarJob(ajustarMatch[1], ajustarMatch[2]);
+    }
+
+    // ─── "costo hoy" — reporte de costos en tiempo real ─────────────────────
+    if (t === 'costo hoy' || t === 'costos hoy' || t === 'cuanto gastamos hoy') {
+      return this._cmdCostoHoy();
+    }
+
+    // ─── "health" — health check del sistema ─────────────────────────────────
+    if (t === 'health' || t === 'health check' || t === 'sistema vivo') {
+      return this._cmdHealthCheck();
+    }
+
     // ─── "ayuda" ──────────────────────────────────────────────────────────────
     if (t === 'ayuda' || t === 'help' || t === 'comandos' || t === '?') {
       return this._cmdAyuda();
@@ -1401,6 +1434,285 @@ Responde "ayuda" para ver todos los comandos.`;
     }
   }
 
+  // ─── NUEVOS COMANDOS v6 DÍA 5 ────────────────────────────────────────────
+
+  /**
+   * "crea arte [descripción]" — WhatsApp → brief → imagen → aprobación
+   * Flujo mínimo viable que justifica todo el sistema.
+   */
+  async _cmdCrearArte(descripcion, cliente = 'FIF') {
+    const { supabase } = require('../core/supabase');
+    const { notifyNeiky } = require('../core/whatsapp');
+
+    // Confirmar recepción inmediatamente
+    const ackMsg = `🎨 *Recibido, nene!* Carlos está generando el arte...\n` +
+                   `Brief: "${descripcion.substring(0, 80)}"\n` +
+                   `Te llega la imagen en ~2 minutos por aquí. 🚀`;
+
+    // Crear creative_job en background (non-blocking para el ACK)
+    setImmediate(async () => {
+      let jobId = null;
+      try {
+        // Registrar job
+        const { data: job } = await supabase
+          .from('creative_jobs')
+          .insert({
+            client: cliente.toUpperCase(),
+            status: 'processing',
+            brief: descripcion,
+            source: 'whatsapp'
+          })
+          .select('id')
+          .single();
+
+        jobId = job?.id || null;
+
+        // Llamar a Carlos
+        const CarlosAgent = require('./carlos.agent');
+        const carlos = new CarlosAgent();
+
+        const carlosBrief = {
+          cliente,
+          tipo_pieza: 'post_informativo',
+          headline: descripcion.substring(0, 80),
+          concepto: descripcion,
+          cta: 'REGÍSTRATE AHORA',
+          fecha: '',
+          mes: new Date().toISOString().substring(0, 7),
+        };
+
+        const result = await carlos.generateFromBrief(carlosBrief);
+
+        const imageUrl = result?.images?.[0]?.resultUrl ||
+                         result?.images?.[0]?.url ||
+                         result?.images?.[0]?.image_url || null;
+
+        // Actualizar job
+        if (jobId) {
+          await supabase.from('creative_jobs').update({
+            status: result?.success && imageUrl ? 'pending_approval' : 'failed',
+            image_url: imageUrl || null,
+            typo_spec: result?.typo_spec || null,
+            error_message: !result?.success ? (result?.error || 'Sin imagen generada') : null,
+            updated_at: new Date().toISOString()
+          }).eq('id', jobId);
+        }
+
+        const shortId = jobId ? jobId.substring(0, 8) : 'N/A';
+
+        if (result?.success && imageUrl) {
+          await notifyNeiky(
+            `✅ *Arte listo para revisión!* 🎨\n\n` +
+            `*Brief:* "${descripcion.substring(0, 60)}"\n` +
+            `*Job:* ${shortId}\n\n` +
+            `🖼 ${imageUrl}\n\n` +
+            `*¿Qué hago?*\n` +
+            `• *apruebo job_${shortId}* — para aprobar y guardar\n` +
+            `• *ajustar ${shortId} [cambio]* — para modificar`
+          );
+        } else {
+          // Fallback con spec tipográfico
+          const spec = result?.typo_spec;
+          const specText = spec?.capas?.length
+            ? spec.capas.slice(0, 3).map(c => `• ${c.elemento}: "${c.texto || '—'}" | ${c.fuente} ${c.peso}`).join('\n')
+            : '(Higgsfield no configurado)';
+
+          await notifyNeiky(
+            `⚠️ *Arte: imagen no disponible* (${result?.error || 'HIGGSFIELD_API_KEY pendiente'})\n\n` +
+            `*Brief guardado:* "${descripcion.substring(0, 60)}"\n` +
+            `*Job:* ${shortId}\n\n` +
+            `📝 *Spec para producción manual:*\n${specText}\n\n` +
+            `_Configura HIGGSFIELD_API_KEY en Railway para activar generación._`
+          );
+        }
+
+      } catch (err) {
+        console.error('[Mariana._cmdCrearArte] error:', err.message);
+        if (jobId) {
+          await supabase.from('creative_jobs').update({
+            status: 'failed',
+            error_message: err.message,
+            updated_at: new Date().toISOString()
+          }).eq('id', jobId).catch(() => {});
+        }
+        await notifyNeiky(
+          `❌ Error generando arte:\n${err.message}\nJob: ${jobId ? jobId.substring(0, 8) : 'N/A'}`
+        ).catch(() => {});
+      }
+    });
+
+    return ackMsg;
+  }
+
+  /**
+   * "apruebo job_XXXXXXXX" — aprobar creative_job (no parrilla_briefs)
+   */
+  async _cmdAprueboJob(shortId) {
+    try {
+      const { supabase } = require('../core/supabase');
+
+      // Buscar por UUID parcial (primeros 8 chars)
+      const { data: jobs } = await supabase
+        .from('creative_jobs')
+        .select('id, client, brief, status, image_url')
+        .ilike('id', `${shortId}%`)
+        .limit(1);
+
+      const job = jobs?.[0];
+      if (!job) {
+        return `❌ No encontré un creative_job con ID: ${shortId}\n\nRevisa con "estado" o busca en el dashboard.`;
+      }
+
+      await supabase.from('creative_jobs').update({
+        status: 'approved',
+        approved_by: 'NKD_WA',
+        approved_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).eq('id', job.id);
+
+      return `✅ *Arte APROBADO*\n\n` +
+             `*Cliente:* ${job.client}\n` +
+             `*Brief:* "${(job.brief || '').substring(0, 60)}"\n` +
+             `*ID:* ${shortId}\n\n` +
+             `Guardado como aprobado. Al día 20 se entrega a Claudia con la parrilla. 🎉`;
+    } catch (e) {
+      return `❌ Error al aprobar job: ${e.message}`;
+    }
+  }
+
+  /**
+   * "ajustar XXXXXXXX [notas]" — solicitar revisión de creative_job
+   */
+  async _cmdAjustarJob(shortId, notas) {
+    try {
+      const { supabase } = require('../core/supabase');
+
+      const { data: jobs } = await supabase
+        .from('creative_jobs')
+        .select('id, client, brief, status')
+        .ilike('id', `${shortId}%`)
+        .limit(1);
+
+      const job = jobs?.[0];
+      if (!job) {
+        return `❌ No encontré creative_job con ID: ${shortId}`;
+      }
+
+      await supabase.from('creative_jobs').update({
+        status: 'rework',
+        revision_notes: notas,
+        updated_at: new Date().toISOString()
+      }).eq('id', job.id);
+
+      // Relanzar generación en background con las notas de ajuste
+      const briefAjustado = `${job.brief} — AJUSTE: ${notas}`;
+      setImmediate(async () => {
+        try {
+          const CarlosAgent = require('./carlos.agent');
+          const { notifyNeiky } = require('../core/whatsapp');
+          const carlos = new CarlosAgent();
+
+          const result = await carlos.generateFromBrief({
+            cliente: job.client || 'FIF',
+            tipo_pieza: 'post_informativo',
+            headline: briefAjustado.substring(0, 80),
+            concepto: briefAjustado,
+            cta: 'REGÍSTRATE AHORA',
+            fecha: '',
+            mes: new Date().toISOString().substring(0, 7),
+          });
+
+          const imageUrl = result?.images?.[0]?.resultUrl ||
+                           result?.images?.[0]?.url ||
+                           result?.images?.[0]?.image_url || null;
+
+          await supabase.from('creative_jobs').update({
+            status: imageUrl ? 'pending_approval' : 'failed',
+            image_url: imageUrl || null,
+            updated_at: new Date().toISOString()
+          }).eq('id', job.id);
+
+          if (imageUrl) {
+            await notifyNeiky(
+              `🔄 *Arte ajustado listo!*\n\n` +
+              `*Ajuste aplicado:* "${notas}"\n` +
+              `*Job:* ${shortId}\n\n` +
+              `🖼 ${imageUrl}\n\n` +
+              `• *apruebo job_${shortId}* — para aprobar\n` +
+              `• *ajustar ${shortId} [nuevo cambio]* — para seguir ajustando`
+            );
+          } else {
+            await notifyNeiky(
+              `⚠️ Ajuste solicitado guardado pero imagen no disponible (Higgsfield pendiente).\n` +
+              `Notas: "${notas}"\nJob: ${shortId}`
+            );
+          }
+        } catch (err) {
+          console.error('[_cmdAjustarJob background]', err.message);
+          const { notifyNeiky } = require('../core/whatsapp');
+          notifyNeiky(`❌ Error en ajuste: ${err.message}`).catch(() => {});
+        }
+      });
+
+      return `🔄 *Ajuste registrado*\n\nNotas: "${notas}"\nCarlos está regenerando el arte con los cambios...\nTe aviso cuando esté listo. 🎨`;
+    } catch (e) {
+      return `❌ Error al registrar ajuste: ${e.message}`;
+    }
+  }
+
+  /**
+   * "costo hoy" — reporte de costos en tiempo real
+   */
+  async _cmdCostoHoy() {
+    try {
+      const { getCostsToday } = require('../core/telemetry');
+      const costs = await getCostsToday();
+      const FIF_DAILY = 1000 / 30;
+      const total = costs.total || 0;
+      const profit = FIF_DAILY - total;
+      const emoji = profit > 0 ? '✅' : '🔴';
+
+      return `💸 *Costos hoy:*\n\n` +
+             `Claude API: $${(costs.by_provider?.anthropic || 0).toFixed(4)} USD\n` +
+             `Higgsfield: $${(costs.by_provider?.higgsfield || 0).toFixed(4)} USD\n` +
+             `Total: $${total.toFixed(4)} USD\n` +
+             `Llamadas API: ${costs.calls || 0}\n\n` +
+             `Revenue FIF/día: $${FIF_DAILY.toFixed(2)} USD\n` +
+             `Margen: $${profit.toFixed(2)} USD ${emoji}`;
+    } catch (e) {
+      return `❌ Error obteniendo costos: ${e.message}`;
+    }
+  }
+
+  /**
+   * "health" — health check del sistema en tiempo real
+   */
+  async _cmdHealthCheck() {
+    try {
+      const { supabase } = require('../core/supabase');
+
+      const supabaseOk = await supabase.from('conversations')
+        .select('id', { count: 'exact', head: true }).limit(1)
+        .then(r => !r.error).catch(() => false);
+
+      const claudeOk = !!process.env.ANTHROPIC_API_KEY;
+      const twilioOk = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+      const higgsfield = process.env.HIGGSFIELD_API_KEY && process.env.HIGGSFIELD_API_KEY !== 'PENDING';
+
+      const status = (supabaseOk && claudeOk && twilioOk) ? '✅ Sano' : '🔴 Degradado';
+
+      return `🩺 *Health Check*\n\n` +
+             `${supabaseOk ? '✅' : '❌'} Supabase\n` +
+             `${claudeOk ? '✅' : '❌'} Claude API\n` +
+             `${twilioOk ? '✅' : '❌'} Twilio/WhatsApp\n` +
+             `${higgsfield ? '✅' : '⏳'} Higgsfield (imágenes)\n\n` +
+             `*Estado general:* ${status}\n` +
+             `_${new Date().toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City' })} CDMX_`;
+    } catch (e) {
+      return `❌ Error en health check: ${e.message}`;
+    }
+  }
+
   _cmdAyuda() {
     return `🤖 *COMANDOS DISPONIBLES:*
 
@@ -1408,12 +1720,19 @@ Responde "ayuda" para ver todos los comandos.`;
 👥 *equipo* — Status real del equipo (qué está haciendo cada uno)
 💼 *asigna trabajo* — Poner a investigar a los que estén idle
 💰 *cuánto va el mes* — Revenue vs meta
+💸 *costo hoy* — Cuánto hemos gastado hoy en APIs
+🩺 *health* — Estado de todos los servicios
+
+🎨 *crea arte [descripción]* — Generar imagen con Carlos (v6)
+✅ *apruebo job_[id]* — Aprobar arte generado
+🔄 *ajustar [id] [cambio]* — Solicitar revisión del arte
+
 🎯 *prospecto top* — Top 5 AXIOM con mensajes
 🔍 *axiom scan* — Lanzar scan manual
 🔮 *oracle consejo* — Observación estratégica
 
-✅ *apruebo [N]* — Aprobar arte #N
-❌ *rechazo [N] [razón]* — Rechazar arte #N
+✅ *apruebo [N]* — Aprobar arte #N de la parrilla
+❌ *rechazo [N] [razón]* — Rechazar arte #N de la parrilla
 🚀 *genera parrilla fif [mes]* — Lanzar pipeline FIF
 
 *SI* — Confirmar upsell pendiente
