@@ -118,6 +118,46 @@ async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = nu
     // Process the agent's natural reply
     const result = await agent.processMessage({ from, text, channel, mediaUrl });
 
+    // ── WhatsApp → Vercel Office sync ────────────────────────────────────────
+    // Cuando llega un mensaje de WhatsApp, emitir a todos los clientes conectados
+    // al dashboard para que vean la conversación en tiempo real:
+    //   · new_message  → Mariana anima (manejado por OfficeScene)
+    //   · chat_bubble  → burbuja con el texto sobre Mariana / agente
+    //   · wa_message   → ChatPanel recibe mensajes vía Socket en vivo
+    if (global.io && channel !== 'web') {
+      global.io.emit('new_message', { from, channel });
+
+      if (text) {
+        global.io.emit('chat_bubble', {
+          agent: 'mariana',
+          text: `📱 ${text.slice(0, 120)}`,
+          kind: 'whatsapp_in'
+        });
+      }
+
+      if (result && typeof result === 'string') {
+        global.io.emit('chat_bubble', {
+          agent: targetSlug,
+          text: result.slice(0, 200),
+          kind: 'whatsapp_out'
+        });
+      }
+
+      // wa_message para ChatPanel (conversación unificada en tiempo real)
+      global.io.emit('wa_message', {
+        direction: 'in', from,
+        text: text?.slice(0, 800), agent: 'mariana',
+        channel, isNeiky, ts: Date.now()
+      });
+      if (result && typeof result === 'string') {
+        global.io.emit('wa_message', {
+          direction: 'out', from: targetSlug,
+          text: result.slice(0, 800), agent: targetSlug,
+          channel, isNeiky, ts: Date.now()
+        });
+      }
+    }
+
     // Cross-channel sync: if Neiky from WhatsApp sent a delegation request,
     // ALSO trigger the visual task pipeline so the Office View animates
     // (bolita + bubbles + email) in parallel to the WA reply.
