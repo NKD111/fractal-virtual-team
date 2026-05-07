@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { processIncoming } = require('../core/orchestrator');
 const { supabase } = require('../core/supabase');
-const { sendTwilioMessage } = require('../core/whatsapp');
+const { sendTwilioMessage, sendMetaMessage } = require('../core/whatsapp');
 
 // ─── META CLOUD API (Production WhatsApp) ─────────────────────────────────────
 
@@ -55,8 +55,12 @@ router.post('/meta', async (req, res) => {
       processed: false
     });
 
-    // Process
-    await processIncoming({ from, text, channel: 'whatsapp', mediaUrl });
+    // Process y enviar respuesta de vuelta a quien escribió
+    const response = await processIncoming({ from, text, channel: 'whatsapp', mediaUrl });
+    if (response && typeof response === 'string') {
+      await sendMetaMessage(from, response);
+      console.log(`[Webhook Meta] Respuesta enviada a ${from}: "${response.substring(0, 60)}..."`);
+    }
 
     // Mark processed
     await supabase.from('webhooks_log')
