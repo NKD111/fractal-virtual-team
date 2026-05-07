@@ -40,10 +40,10 @@ class BaseAgent {
     this.currentMood = 'neutral';
     this.energyLevel = 80;
 
-    // Servicios
-    this.claude = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY
-    });
+    // Servicios — usar apiKey solo si está definida y no vacía
+    // El SDK de Anthropic lee ANTHROPIC_API_KEY del entorno si no se pasa apiKey
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    this.claude = new Anthropic(apiKey ? { apiKey } : {});
 
     this.supabase = createClient(
       process.env.SUPABASE_URL,
