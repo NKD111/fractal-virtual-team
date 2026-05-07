@@ -1288,22 +1288,31 @@ Responde "ayuda" para ver todos los comandos.`;
   }
 
   async _cmdAxiomScan() {
-    try {
-      // Lanzar en background, confirmar inmediatamente
-      setImmediate(async () => {
-        try {
-          const { runAxiomScan } = require('../routines/axiom-scanner');
-          const result = await runAxiomScan();
-          const { notifyNeiky } = require('../core/whatsapp');
-          await notifyNeiky(`✅ *AXIOM Scan completado*\n${result.inserted} nuevos prospectos insertados.\nResponde "prospecto top" para ver los mejores.`);
-        } catch (e) {
-          console.error('[Mariana CMD] axiom scan error:', e.message);
-        }
-      });
-      return `🔍 *AXIOM Scan iniciado*\n\nAnalizando LinkedIn, Google My Business y otras fuentes...\nTe aviso en ~2 minutos con los resultados.`;
-    } catch (e) {
-      return `❌ Error lanzando AXIOM scan: ${e.message}`;
-    }
+    // Lanzar en background, confirmar inmediatamente
+    setImmediate(async () => {
+      try {
+        const AxiomAgent = require('./axiom.agent');
+        const axiom  = new AxiomAgent();
+        const result = await axiom.scanCycle();
+        const { notifyNeiky } = require('../core/whatsapp');
+        await notifyNeiky(
+          `🔍 *AXIOM Scan completado*\n\n` +
+          `• ${result.opportunities_count} oportunidades detectadas\n` +
+          `• ${result.inserted} nuevas · ${result.updated} actualizadas\n` +
+          `• ${result.urgent_count} urgentes\n` +
+          `• Duración: ${result.duration_ms}ms\n\n` +
+          (result.summary?.length
+            ? `Top hallazgos:\n${result.summary.join('\n')}\n\n`
+            : '') +
+          `Responde *prospecto top* para ver el pipeline completo.`
+        );
+      } catch (e) {
+        console.error('[Mariana CMD] axiom scan error:', e.message);
+        const { notifyNeiky } = require('../core/whatsapp');
+        notifyNeiky(`⚠️ AXIOM Scan encontró un error: ${e.message}`).catch(() => {});
+      }
+    });
+    return `🔍 *AXIOM Scan iniciado*\n\nAnalizando clientes, proyectos, mensajes recientes...\nTe aviso en ~2 minutos con los resultados completos.`;
   }
 
   async _cmdOracleConsejo() {
