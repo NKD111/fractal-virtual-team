@@ -146,6 +146,97 @@ async function getCostsMonth() {
   } catch (e) { return { total: 0, error: e.message }; }
 }
 
+// ── UPGRADE 5: OBSERVABILIDAD — Latencia + Errores + Costo por agente ──────
+
+/**
+ * Costo agrupado por agente — últimas N horas
+ */
+async function getCostsByAgent(hours = 24) {
+  try {
+    const since = new Date(Date.now() - hours * 3600_000);
+    const { data } = await supabase
+      .from('cost_log')
+      .select('agent, model, cost_usd, input_tokens, output_tokens')
+      .gte('ts', since.toISOString())
+      .not('agent', 'is', null);
+
+    if (!data) return [];
+    const byAgent = {};
+    for (const row of data) {
+      const a = row.agent || 'unknown';
+      if (!byAgent[a]) byAgent[a] = { agent: a, cost_usd: 0, calls: 0, tokens: 0 };
+      byAgent[a].cost_usd += Number(row.cost_usd || 0);
+      byAgent[a].calls++;
+      byAgent[a].tokens += (row.input_tokens || 0) + (row.output_tokens || 0);
+    }
+    return Object.values(byAgent)
+      .map(r => ({ ...r, cost_usd: Math.round(r.cost_usd * 1e5) / 1e5 }))
+      .sort((a, b) => b.cost_usd - a.cost_usd);
+  } catch { return []; }
+}
+
+/**
+ * Latencia promedio por tarea — últimas N horas
+ * Requiere que los logs incluyan context.duration_ms
+ */
+async function getLatencyByTask(hours = 24) {
+  try {
+    const since = new Date(Date.now() - hours * 3600_000);
+    const { data } = await supabase
+      .from('cost_log')
+      .select('task_id, context')
+      .gte('ts', since.toISOString())
+      .not('task_id', 'is', null);
+
+    if (!data) return [];
+    const byTask = {};
+    for (const row of data) {
+      const task = row.task_id || 'unknown';
+      const ms = row.context?.duration_ms;
+      if (!ms) continue;
+      if (!byTask[task]) byTask[task] = { task, total_ms: 0, count: 0 };
+      byTask[task].total_ms += ms;
+      byTask[task].count++;
+    }
+    return Object.values(byTask)
+      .map(t => ({ task: t.task, avg_ms: Math.round(t.total_ms / t.count), calls: t.count }))
+      .sort((a, b) => b.avg_ms - a.avg_ms);
+  } catch { return []; }
+}
+
+/**
+ * Tasa de error por agente — últimas N horas
+ */
+async function getErrorRate(hours = 24) {
+  try {
+    const since = new Date(Date.now() - hours * 3600_000);
+    const { data } = await supabase
+      .from('audit_log')
+      .select('actor, ok')
+      .gte('created_at', since.toISOString());
+
+    if (!data || data.length === 0) return { overall: 0, by_agent: {}, total_calls: 0 };
+
+    const byAgent = {};
+    for (const row of data) {
+      const a = row.actor || 'unknown';
+      if (!byAgent[a]) byAgent[a] = { total: 0, errors: 0 };
+      byAgent[a].total++;
+      if (!row.ok) byAgent[a].errors++;
+    }
+
+    const overall_errors = data.filter(r => !r.ok).length;
+    return {
+      overall: (overall_errors / data.length * 100).toFixed(1),
+      by_agent: Object.entries(byAgent).reduce((acc, [k, v]) => {
+        acc[k] = (v.errors / v.total * 100).toFixed(1) + '%';
+        return acc;
+      }, {}),
+      total_calls: data.length
+    };
+  } catch { return { overall: 0, by_agent: {}, total_calls: 0 }; }
+}
+
 // ── IDEMPOTENCY: prevent double-fire from network retries ─────────────────
 const _idempotencyCache = new Map(); // key → { result, ts }
 const IDEMPOTENCY_TTL_MS = 30_000;
@@ -168,5 +259,6 @@ function idempotent(key, factory) {
 module.exports = {
   audit, logCost, logEmailSent, logImageGen,
   wrapAnthropic, getCostsToday, getCostsMonth, idempotent,
+  getCostsByAgent, getLatencyByTask, getErrorRate,
   PRICING
 };

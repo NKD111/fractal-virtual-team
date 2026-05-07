@@ -233,7 +233,17 @@ async function saveMemory(data) {
  * Construye un bloque de contexto con memorias relevantes para inyectar en prompts.
  * Los agentes llaman esto antes de generar contenido.
  */
-async function buildMemoryContext(cliente, tipo_pieza = null) {
+async function buildMemoryContext(cliente, tipo_pieza = null, brief_text = '') {
+  // UPGRADE 4: Intentar búsqueda semántica primero
+  // Si semantic-memory está disponible y Voyage/OpenAI key configurada → resultados mejores
+  try {
+    const { buildSemanticContext } = require('./semantic-memory');
+    const semanticCtx = await buildSemanticContext(cliente, tipo_pieza, brief_text);
+    if (semanticCtx && semanticCtx.length > 50) {
+      return semanticCtx; // Usar contexto semántico si tiene contenido
+    }
+  } catch { /* fallback a búsqueda exacta */ }
+
   const memorias = await getRelevantMemory(null, cliente, tipo_pieza, 8);
 
   if (!memorias.length) return '';

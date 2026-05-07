@@ -261,6 +261,67 @@ router.get('/business-os', async (req, res) => {
   }
 });
 
+// ── GET /api/dashboard/telemetry ─────────────────────────────────────────────
+// UPGRADE 5: Observabilidad completa — costo, latencia, errores en tiempo real
+router.get('/telemetry', async (req, res) => {
+  try {
+    const { getCostsToday, getCostsMonth, getCostsByAgent, getLatencyByTask, getErrorRate } = require('../core/telemetry');
+    const { getCacheStats } = require('../core/claude-cache');
+    const hours = parseInt(req.query.hours) || 24;
+
+    const [costHoy, costMes, costByAgent, latencia, errores] = await Promise.allSettled([
+      getCostsToday(),
+      getCostsMonth(),
+      getCostsByAgent(hours),
+      getLatencyByTask(hours),
+      getErrorRate(hours)
+    ]);
+
+    const cacheStats = getCacheStats();
+
+    res.json({
+      success:   true,
+      periodo:   `últimas ${hours}h`,
+      timestamp: new Date().toISOString(),
+
+      costos: {
+        hoy:           costHoy.status === 'fulfilled' ? costHoy.value : { error: costHoy.reason?.message },
+        mes:           costMes.status === 'fulfilled' ? costMes.value : { error: costMes.reason?.message },
+        por_agente:    costByAgent.status === 'fulfilled' ? costByAgent.value : [],
+      },
+
+      latencia: {
+        por_tarea:     latencia.status === 'fulfilled' ? latencia.value : [],
+        nota:          'Capas QA: objetivo <8000ms con UPGRADE 1 turbo'
+      },
+
+      errores: errores.status === 'fulfilled' ? errores.value : { overall: 'N/A' },
+
+      cache: cacheStats,
+
+      alertas: await buildTelemetryAlerts(
+        costHoy.status === 'fulfilled' ? costHoy.value?.total : 0,
+        latencia.status === 'fulfilled' ? latencia.value : [],
+        errores.status === 'fulfilled' ? errores.value : {}
+      )
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+async function buildTelemetryAlerts(costToday, latencias, errorRates) {
+  const alerts = [];
+  if (costToday > 10) alerts.push({ level: 'warn', msg: `Costo hoy: $${costToday} USD (umbral: $10)` });
+  if (costToday > 25) alerts.push({ level: 'critical', msg: `Costo crítico: $${costToday} USD` });
+  const slowTasks = latencias.filter(t => t.avg_ms > 15000);
+  if (slowTasks.length) alerts.push({ level: 'warn', msg: `Tareas lentas (>15s): ${slowTasks.map(t => t.task).join(', ')}` });
+  const errRate = parseFloat(errorRates.overall);
+  if (errRate > 10) alerts.push({ level: 'warn', msg: `Tasa de error: ${errorRates.overall}% (umbral: 10%)` });
+  if (errRate > 25) alerts.push({ level: 'critical', msg: `Error rate crítica: ${errorRates.overall}%` });
+  return alerts;
+}
+
 // ── GET /api/dashboard/circuit-breakers ──────────────────────────────────────
 // UPGRADE 3: Estado en tiempo real de todos los circuit breakers
 // Muestra qué servicios están caídos, cuántos fallos tienen y error rate

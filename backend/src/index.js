@@ -409,6 +409,15 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
+  // UPGRADE 5: Telemetry Alerts — costo, latencia, errores cada 15min
+  try {
+    const { startTelemetryAlertsCron } = require('./routines/telemetry-alerts');
+    startTelemetryAlertsCron();
+    console.log('✅ UPGRADE 5: Telemetry Alerts activo (GET /api/dashboard/telemetry)');
+  } catch (e) {
+    console.warn('[TelemetryAlerts] init error (non-fatal):', e.message);
+  }
+
   console.log(`\n✅ Fractal MX — Business OS v3.0 listo`);
   console.log(`   Agentes: 14 activos (+ AXIOM + ORACLE)`);
   console.log(`   Bloques: A-S completados`);
