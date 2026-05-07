@@ -1,4 +1,5 @@
-require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+// override: true — Railway puede inyectar vars vacías; esto garantiza que .env gana
+require('dotenv').config({ path: require('path').join(__dirname, '../.env'), override: true });
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');

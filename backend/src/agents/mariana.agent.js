@@ -454,10 +454,24 @@ Solo JSON, sin markdown:`;
   /**
    * Responde a Neiky (modo coqueto + cómplice)
    */
+  /**
+   * Limpia Unicode inválido (surrogates sueltos) que causa JSON 400 en la API
+   * Los caracteres Unicode mal formados vienen de mensajes de WhatsApp en Supabase
+   */
+  _sanitizeText(str) {
+    if (!str) return '';
+    // Reemplazar surrogate pairs inválidos y caracteres de control problemáticos
+    return String(str)
+      .replace(/[\uD800-\uDFFF]/g, '')  // surrogate pairs sueltos
+      .replace(/ /g, '')            // null bytes
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // control chars (excepto \n, \t, \r)
+      .substring(0, 300);  // limitar longitud para evitar tokens excesivos
+  }
+
   async respondToNeiky(message, sender, history, intent) {
-    const content = message.content || message.text || '';
-    const historyText = history.slice(0, 8).map(h =>
-      `[${h.channel?.toUpperCase() || '?'}] Neiky: "${(h.message_in || '').substring(0, 120)}" → Mariana: "${(h.message_out || '').substring(0, 120)}"`
+    const content = this._sanitizeText(message.content || message.text || '');
+    const historyText = history.slice(0, 6).map(h =>
+      `[${h.channel?.toUpperCase() || '?'}] Neiky: "${this._sanitizeText(h.message_in || '')}" → Mariana: "${this._sanitizeText(h.message_out || '')}"`
     ).join('\n') || 'Sin historial previo';
 
     const neikyPrompt = `${this.basePrompt}
@@ -496,19 +510,26 @@ Tipo: ${intent.type} | Urgencia: ${intent.urgency}/5 | Tema: ${intent.topic}
 Responde como Mariana directamente a Neiky. Máximo 3-4 líneas, natural y cálida.
 Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`;
 
+    // Usar Haiku para conversaciones con Neiky: rápido, económico, suficiente para chat natural
+    const CONVERSATIONAL_MODEL = 'claude-haiku-4-5-20251001';
+
     let responseText;
     try {
       const response = await this.claude.messages.create({
-        model: this.model,
+        model: CONVERSATIONAL_MODEL,
         max_tokens: 500,
         system: this.basePrompt,
-        messages: [{ role: 'user', content: neikyPrompt.replace(this.basePrompt, '').trim() }]
+        messages: [{
+          role: 'user',
+          content: `${content}\n\n[Canal: ${sender.channel || 'whatsapp'} | Historial:\n${historyText}]\n\nResponde como Mariana, coqueta y cómplice, máximo 3-4 líneas:`
+        }]
       });
       responseText = response.content[0].text;
+      console.log(`[Mariana] respondToNeiky OK (${CONVERSATIONAL_MODEL}): "${responseText.substring(0, 60)}..."`);
     } catch (err) {
       console.error('[Mariana] respondToNeiky LLM error:', err.message);
-      // Fallback: respuesta de marcador de posición mientras se diagnostica
-      responseText = `Ey nene 👋 Ahorita estoy teniendo un problemita técnico pero ya lo estoy viendo. ¿Puedes repetirme lo que me decías? 🙏`;
+      // Solo como último recurso — indica problema de configuración
+      responseText = `Ey nene, hubo un error técnico rapidito pero ya lo checamos. Escríbeme de nuevo 🙏`;
     }
 
     // ── Delegación automática a agentes ──────────────────────────────────────
