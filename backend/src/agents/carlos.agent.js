@@ -7,6 +7,11 @@ const BaseAgent = require('../core/BaseAgent');
 const CARLOS_PROMPT = require('../prompts/carlos.prompts');
 const higgsfield = require('../core/higgsfield-client');
 const { buildMemoryContext } = require('../core/memory-engine');
+const {
+  generateNoTextImagePrompt,
+  generateTypographySpec,
+  validateBriefForTypography,
+} = require('../core/typography-spec');
 
 // ─── SISTEMA DE PROMPTS FIF (BLOQUE H) ────────────────────────────────────────
 // Base siempre presente en cada imagen generada para FIF.
@@ -366,17 +371,46 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
       ? FIF_VISUAL_SYSTEM.composicion_banner
       : FIF_VISUAL_SYSTEM.composicion_post;
 
-    return [
+    // ── REGLA CRÍTICA: NUNCA inyectar texto del headline en el prompt de imagen ──
+    // El texto se monta en post-producción con Gotham. Ver typography-spec.js.
+    // El headline se usa SOLO como contexto de tono visual, NO como texto a renderizar.
+    const tono_visual = brief.headline
+      ? `Visual tone reference (DO NOT render as text): ${brief.headline}`
+      : '';
+
+    const basePrompt = [
       FIF_VISUAL_SYSTEM.base,
       FIF_VISUAL_SYSTEM.fotografia,
       composicion,
       `BRIEF ESPECÍFICO:\n${brief.prompt_higgsfield || brief.concepto || ''}`,
-      brief.headline ? `Headline concept: "${brief.headline}"` : '',
+      tono_visual,
       brief.objetivo ? `Visual objective: ${brief.objetivo}` : '',
       brief.notas_para_carlos ? brief.notas_para_carlos : '',
-      // UPGRADE 4: contexto de memoria semántica (victorias, errores, patrones)
       memoriaCtx ? `\n${memoriaCtx}` : ''
     ].filter(Boolean).join('\n\n');
+
+    // Siempre pasar por generateNoTextImagePrompt para garantizar zonas limpias
+    return generateNoTextImagePrompt(basePrompt, brief.tipo_pieza || 'post_informativo', brief);
+  }
+
+  /**
+   * PASO 2: Genera el spec tipográfico para una pieza.
+   * Debe llamarse DESPUÉS de generar la imagen base.
+   * El spec es lo que Claudia/producción monta en Photoshop/Canva.
+   */
+  generateTypographySpecForBrief(brief) {
+    const content = {
+      headline:      brief.headline     || '',
+      subheadline:   brief.subheadline  || brief.descripcion || '',
+      cta:           brief.cta          || 'REGÍSTRATE AHORA',
+      fecha:         brief.fecha        || '',
+      sede:          brief.sede         || '',
+      url:           brief.url          || 'www.efg.com.mx',
+      dato_clave:    brief.dato_clave   || '',
+      eyebrow:       brief.eyebrow      || (brief.cliente || 'EFG').toUpperCase(),
+      bullets:       brief.bullets      || [],
+    };
+    return generateTypographySpec(brief, content);
   }
 
   /**
@@ -395,6 +429,15 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
       return this.generateCarousel(brief);
     }
 
+    // ── VALIDACIÓN TIPOGRÁFICA ANTES DE GENERAR ───────────────────────────────
+    const typoValidation = validateBriefForTypography(brief);
+    if (!typoValidation.valid) {
+      console.warn(`[Carlos] Brief incompleto para spec tipográfico:`, typoValidation.errors);
+    }
+    if (typoValidation.warnings.length > 0) {
+      console.log(`[Carlos] Advertencias brief:`, typoValidation.warnings);
+    }
+
     // UPGRADE 4: Enriquecer prompt con memoria semántica
     let memoriaCtx = '';
     try {
@@ -408,13 +451,15 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
       }
     } catch { /* no bloquea si falla */ }
 
-    // Pieza individual
+    // ── PASO 1: Imagen BASE sin texto (buildPromptFromBrief ya aplica no-text rules) ──
     const prompt = this.buildPromptFromBrief(brief, memoriaCtx);
     const isBanner = brief.tipo_pieza === 'banner';
     const aspectRatio = isBanner ? '16:9' : '4:5';
     const quality = '2k';
 
-    console.log(`🎨 CARLOS [generateFromBrief]: ${brief.tipo_pieza} — "${prompt.substring(0, 80)}..."`);
+    console.log(`🎨 CARLOS [PASO 1 - Background sin texto]: ${brief.tipo_pieza} — "${prompt.substring(0, 80)}..."`);
+
+    let imageResult = null;
 
     // GPT Image 2 primary
     try {
@@ -423,37 +468,63 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
         higgsfield.generateImage(prompt, { model: 'gpt_image_2', aspectRatio: primaryRatio, quality }),
         higgsfield.generateImage(prompt, { model: 'gpt_image_2', aspectRatio: primaryRatio, quality })
       ]);
-
-      // Save to Supabase if brief has ID
-      if (brief.id) {
-        try {
-          const { supabase } = require('../core/supabase');
-          await supabase.from('parrilla_briefs').update({
-            url_arte_final: v1.resultUrl,
-            url_arte_v2: v2.resultUrl,
-            status: 'listo_qc'
-          }).eq('id', brief.id);
-        } catch (dbErr) {
-          console.warn('[Carlos generateFromBrief] DB update error (non-fatal):', dbErr.message);
-        }
-      }
-
-      return { success: true, images: [v1, v2], model_used: 'gpt_image_2', prompt };
+      imageResult = { images: [v1, v2], model_used: 'gpt_image_2' };
+      console.log(`✅ CARLOS [PASO 1]: Background generado (GPT Image 2)`);
     } catch (e) {
       console.warn(`[Carlos] GPT Image 2 falló (${e.message}), usando Nano Banana Pro...`);
+      try {
+        const [f1, f2] = await Promise.all([
+          higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality }),
+          higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality })
+        ]);
+        imageResult = { images: [f1, f2], model_used: 'nano_banana_2' };
+        console.log(`✅ CARLOS [PASO 1]: Background generado (Nano Banana Pro - fallback)`);
+      } catch (fallbackErr) {
+        console.error('[Carlos] Ambos modelos fallaron:', fallbackErr.message);
+        return { success: false, error: fallbackErr.message, prompt };
+      }
     }
 
-    // Fallback Nano Banana Pro
-    try {
-      const [f1, f2] = await Promise.all([
-        higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality }),
-        higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality })
-      ]);
-      return { success: true, images: [f1, f2], model_used: 'nano_banana_2', prompt };
-    } catch (fallbackErr) {
-      console.error('[Carlos] Ambos modelos fallaron:', fallbackErr.message);
-      return { success: false, error: fallbackErr.message, prompt };
+    // ── PASO 2: Spec tipográfico (Gotham — consistente 100%) ──────────────────
+    const typoSpec = this.generateTypographySpecForBrief(brief);
+    console.log(`📝 CARLOS [PASO 2 - Typography Spec]: ${typoSpec.capas.length} capas Gotham generadas`);
+
+    // Save to Supabase if brief has ID
+    if (brief.id && imageResult) {
+      try {
+        const { supabase } = require('../core/supabase');
+        await supabase.from('parrilla_briefs').update({
+          url_arte_final:  imageResult.images[0]?.resultUrl,
+          url_arte_v2:     imageResult.images[1]?.resultUrl,
+          status:          'listo_qc',
+          metadata: {
+            ...(brief.metadata || {}),
+            typo_spec:     typoSpec,
+            typo_valid:    typoValidation,
+            pipeline_step: 'background_generated_text_pending',
+            nota_produccion: 'Imagen sin texto generada. Montar texto según typo_spec con Gotham.'
+          }
+        }).eq('id', brief.id);
+      } catch (dbErr) {
+        console.warn('[Carlos generateFromBrief] DB update error (non-fatal):', dbErr.message);
+      }
     }
+
+    return {
+      success:    true,
+      images:     imageResult.images,
+      model_used: imageResult.model_used,
+      prompt,
+      typo_spec:  typoSpec,
+      typo_validation: typoValidation,
+      pipeline_notes: [
+        '✅ Paso 1: Background visual generado SIN texto (listo para montaje)',
+        `✅ Paso 2: Spec tipográfico Gotham generado (${typoSpec.capas.length} capas)`,
+        '⏳ Paso 3: Valentina QC — revisar composición + consistencia de marca',
+        '⏳ Paso 4: Producción monta texto con Gotham según spec',
+        '⏳ Paso 5: QC final antes de entregar a Claudia',
+      ]
+    };
   }
 
   /**

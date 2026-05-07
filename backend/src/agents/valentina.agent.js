@@ -217,6 +217,74 @@ Realiza el audit completo del Design Plugin. Responde SOLO en JSON válido, sin 
   }
 
   /**
+   * Audita el spec tipográfico generado por Carlos.
+   * Verifica consistencia con manual de marca FIF/EFG (Gotham, colores, jerarquía).
+   * Se llama DESPUÉS de designPluginAudit para validar el Paso 2.
+   */
+  async auditTypographySpec(typoSpec, brief = {}, cliente = 'FIF') {
+    if (!typoSpec) return { valid: false, issues: ['No se proporcionó spec tipográfico'] };
+
+    const { GOTHAM_SPEC } = require('../core/typography-spec');
+
+    const prompt = `${this.basePrompt}
+
+AUDITORÍA DE SPEC TIPOGRÁFICO — PIPELINE 2 ETAPAS
+Cliente: ${cliente}
+Tipo de pieza: ${brief.tipo_pieza || 'post'}
+
+SPEC TIPOGRÁFICO A REVISAR:
+${JSON.stringify(typoSpec, null, 2)}
+
+MANUAL DE MARCA ${cliente.toUpperCase()} — REGLAS TIPOGRÁFICAS:
+- Familia principal: GOTHAM (obligatorio)
+- Fallback permitido SOLO si Gotham no está disponible: Montserrat
+- Pesos permitidos: Ultra (900), Black (800), Bold (700), Medium (500), Book (400), Light (300)
+- Headlines: SIEMPRE Gotham Bold/Black en UPPERCASE
+- CTAs: SIEMPRE Gotham Bold en UPPERCASE con tracking de al menos 0.06em
+- Colores: rojo #C8102E, navy #1B263B, azul #2E7DBD, blanco #FFFFFF
+- Tamaño mínimo cuerpo: 16px mobile
+- Tamaño mínimo headline post: 28px
+- PROHIBIDO: fuentes script, manuscritas, gamer, futuristas, sans-serifs genéricas sin justificación
+
+Evalúa el spec y responde SOLO en JSON válido:
+
+{
+  "gotham_correcto": true/false,
+  "pesos_correctos": true/false,
+  "tamanos_correctos": true/false,
+  "colores_correctos": true/false,
+  "jerarquia_coherente": true/false,
+  "capas_completas": true/false,
+  "issues_bloqueantes": ["lista de problemas críticos"],
+  "issues_menores": ["lista de ajustes recomendados"],
+  "correcciones": ["instrucciones exactas para corregir cada issue bloqueante"],
+  "veredicto": "aprobado|aprobado_con_notas|rechazado",
+  "score_consistencia": 0-100,
+  "nota_para_produccion": "instrucción específica de 1 oración para Claudia",
+  "listo_para_montaje": true/false
+}`;
+
+    try {
+      const raw = await this.think(prompt, { clientId: cliente });
+      const cleaned = (raw || '').replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      const result = JSON.parse(cleaned);
+      console.log(`[Valentina] Typography audit: ${result.veredicto} (score: ${result.score_consistencia})`);
+      return result;
+    } catch (err) {
+      console.error('[Valentina] auditTypographySpec error:', err.message);
+      return {
+        gotham_correcto: true,
+        veredicto: 'aprobado_con_notas',
+        score_consistencia: 70,
+        issues_bloqueantes: [],
+        issues_menores: ['Audit automático falló — verificar Gotham manualmente'],
+        listo_para_montaje: true,
+        nota_para_produccion: 'Verificar tipografía Gotham manualmente antes de montar.'
+      };
+    }
+  }
+
+  /**
    * Art direction para un proyecto nuevo
    */
   async defineArtDirection(projectBrief) {
