@@ -395,4 +395,72 @@ Notas: ${clientNotes || 'Sin notas'}`;
   }
 });
 
+// ─── POST /api/creative/design-plugin-audit ───────────────────────────────────
+// Ejecuta el audit de 4 capas del Design Plugin sobre un brief específico.
+// Body: { brief_id } o { brief: {...}, art_url: '...', cliente: 'FIF' }
+//
+// Retorna JSON con veredictos por capa + dev handoff notes para Claudia.
+router.post('/design-plugin-audit', async (req, res) => {
+  try {
+    let brief = req.body.brief;
+    const { brief_id, art_url, cliente = 'FIF' } = req.body;
+
+    // Cargar brief desde Supabase si solo viene el ID
+    if (!brief && brief_id) {
+      const { data, error } = await supabase
+        .from('parrilla_briefs')
+        .select('*')
+        .eq('id', brief_id)
+        .single();
+      if (error || !data) return res.status(404).json({ error: 'Brief no encontrado', brief_id });
+      brief = data;
+    }
+
+    if (!brief) return res.status(400).json({ error: 'Se requiere brief o brief_id' });
+
+    // Instanciar Valentina
+    let valentina;
+    try {
+      const ValentinaAgent = require('../agents/valentina.agent');
+      valentina = new ValentinaAgent();
+    } catch (e) {
+      return res.status(500).json({ error: 'No se pudo instanciar ValentinaAgent', detail: e.message });
+    }
+
+    const artUrl = art_url || brief.url_arte_final || '';
+    const clienteNombre = cliente || brief.cliente || 'FIF';
+
+    console.log(`[creative/design-plugin-audit] Brief: ${brief.id || 'manual'} | ${clienteNombre} | ${brief.tipo_pieza || 'post'}`);
+
+    const audit = await valentina.designPluginAudit(brief, artUrl, clienteNombre);
+
+    // Guardar notas_entrega en Supabase si viene de un brief_id
+    if (brief_id && audit.dev_handoff?.notas_para_claudia) {
+      try {
+        await supabase.from('parrilla_briefs').update({
+          notas_entrega: audit.dev_handoff.notas_para_claudia
+        }).eq('id', brief_id);
+      } catch { /* non-fatal */ }
+    }
+
+    await auditLog('design_plugin_audit', {
+      brief_id: brief_id || brief.id,
+      cliente: clienteNombre,
+      overall_status: audit.overall_status,
+      score: audit.overall_score
+    });
+
+    res.json({
+      ok: true,
+      brief_id: brief_id || brief.id,
+      cliente: clienteNombre,
+      audit,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[creative/design-plugin-audit]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

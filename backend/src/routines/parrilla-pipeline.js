@@ -26,6 +26,15 @@ const { decideArteRechazado } = require('../core/oracle-decision');
 // UPGRADE 1: Response caching + timeout helper
 const { cachedQACall } = require('../core/claude-cache');
 
+// Design Plugin: Valentina agent para las 4 capas de revisión
+let _valentinaAgent = null;
+function getValentinaAgent() {
+  if (!_valentinaAgent) {
+    try { _valentinaAgent = new (require('../agents/valentina.agent'))(); } catch {}
+  }
+  return _valentinaAgent;
+}
+
 /** Promesa que rechaza después de `ms` milisegundos — usada en Promise.race */
 function timeoutPromise(ms, name) {
   return new Promise((_, reject) =>
@@ -596,32 +605,57 @@ async function fase5_qa(brief_id) {
       logQA(5, '⚠️', `Simulator error (skip): ${e.message}`);
     }
 
-    // ── CAPA 6: VALENTINA — dirección de arte (último filtro) ─────────────────
-    if (global.valentina?.reviewArt) {
-      try {
-        const valentina = await global.valentina.reviewArt({
-          image_url: brief.url_arte_final,
-          brief,
-          standard: '¿Esto justifica $1,000 USD/mes?'
-        });
-        logQA(6, valentina.approved ? '✅' : '❌',
-          `Valentina: ${valentina.approved ? 'APROBADO' : 'RECHAZADO'} — ${valentina.notes || ''}`);
+    // ── CAPA 6: VALENTINA — Design Plugin (4 capas obligatorias) ─────────────
+    try {
+      const valentina = getValentinaAgent();
+      if (valentina?.designPluginAudit) {
+        const dpAudit = await valentina.designPluginAudit(brief, brief.url_arte_final, brief.cliente || 'FIF');
 
-        if (!valentina.approved) {
+        const dpSummary = [
+          `consistency:${dpAudit.consistency?.veredicto || '?'}`,
+          `ux_writing:${dpAudit.ux_writing?.veredicto || '?'}`,
+          `accessibility:${dpAudit.accessibility?.veredicto || '?'}`,
+          `score:${dpAudit.overall_score || 0}`
+        ].join(' | ');
+
+        logQA(6, dpAudit.overall_status === 'rejected' ? '❌' : dpAudit.overall_status === 'approved' ? '✅' : '⚠️',
+          `Valentina Design Plugin: ${dpAudit.overall_status} — ${dpSummary}`);
+
+        // Guardar notas de dev handoff en el brief
+        if (dpAudit.dev_handoff?.notas_para_claudia) {
+          try {
+            await updateBriefStatus(brief_id, undefined, {
+              notas_entrega: dpAudit.dev_handoff.notas_para_claudia
+            });
+          } catch { /* non-fatal */ }
+        }
+
+        if (dpAudit.overall_status === 'rejected') {
           let oDecision = null;
           try {
-            oDecision = await decideArteRechazado(brief, 'valentina_art_direction', valentina.notes || 'No cumple estándar Valentina');
+            const motivo = (dpAudit.bloqueantes || []).join('; ') || 'No cumple Design Plugin';
+            oDecision = await decideArteRechazado(brief, 'valentina_design_plugin', motivo);
           } catch { /* non-fatal */ }
           await updateBriefStatus(brief_id, 'rework', {
-            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA] ${valentina.notes}`
+            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA] ${(dpAudit.bloqueantes || []).join('; ')}`
           });
-          return { passed: false, reason: oDecision?.razon || 'Rechazado por Valentina', notes: valentina.notes, oracle_decision: oDecision, qa_log: qaLog };
+          return { passed: false, reason: oDecision?.razon || 'Rechazado: Design Plugin', design_audit: dpAudit, oracle_decision: oDecision, qa_log: qaLog };
         }
-      } catch (e) {
-        logQA(6, '⚠️', `Valentina error (skip): ${e.message}`);
+      } else if (global.valentina?.reviewArt) {
+        // Fallback: reviewArt legacy
+        const valentina_legacy = await global.valentina.reviewArt({
+          image_url: brief.url_arte_final, brief, standard: '¿Esto justifica $1,000 USD/mes?'
+        });
+        logQA(6, valentina_legacy.approved ? '✅' : '❌', `Valentina legacy: ${valentina_legacy.notes || ''}`);
+        if (!valentina_legacy.approved) {
+          await updateBriefStatus(brief_id, 'rework', { notas_revision: `[VALENTINA] ${valentina_legacy.notes}` });
+          return { passed: false, reason: 'Rechazado por Valentina', qa_log: qaLog };
+        }
+      } else {
+        logQA(6, '⏭️', 'Valentina no disponible — auto-aprobando');
       }
-    } else {
-      logQA(6, '⏭️', 'Valentina no disponible — auto-aprobando');
+    } catch (e) {
+      logQA(6, '⚠️', `Valentina Design Plugin error (skip): ${e.message}`);
     }
 
     // ── TODAS LAS CAPAS PASADAS ───────────────────────────────────────────────
@@ -798,28 +832,47 @@ async function fase5_qa_turbo(brief_id) {
       return { passed: false, failures, reason: oDecision?.razon || issuesSummary, oracle_decision: oDecision, qa_log: qaLog, duration_ms: totalMs };
     }
 
-    // ── CAPA 6: Valentina — post-guard ────────────────────────────────────────
-    if (global.valentina?.reviewArt) {
-      try {
-        const valentina = await Promise.race([
-          global.valentina.reviewArt({ image_url: brief.url_arte_final, brief, standard: '¿Esto justifica $1,000 USD/mes?' }),
-          timeoutPromise(10000, 'valentina')
+    // ── CAPA 6: Valentina — Design Plugin (4 capas) post-guard ──────────────
+    try {
+      const valentina = getValentinaAgent();
+      if (valentina?.designPluginAudit) {
+        const dpAudit = await Promise.race([
+          valentina.designPluginAudit(brief, brief.url_arte_final, brief.cliente || 'FIF'),
+          timeoutPromise(12000, 'valentina_design_plugin')
         ]);
-        logQA(6, valentina.approved ? '✅' : '❌', `Valentina: ${valentina.notes || ''}`);
-        if (!valentina.approved) {
+
+        const dpSummary = [
+          `consistency:${dpAudit.consistency?.veredicto || '?'}`,
+          `ux:${dpAudit.ux_writing?.veredicto || '?'}`,
+          `a11y:${dpAudit.accessibility?.veredicto || '?'}`,
+          `score:${dpAudit.overall_score || 0}`
+        ].join(' | ');
+
+        logQA(6, dpAudit.overall_status === 'rejected' ? '❌' : dpAudit.overall_status === 'approved' ? '✅' : '⚠️',
+          `Valentina DesignPlugin: ${dpAudit.overall_status} — ${dpSummary}`);
+
+        // Siempre guardar dev handoff notes en el brief
+        if (dpAudit.dev_handoff?.notas_para_claudia) {
+          try { await updateBriefStatus(brief_id, undefined, { notas_entrega: dpAudit.dev_handoff.notas_para_claudia }); } catch {}
+        }
+
+        if (dpAudit.overall_status === 'rejected') {
           let oDecision = null;
-          try { oDecision = await decideArteRechazado(brief, 'valentina_art_direction', valentina.notes); } catch {}
+          try {
+            const motivo = (dpAudit.bloqueantes || []).join('; ') || 'No cumple Design Plugin';
+            oDecision = await decideArteRechazado(brief, 'valentina_design_plugin', motivo);
+          } catch {}
           await updateBriefStatus(brief_id, 'rework', {
-            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA] ${valentina.notes}`
+            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA DP] ${(dpAudit.bloqueantes || []).join('; ')}`
           });
           const totalMs = Date.now() - startTime;
-          return { passed: false, reason: oDecision?.razon || 'Rechazado por Valentina', oracle_decision: oDecision, qa_log: qaLog, duration_ms: totalMs };
+          return { passed: false, reason: oDecision?.razon || 'Rechazado: Design Plugin', design_audit: dpAudit, oracle_decision: oDecision, qa_log: qaLog, duration_ms: totalMs };
         }
-      } catch (e) {
-        logQA(6, '⚠️', `Valentina skip: ${e.message}`);
+      } else {
+        logQA(6, '⏭️', 'Valentina no disponible');
       }
-    } else {
-      logQA(6, '⏭️', 'Valentina no disponible');
+    } catch (e) {
+      logQA(6, '⚠️', `Valentina DP skip: ${e.message}`);
     }
 
     // ── APROBADO ──────────────────────────────────────────────────────────────
