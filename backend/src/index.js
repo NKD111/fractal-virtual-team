@@ -536,11 +536,12 @@ server.listen(PORT, async () => {
   // Envía a Neiky por WhatsApp el costo real del día vs revenue FIF.
   // Usa cost_log (ya existe) — no requiere ai_cost_events por ahora.
   try {
-    const { getCostsToday } = require('./core/telemetry');
+    const { getCostsToday, recordCronHeartbeat } = require('./core/telemetry');
     const { notifyNeiky } = require('./core/whatsapp');
     const FIF_DAILY_REVENUE = 1000 / 30; // ~$33.33 USD/día (FIF $1k/mes)
 
     async function sendDailyCostReport() {
+      let reportError = null;
       try {
         const costs = await getCostsToday();
         const totalCost = costs.total || 0;
@@ -562,6 +563,10 @@ server.listen(PORT, async () => {
         );
       } catch (e) {
         console.warn('[CostReport] error:', e.message);
+        reportError = e.message;
+      } finally {
+        // Registrar heartbeat (silencioso si tabla no existe aún)
+        await recordCronHeartbeat('daily_cost_report', reportError ? 'error' : 'ok', reportError);
       }
     }
 

@@ -88,12 +88,33 @@ async function sendMetaImage(to, imageUrl, caption = '') {
   return data;
 }
 
-// Notify Fermín (Neiky) directly. Number is +525534189583 (hardcoded
-// fallback if NEIKY_WHATSAPP env is missing in production).
+// Notify Fermín (Neiky) directly.
+// Canal 1: Meta Cloud API; Canal 2: Twilio (fallback si Meta falla).
+// Trunca a 4096 chars (límite WhatsApp).
 async function notifyNeiky(message) {
   const neikyPhone = process.env.NEIKY_WHATSAPP || '+525534189583';
-  if (!neikyPhone) throw new Error('NEIKY_WHATSAPP not configured');
-  return sendMetaMessage(neikyPhone, message);
+  const MAX_WA_LEN = 4096;
+  const safeMsg = message && message.length > MAX_WA_LEN
+    ? message.substring(0, MAX_WA_LEN - 40) + '\n…_(mensaje truncado)_'
+    : message;
+
+  // Intentar Meta primero
+  try {
+    const result = await sendMetaMessage(neikyPhone, safeMsg);
+    return result;
+  } catch (metaErr) {
+    console.warn('[notifyNeiky] Meta falló, intentando Twilio:', metaErr.message);
+  }
+
+  // Fallback Twilio
+  try {
+    const result = await sendTwilioMessage(neikyPhone, safeMsg);
+    console.log('[notifyNeiky] Enviado via Twilio (fallback)');
+    return result;
+  } catch (twilioErr) {
+    console.error('[notifyNeiky] Twilio también falló:', twilioErr.message);
+    throw new Error(`notifyNeiky: ambos canales fallaron. Meta+Twilio down.`);
+  }
 }
 
 module.exports = { sendMetaMessage, sendMetaTemplate, sendMetaImage, notifyNeiky, sendTwilioMessage };
