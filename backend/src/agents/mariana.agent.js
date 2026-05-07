@@ -579,6 +579,13 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
           markTaskFailed(_neikyTaskId, err.message).catch(() => {});
         });
       });
+
+      // ── Follow-up a los 3 minutos con status de la tarea ────────────────────
+      // Neiky recibe un update intermedio de que la tarea está en progreso
+      setTimeout(() => {
+        this._sendTaskStatusUpdate(_neikyTaskId, rawContent, _neikyTaskType)
+          .catch(err => console.warn('[Mariana] 3min status update error:', err.message));
+      }, 3 * 60 * 1000);
     }
 
     return responseText;
@@ -1648,6 +1655,74 @@ Sé concreta y entrega el resultado directamente. Máximo 600 caracteres.`;
     } catch (err) {
       console.error('[Mariana] _launchAgentTask FATAL:', err.message);
       await markTaskFailed(taskId, err.message).catch(() => {});
+    }
+  }
+
+  // ─── Follow-up de tarea a los 3 minutos ──────────────────────────────────
+  /**
+   * Consulta el status de una tarea registrada y envía update a Neiky por WA.
+   * Se dispara automáticamente 3 minutos después de que Neiky asigna una tarea.
+   * Si la tarea ya terminó (notifyTaskComplete la marcó 'completed'), no spamea.
+   */
+  async _sendTaskStatusUpdate(taskId, originalContent, taskType) {
+    if (!taskId) return;
+
+    const { notifyNeiky } = require('../core/whatsapp');
+    const { supabase } = require('../core/supabase');
+
+    // Leer status actual de la tarea
+    let task = null;
+    try {
+      const { data } = await supabase
+        .from('tasks')
+        .select('id, status, assigned_to, description, created_at, completed_at')
+        .eq('id', taskId)
+        .maybeSingle();
+      task = data;
+    } catch (err) {
+      console.warn('[Mariana._sendTaskStatusUpdate] DB read error:', err.message);
+    }
+
+    const statusNow = task?.status || 'working';
+
+    // Si la tarea ya completó, no mandar el 3-min update (ya se notificó al terminar)
+    if (statusNow === 'completed' || statusNow === 'cancelled') {
+      console.log(`[Mariana] _sendTaskStatusUpdate skip — tarea ya ${statusNow}`);
+      return;
+    }
+
+    // Construir mensaje de status intermedio
+    const agentName = task?.assigned_to || 'el equipo';
+    const shortDesc = (originalContent || '').substring(0, 80);
+    const typeEmoji = { design: '🎨', copy: '✍️', research: '🔍', delegation: '📋', general: '⚙️' }[taskType] || '⚙️';
+
+    const statusLabels = {
+      working: 'en progreso',
+      classifying: 'siendo clasificada',
+      pitching: 'preparando el plan',
+      awaiting_confirmation: 'esperando tu confirmación',
+      reviewing: 'en revisión de calidad',
+    };
+
+    const statusLabel = statusLabels[statusNow] || 'en proceso';
+
+    const msg = `${typeEmoji} *Update de tu tarea (3 min)*\n\n` +
+      `📝 "${shortDesc}"\n\n` +
+      `Estado actual: *${statusLabel}*\n` +
+      `Agente: ${agentName.toUpperCase()}\n\n` +
+      `_Te aviso en cuanto esté lista, nene. 🌸_`;
+
+    try {
+      await notifyNeiky(msg);
+      console.log(`[Mariana] _sendTaskStatusUpdate → WA OK (task ${taskId?.substring(0, 8)} | status: ${statusNow})`);
+    } catch (err) {
+      console.warn('[Mariana._sendTaskStatusUpdate] WA error:', err.message);
+      // Intentar Twilio como fallback
+      try {
+        const { sendTwilioMessage } = require('../core/whatsapp');
+        const neikyPhone = process.env.NEIKY_WHATSAPP || 'whatsapp:+525534189583';
+        await sendTwilioMessage(neikyPhone, msg);
+      } catch { /* silencioso */ }
     }
   }
 

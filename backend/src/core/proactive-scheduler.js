@@ -17,9 +17,10 @@ const { createClient } = require('@supabase/supabase-js');
 const moment = require('moment-timezone');
 
 const TIMEZONE = 'America/Mexico_City';
-const MAX_DAILY = 5;
-const HOUR_START = 8;   // 8:00 AM
-const HOUR_END = 21;    // 9:00 PM
+const MAX_DAILY = 50;   // Neiky quiere estar informado constantemente — sin límite real
+const HOUR_START = 9;   // 9:00 AM inicio jornada
+const HOUR_END = 18;    // 6:00 PM fin jornada (descanso del equipo)
+const PULSE_INTERVAL_MIN = 20; // Update de equipo cada 20 minutos durante jornada
 
 // ─── Supabase ────────────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -234,6 +235,93 @@ async function buildFollowUpAlert(followup) {
   return `⚠️ Recordatorio: ${label}${client}${project}${amount}${deadline}${notes}\n\n¿Lo atendemos ahora?`;
 }
 
+// ─── Update de jornada (cada 20 min de 9-18 L-V) ─────────────────────────────
+async function buildWorkingHoursUpdate() {
+  const now = moment().tz(TIMEZONE);
+
+  // Tareas activas (últimas 2 horas)
+  let activeTasksText = '';
+  try {
+    const twoHoursAgo = now.clone().subtract(2, 'hours').toISOString();
+    const { data: activeTasks } = await supabase
+      .from('tasks')
+      .select('agent_assigned, message, status, created_at')
+      .in('status', ['working', 'classifying', 'pitching', 'awaiting_confirmation', 'reviewing'])
+      .gte('created_at', twoHoursAgo)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (activeTasks?.length > 0) {
+      const taskLines = activeTasks.map(t => {
+        const agt = (t.agent_assigned || 'Mariana').toUpperCase();
+        const statusLabel = { working: '🔄 ejecutando', classifying: '🔍 clasificando', pitching: '📋 enviando plan', awaiting_confirmation: '⏳ esperando OK', reviewing: '👁 en revisión' }[t.status] || t.status;
+        return `• ${agt}: ${statusLabel} — "${(t.message || '').substring(0, 50)}"`;
+      });
+      activeTasksText = `\n\n📋 *Tareas activas:*\n${taskLines.join('\n')}`;
+    }
+  } catch { /* no bloquear */ }
+
+  // Agentes con auto-work reciente
+  let teamText = '';
+  try {
+    const { getTeamStatus } = require('./agent-work-manager');
+    const teamStatus = await getTeamStatus();
+    const busy = teamStatus.filter(a => a.status === 'working');
+    const idle = teamStatus.filter(a => a.status === 'idle');
+
+    if (busy.length > 0) {
+      const busyList = busy.slice(0, 4).map(a => `${a.name || a.agent}`).join(', ');
+      teamText += `\n👥 *Trabajando:* ${busyList}`;
+    }
+    if (idle.length > 0) {
+      teamText += `\n💤 *Disponibles:* ${idle.length} agente(s)`;
+    }
+  } catch { /* no bloquear */ }
+
+  const hora = now.format('HH:mm');
+  return `🏢 *Update ${hora}h — Fractal MX*${activeTasksText}${teamText}\n\n_Escribe "equipo" para ver detalles · "asigna trabajo" para activar al equipo_`;
+}
+
+async function executeWorkingHoursUpdate() {
+  const now = moment().tz(TIMEZONE);
+  const hour = now.hour();
+  const day = now.day();
+
+  // Solo de lunes (1) a viernes (5), 9-18h
+  if (day < 1 || day > 5 || hour < HOUR_START || hour >= HOUR_END) return;
+
+  try {
+    // Si hay tareas activas o agentes idle → siempre enviar
+    // Si todo está tranquilo → enviar de todas formas (Neiky quiere saber)
+    const msg = await buildWorkingHoursUpdate();
+
+    // Auto-delegación cuando el equipo está idle — ponemos a trabajar a los que están libres
+    try {
+      const { getTeamStatus, assignAutoWork } = require('./agent-work-manager');
+      const teamStatus = await getTeamStatus();
+      const idleAgents = teamStatus.filter(a => a.status === 'idle');
+
+      if (idleAgents.length >= 3) {
+        // Más de 3 agentes idle → poner a trabajar automáticamente (silencioso)
+        setImmediate(async () => {
+          try {
+            const suggestions = await assignAutoWork(idleAgents.slice(0, 3).map(a => a.agent));
+            if (suggestions?.length > 0) {
+              console.log(`[ProactiveScheduler] Auto-work asignado a ${suggestions.length} agentes idle`);
+            }
+          } catch (e) {
+            console.warn('[ProactiveScheduler] assignAutoWork error:', e.message);
+          }
+        });
+      }
+    } catch { /* no bloquear el update */ }
+
+    await sendProactiveToNeiky(msg, 'working_hours_update', null, 2);
+  } catch (err) {
+    console.error('[ProactiveScheduler] executeWorkingHoursUpdate error:', err.message);
+  }
+}
+
 // ─── Ejecutores por tipo de job ───────────────────────────────────────────────
 
 async function executeMorningCheckin() {
@@ -354,10 +442,11 @@ function scheduleWithBullMQ(queue) {
 
   // BullMQ Repeat jobs para checks periódicos
   const jobs = [
-    { name: 'morning-checkin', data: { type: 'morning_checkin' }, opts: { repeat: { pattern: '30 8 * * 1-5', tz: TIMEZONE } } },
+    { name: 'morning-checkin', data: { type: 'morning_checkin' }, opts: { repeat: { pattern: '30 9 * * 1-5', tz: TIMEZONE } } },
     { name: 'evening-checkin', data: { type: 'evening_checkin' }, opts: { repeat: { pattern: '0 18 * * 1-5', tz: TIMEZONE } } },
     { name: 'auto-followups', data: { type: 'auto_followups' }, opts: { repeat: { every: 30 * 60 * 1000 } } },
     { name: 'critical-alerts', data: { type: 'critical_alerts' }, opts: { repeat: { every: 60 * 60 * 1000 } } },
+    { name: 'working-hours-update', data: { type: 'working_hours_update' }, opts: { repeat: { every: PULSE_INTERVAL_MIN * 60 * 1000 } } },
   ];
 
   for (const job of jobs) {
@@ -394,7 +483,12 @@ function scheduleWithIntervals() {
     await executeCriticalAlerts().catch(e => console.error('[CriticalAlerts]', e.message));
   }, 60 * 60 * 1000);
 
-  scheduledIntervals.push(checkinInterval, followupInterval, alertInterval);
+  // Pulse de jornada: cada 20 min de 9-18h L-V
+  const pulseInterval = setInterval(async () => {
+    await executeWorkingHoursUpdate().catch(e => console.error('[WorkingHoursPulse]', e.message));
+  }, PULSE_INTERVAL_MIN * 60 * 1000);
+
+  scheduledIntervals.push(checkinInterval, followupInterval, alertInterval, pulseInterval);
 }
 
 // ─── API pública ──────────────────────────────────────────────────────────────
@@ -444,10 +538,11 @@ async function scheduleFollowUp({ type, context = {}, executeAt, priority = 2, c
 // Ejecutar un job por tipo (usado por el worker BullMQ)
 async function executeJobType(type) {
   switch (type) {
-    case 'morning_checkin': return executeMorningCheckin();
-    case 'evening_checkin': return executeEveningCheckin();
-    case 'auto_followups':  return executeAutoFollowUps();
-    case 'critical_alerts': return executeCriticalAlerts();
+    case 'morning_checkin':      return executeMorningCheckin();
+    case 'evening_checkin':      return executeEveningCheckin();
+    case 'auto_followups':       return executeAutoFollowUps();
+    case 'critical_alerts':      return executeCriticalAlerts();
+    case 'working_hours_update': return executeWorkingHoursUpdate();
     default: console.warn(`[ProactiveScheduler] Tipo de job desconocido: ${type}`);
   }
 }
@@ -459,6 +554,7 @@ module.exports = {
   analyzeForFollowUp,
   executeJobType,
   sendProactiveToNeiky,
+  executeWorkingHoursUpdate,
   canSend,
   getProactiveQueue
 };
