@@ -464,6 +464,21 @@ async function runTask({ message, userEmail = 'nakedgeometry19@gmail.com', sourc
     awaiting_confirmation: true
   });
 
+  // ── WA: avisarle a Neiky que el pitch llegó a su correo ────────────────────
+  try {
+    const { notifyNeiky } = require('../core/whatsapp');
+    const agentLabel = plan.agent[0].toUpperCase() + plan.agent.slice(1);
+    const confirmUrl = `${PUBLIC_URL}/api/task/${taskId}/confirm-page`;
+    const waMsg = emailResult.ok
+      ? `📋 *${agentLabel}* te mandó su plan por correo, nene.\n\n` +
+        `_Responde el correo con tu OK, o entra aquí para confirmar y arrancar la entrega:_\n${confirmUrl}`
+      : `📋 *${agentLabel}* terminó su plan pero el correo falló.\n\n` +
+        `Confirma directo aquí para arrancar la entrega:\n${confirmUrl}`;
+    await notifyNeiky(waMsg);
+  } catch (waErr) {
+    console.warn('[TaskRunner] WA pitch notify error (non-fatal):', waErr.message);
+  }
+
   return { ok: true, taskId, phase: 'pitch', awaiting_confirmation: true,
     agent: plan.agent, email_sent: emailResult.ok };
 }
@@ -579,6 +594,31 @@ async function resumeTask({ taskId, feedback = '', source = 'web-confirm' }) {
     image_url: image?.url || null,
     delivered: true
   });
+
+  // ── Notificación WhatsApp de entrega final ─────────────────────────────────
+  // Garantiza que Neiky recibe el aviso aunque el email falle.
+  // Esto resuelve el "acepto en el email pero no pasa nada después".
+  try {
+    const { notifyNeiky } = require('../core/whatsapp');
+    const agentLabel = task.agent_assigned ? task.agent_assigned.toUpperCase() : 'El equipo';
+    const briefSnip  = (task.brief || '').substring(0, 80);
+    const nextStep   = (summary.next_steps?.[0]) || 'Revisar y aprobar';
+    const emailNote  = emailResult.ok
+      ? `📧 Te mandé el detalle completo a tu correo.`
+      : `⚠️ El correo no pudo enviarse, pero aquí va el resumen:`;
+
+    const waMsg = `✅ *Tarea entregada, nene!*\n\n` +
+      `🏷 *${agentLabel}* terminó: "${briefSnip}"\n\n` +
+      `${emailNote}\n\n` +
+      `📋 *Resumen:* ${summary.subject}\n` +
+      (image?.url ? `🖼 *Imagen:* ${image.url}\n\n` : '\n') +
+      `🚀 *Próximo paso:* ${nextStep}`;
+
+    await notifyNeiky(waMsg);
+    console.log(`[TaskRunner] ✅ WA entrega enviada a Neiky — task ${taskId}`);
+  } catch (waErr) {
+    console.warn('[TaskRunner] WA notifyNeiky error (non-fatal):', waErr.message);
+  }
 
   // Auto: capture win signal if QC passed + case study generation
   if (emailResult.ok) {
