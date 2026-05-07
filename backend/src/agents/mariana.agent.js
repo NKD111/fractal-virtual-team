@@ -509,6 +509,19 @@ Solo JSON, sin markdown:`;
       `[${h.channel?.toUpperCase() || '?'}] Neiky: "${this._sanitizeText(h.message_in || '')}" → Mariana: "${this._sanitizeText(h.message_out || '')}"`
     ).join('\n') || 'Sin historial previo';
 
+    // ── Sección extra para tareas detectadas — Haiku debe dar ACK, NO preguntas ──
+    const taskAckSection = _neikyTaskId
+      ? `\n\n═══ ⚡ TAREA EN EJECUCIÓN (CRÍTICO — LEER ANTES DE RESPONDER) ═══\nEl sistema YA registró y está ejecutando la tarea de Neiky en background.
+REGLAS OBLIGATORIAS para tu respuesta:
+1. NUNCA preguntes datos adicionales — la tarea ya empezó con la info disponible.
+2. Da un ACK cálido y concreto: confirma que YA la pasaste al agente correcto.
+3. Di que Neiky recibirá el resultado por WhatsApp en cuanto esté listo.
+4. Sé muy breve: 2 líneas máximo.
+5. NO digas "voy a", "voy a checar", "déjame preguntar" — ya está hecho.
+Ejemplo CORRECTO: "¡Ya lo mandé con Carlos, nene! 🎨 Te llega el arte por aquí en unos minutos."
+Ejemplo INCORRECTO: "¿Para qué plataforma necesitas el arte? ¿Qué dimensiones quieres?"`
+      : '';
+
     const neikyPrompt = `${this.basePrompt}
 
 ═══ CONTEXTO CRÍTICO ═══
@@ -532,6 +545,7 @@ REGLAS ABSOLUTAS DE IDENTIDAD:
 - Si necesita pricing: NUNCA das precio sin que él lo autorice primero
 - Si está estresado o hay urgencia: modo coordinadora seria pero cálida
 - Si es algo casual: responde con calidez y naturalidad
+${taskAckSection}
 
 ═══ HISTORIAL CROSS-CHANNEL (más reciente primero — incluye WhatsApp, web, etc.) ═══
 ${historyText}
@@ -1510,15 +1524,54 @@ Responde "ayuda" para ver todos los comandos.`;
             result = await carlos.generateFromBrief(brief);
           } catch (carlosErr) {
             console.error('[Mariana._launchAgentTask] Carlos error:', carlosErr.message);
-            await markTaskFailed(taskId, carlosErr.message);
+            // Notificar con mensaje humano, no marcar como fallido silenciosamente
+            const failMsg = `⚠️ Carlos encontró un error al generar el arte:\n${carlosErr.message}\n\nPuedes pedirlo de nuevo o contactar directamente a Carlos.`;
+            await notifyTaskComplete(taskId, content, failMsg, 'CARLOS');
             return;
           }
 
-          // Extraer URLs de imágenes si las hay
+          // ── Manejar fallo de generación de imagen (sin API key, timeout, etc.) ────
+          // En lugar de enviar basura, entregar el spec tipográfico como fallback útil.
+          if (!result?.success) {
+            const errorReason = result?.error || 'Servicio de imágenes no disponible';
+            console.warn(`[Mariana._launchAgentTask] Carlos result.success=false: ${errorReason}`);
+
+            // Generar el spec tipográfico igual — siempre funciona sin API externa
+            let specFallback = '';
+            try {
+              const { generateTypographySpec } = require('../core/typography-spec');
+              const spec = generateTypographySpec(brief);
+              const capas = spec?.capas || [];
+              specFallback = capas.length > 0
+                ? capas.map(c => `• ${c.elemento}: "${c.texto || '—'}" | ${c.fuente} ${c.peso} ${c.tamano}px | #${c.color}`).join('\n')
+                : '(spec no disponible)';
+            } catch { specFallback = '(spec pendiente)'; }
+
+            const fallbackMsg = [
+              `⚠️ *No pude generar la imagen ahora* (${errorReason}).`,
+              ``,
+              `Pero aquí tienes el *brief completo* para producción manual o Canva:`,
+              ``,
+              `🏷 *Cliente:* ${brief.cliente}`,
+              `📐 *Tipo:* ${brief.tipo_pieza}`,
+              `✏️ *Headline:* ${brief.headline}`,
+              `📢 *CTA:* ${brief.cta}`,
+              ``,
+              `📝 *Spec Gotham:*`,
+              specFallback,
+              ``,
+              `_Para activar la generación de imágenes: configura HIGGSFIELD_API_KEY en el .env_`
+            ].join('\n');
+
+            await notifyTaskComplete(taskId, content, fallbackMsg, 'CARLOS → brief manual');
+            break;
+          }
+
+          // ── Éxito: extraer URLs y notificar ──────────────────────────────────
           const mediaUrls = [];
           if (result?.images && Array.isArray(result.images)) {
             result.images.forEach(img => {
-              const url = img?.url || img?.image_url || (typeof img === 'string' ? img : null);
+              const url = img?.resultUrl || img?.url || img?.image_url || (typeof img === 'string' ? img : null);
               if (url) mediaUrls.push(url);
             });
           }
@@ -1527,7 +1580,11 @@ Responde "ayuda" para ver todos los comandos.`;
             ? `Spec Gotham generado: ${(result.typo_spec.capas || []).length} capas tipográficas\nValidación QC: ${result.typo_validation?.veredicto || 'pendiente'}`
             : '(sin spec tipográfico)';
 
-          const resultText = `${result?.pipeline_notes || 'Pipeline 2 etapas completado.'}\n\n${resumenSpec}`;
+          const pipelineNotes = Array.isArray(result?.pipeline_notes)
+            ? result.pipeline_notes.join('\n')
+            : (result?.pipeline_notes || 'Pipeline 2 etapas completado.');
+
+          const resultText = `${pipelineNotes}\n\n${resumenSpec}`;
 
           await notifyTaskComplete(taskId, content, resultText, 'CARLOS', mediaUrls);
           break;
