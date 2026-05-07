@@ -1,8 +1,10 @@
 // backend/src/agents/alex.agent.js
 // Fractal Virtual Team v4.2 — ALEX (Content Creator & Social Media)
+// UPGRADE 4: Memoria semántica inyectada en generateCopy y generateEditorialGrid
 
 const BaseAgent = require('../core/BaseAgent');
 const ALEX_PROMPT = require('../prompts/alex.prompts');
+const { buildMemoryContext } = require('../core/memory-engine');
 
 class AlexAgent extends BaseAgent {
   constructor() {
@@ -43,8 +45,18 @@ class AlexAgent extends BaseAgent {
    * Genera parrilla editorial para un mes
    */
   async generateEditorialGrid(clientData, platforms, month) {
-    const gridPrompt = `${this.basePrompt}
+    // UPGRADE 4: memoria semántica — qué contenido ha funcionado, errores a evitar
+    let memoriaCtx = '';
+    try {
+      memoriaCtx = await buildMemoryContext(
+        clientData.name || clientData.id || '',
+        'parrilla_editorial',
+        `${clientData.industry || ''} ${platforms.join(' ')} ${month}`
+      );
+    } catch { /* no bloquea */ }
 
+    const gridPrompt = `${this.basePrompt}
+${memoriaCtx ? memoriaCtx + '\n' : ''}
 CLIENTE: ${clientData.name} (${clientData.company})
 PLATAFORMAS: ${platforms.join(', ')}
 MES: ${month}
@@ -68,9 +80,19 @@ Mantén el tono de voz de la marca.`;
   /**
    * Genera copy para una pieza específica
    */
-  async generateCopy(brief, platform, type) {
-    const copyPrompt = `${this.basePrompt}
+  async generateCopy(brief, platform, type, cliente = '') {
+    // UPGRADE 4: memoria semántica — hooks exitosos, patrones del cliente
+    let memoriaCtx = '';
+    try {
+      memoriaCtx = await buildMemoryContext(
+        cliente,
+        type,
+        typeof brief === 'string' ? brief.slice(0, 400) : JSON.stringify(brief).slice(0, 400)
+      );
+    } catch { /* no bloquea */ }
 
+    const copyPrompt = `${this.basePrompt}
+${memoriaCtx ? memoriaCtx + '\n' : ''}
 BRIEF: ${brief}
 PLATAFORMA: ${platform}
 TIPO: ${type}

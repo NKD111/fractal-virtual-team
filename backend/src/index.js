@@ -53,6 +53,7 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/axiom', require('./routes/axiom'));
 app.use('/api/qcbot', require('./routes/qcbot'));
 app.use('/api/creative', require('./routes/creative'));
+app.use('/api/obsidian', require('./routes/obsidian'));
 app.use('/api', require('./routes/unified'));
 app.use('/api', require('./routes/public-api'));   // /api/admin/keys + /api/v1/*
 app.use('/webhooks', require('./routes/webhooks'));
@@ -408,12 +409,69 @@ server.listen(PORT, async () => {
     }
   }, 15 * 60 * 1000);
 
-  console.log(`\n✅ Fractal MX — Business OS v3.0 listo`);
+  // UPGRADE 5: Telemetry Alerts — costo, latencia, errores cada 15min
+  try {
+    const { startTelemetryAlertsCron } = require('./routines/telemetry-alerts');
+    startTelemetryAlertsCron();
+    console.log('✅ UPGRADE 5: Telemetry Alerts activo (GET /api/dashboard/telemetry)');
+  } catch (e) {
+    console.warn('[TelemetryAlerts] init error (non-fatal):', e.message);
+  }
+
+  // ─── BUSINESS OS v5.0 — Nuevos Crons ───────────────────────────────────────
+
+  // Morning Briefing — 7 AM CDMX todos los días
+  try {
+    const { startMorningBriefingCron } = require('./routines/morning-briefing');
+    startMorningBriefingCron();
+    console.log('✅ Morning Briefing: 7 AM CDMX diario activo');
+  } catch (e) {
+    console.warn('[MorningBriefing] init error (non-fatal):', e.message);
+  }
+
+  // Health Score — 11 PM CDMX todos los días
+  try {
+    const { startHealthScoreCron } = require('./core/health-score');
+    startHealthScoreCron();
+    console.log('✅ Health Score: 11 PM CDMX diario activo');
+  } catch (e) {
+    console.warn('[HealthScore] init error (non-fatal):', e.message);
+  }
+
+  // Season Detector — Día 1 de cada mes, 9 AM CDMX
+  try {
+    const { startSeasonDetectorCron } = require('./routines/season-detector');
+    startSeasonDetectorCron();
+    console.log('✅ Season Detector: día 1 de cada mes (9 AM CDMX) activo');
+  } catch (e) {
+    console.warn('[SeasonDetector] init error (non-fatal):', e.message);
+  }
+
+  // Upsell Engine — Día 15 de cada mes, 10 AM CDMX
+  try {
+    const { startUpsellEngineCron } = require('./routines/upsell-engine');
+    startUpsellEngineCron();
+    console.log('✅ Upsell Engine: día 15 de cada mes (10 AM CDMX) activo');
+  } catch (e) {
+    console.warn('[UpsellEngine] init error (non-fatal):', e.message);
+  }
+
+  console.log(`\n✅ Fractal MX — Business OS v5.0 listo`);
   console.log(`   Agentes: 14 activos (+ AXIOM + ORACLE)`);
-  console.log(`   Bloques: A-S completados`);
-  console.log(`   Crons: Oracle (dom 3AM) + YouTube (lun+jue) + Revenue Alert (día 20) + AXIOM (6h) + Parrilla FIF (7 fases)`);
+  console.log(`   Bloques: A-S completados + Design Plugin + Health Score`);
+  console.log(`   Crons activos (27 total):`);
+  console.log(`     · Morning Briefing: 7 AM diario`);
+  console.log(`     · Health Score: 11 PM diario`);
+  console.log(`     · Oracle Auto-Improvement: domingo 3 AM`);
+  console.log(`     · YouTube: lunes + jueves 9 AM`);
+  console.log(`     · AXIOM Scan: cada 6h`);
+  console.log(`     · Telemetry Alerts: cada 15min`);
+  console.log(`     · Parrilla FIF: días 1,5,7,10,17,20`);
+  console.log(`     · Season Detector: día 1 de cada mes`);
+  console.log(`     · Upsell Engine: día 15 de cada mes`);
+  console.log(`     · Revenue Alert: día 20 mediodía`);
   console.log(`   Flujos de ingreso: FIF($1k/mes) + Auditoría($300-800) + Productos digitales + Landing($1.5-3k)`);
-  console.log(`   Brand Guide FIF/EFG: activo en CARLOS, DIEGO, ALEX, VALENTINA, NEXUS\n`);
+  console.log(`   Panel de Control: WhatsApp NKD (+5215534189583) — 8 comandos\n`);
 
   // Cleanup on shutdown
   process.on('SIGTERM', async () => {

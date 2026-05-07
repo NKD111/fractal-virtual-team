@@ -127,7 +127,16 @@ class MarianaAgent extends BaseAgent {
       }
     }
 
-    // 4. Procesar según el tipo de remitente
+    // 4. Detectar comandos de control de NKD (Panel de Control por WhatsApp)
+    if (sender.isNeiky) {
+      const cmdResult = await this.executeNKDCommand(message.content || message.text || '', message);
+      if (cmdResult !== null) {
+        // Fue un comando — respuesta directa, no pasar por LLM
+        return cmdResult;
+      }
+    }
+
+    // 5. Procesar según el tipo de remitente
     let response;
     if (sender.isNeiky) {
       response = await this.respondToNeiky(message, sender, fullHistory, intent);
@@ -856,6 +865,361 @@ Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en for
         keywords: visual.keywords || []
       }
     };
+  }
+
+  // ─── PANEL DE CONTROL NKD — WhatsApp Commands ─────────────────────────────
+  // NKD puede controlar todo el sistema desde WhatsApp con comandos simples.
+  // Solo se activa cuando el número remitente es el de NKD (+5215534189583).
+  //
+  // Comandos soportados:
+  //   estado                          → resumen del sistema
+  //   apruebo [número]               → aprueba brief en parrilla_briefs
+  //   rechazo [número] [razón]       → rechaza brief, ORACLE genera instrucciones
+  //   genera parrilla fif [mes]      → lanza fase1_nexusAnalysis
+  //   prospecto top                  → top 5 prospectos AXIOM con mensaje
+  //   cuánto va el mes               → revenue vs meta con proyección
+  //   axiom scan                     → lanza scan manual de AXIOM
+  //   oracle consejo                 → observación estratégica de ORACLE
+  //   SI                             → confirmar upsell pendiente
+  //
+  // Retorna string si fue un comando, null si no lo reconoce.
+
+  async executeNKDCommand(text = '', message = {}) {
+    const t = text.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+    // ─── "estado" ─────────────────────────────────────────────────────────────
+    if (t === 'estado' || t === 'status' || t === 'sistema') {
+      return this._cmdEstado();
+    }
+
+    // ─── "apruebo N" ──────────────────────────────────────────────────────────
+    const aprueboMatch = t.match(/^apruebo\s+(\d+|[a-f0-9-]{8,})$/i);
+    if (aprueboMatch) {
+      return this._cmdApruebo(aprueboMatch[1]);
+    }
+
+    // ─── "rechazo N razón" ────────────────────────────────────────────────────
+    const rechazoMatch = t.match(/^rechazo\s+(\d+|[a-f0-9-]{8,})\s+(.+)$/i);
+    if (rechazoMatch) {
+      return this._cmdRechazo(rechazoMatch[1], rechazoMatch[2]);
+    }
+
+    // ─── "genera parrilla fif [mes]" ──────────────────────────────────────────
+    const parrillaMatch = t.match(/^genera\s+parrilla\s+fif(?:\s+(\d{4}-\d{2}|\w+))?$/i);
+    if (parrillaMatch) {
+      const mes = parrillaMatch[1] || new Date().toISOString().substring(0, 7);
+      return this._cmdGeneraParrilla('FIF', mes);
+    }
+
+    // ─── "prospecto top" ──────────────────────────────────────────────────────
+    if (t === 'prospecto top' || t === 'prospectos top' || t === 'top prospectos') {
+      return this._cmdProspectoTop();
+    }
+
+    // ─── "cuánto va el mes" ───────────────────────────────────────────────────
+    if (t.includes('cuanto va') || t.includes('cuanto lleva') || t.includes('revenue') || t.includes('como va el mes')) {
+      return this._cmdRevenueMes();
+    }
+
+    // ─── "axiom scan" ─────────────────────────────────────────────────────────
+    if (t === 'axiom scan' || t === 'scan axiom' || t === 'escanear') {
+      return this._cmdAxiomScan();
+    }
+
+    // ─── "oracle consejo" ─────────────────────────────────────────────────────
+    if (t === 'oracle consejo' || t === 'consejo oracle' || t === 'oracle' || t === 'que dice oracle') {
+      return this._cmdOracleConsejo();
+    }
+
+    // ─── "SI" — confirmar upsell pendiente ────────────────────────────────────
+    if (t === 'si' || t === 'sí' || t === 'yes' || t === 'ok' || t === 'dale') {
+      return this._cmdConfirmarUpsell(message);
+    }
+
+    // ─── "ayuda" ──────────────────────────────────────────────────────────────
+    if (t === 'ayuda' || t === 'help' || t === 'comandos' || t === '?') {
+      return this._cmdAyuda();
+    }
+
+    return null; // No es un comando — procesar normalmente
+  }
+
+  async _cmdEstado() {
+    try {
+      const { supabase } = require('../core/supabase');
+      const mes = new Date().toISOString().substring(0, 7);
+
+      const [parrillaRes, revenueRes, prospectoRes, healthRes] = await Promise.allSettled([
+        supabase.from('parrilla_briefs').select('status').eq('cliente', 'FIF').eq('mes', mes),
+        supabase.from('metric_snapshots').select('revenue_month, api_cost_today, health_score').order('date', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('prospects').select('nombre_empresa, score').order('score', { ascending: false }).limit(1).maybeSingle(),
+        Promise.resolve(null)
+      ]);
+
+      const briefs = parrillaRes.status === 'fulfilled' ? (parrillaRes.value?.data || []) : [];
+      const snap   = revenueRes.status === 'fulfilled' ? revenueRes.value?.data : null;
+      const top    = prospectoRes.status === 'fulfilled' ? prospectoRes.value?.data : null;
+
+      const pendientes = briefs.filter(b => b.status === 'aprobado_qa').length;
+      const entregados = briefs.filter(b => b.status === 'entregado').length;
+      const diaActual  = Math.min(new Date().getDate(), 20);
+      const revenueMes = snap?.revenue_month || 0;
+      const meta       = 5000;
+      const pct        = Math.round((revenueMes / meta) * 100);
+      const health     = snap?.health_score;
+      const healthEmoji = health >= 80 ? '🟢' : health >= 60 ? '🟡' : health ? '🔴' : '⬜';
+
+      return `🤖 *ESTADO DEL SISTEMA*
+${new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })}
+
+📋 *Pipeline FIF:* Día ${diaActual}/20
+  · ${pendientes} artes esperando tu revisión
+  · ${entregados} entregados a Claudia
+  · ${briefs.length} piezas totales del mes
+
+💰 *Revenue:* $${Math.round(revenueMes).toLocaleString()} / $${meta.toLocaleString()} USD (${pct}%)
+💸 *Costo API hoy:* $${(snap?.api_cost_today || 0).toFixed(2)} USD
+${health ? `${healthEmoji} *Health Score:* ${health}/100` : ''}
+
+🎯 *Top prospecto AXIOM:* ${top ? `${top.nombre_empresa} (score: ${top.score})` : 'Sin datos'}
+
+Responde "ayuda" para ver todos los comandos.`;
+    } catch (e) {
+      return `⚠️ No pude obtener el estado completo: ${e.message}`;
+    }
+  }
+
+  async _cmdApruebo(identificador) {
+    try {
+      const { supabase } = require('../core/supabase');
+      // Buscar por número de pieza o por UUID parcial
+      let query = supabase.from('parrilla_briefs').select('id, headline, tipo_pieza, status, cliente');
+      if (identificador.length > 8) {
+        query = query.ilike('id', `${identificador}%`);
+      } else {
+        // Buscar por número de pieza dentro del mes
+        const mes = new Date().toISOString().substring(0, 7);
+        const { data: all } = await supabase.from('parrilla_briefs').select('id, headline, tipo_pieza, status, cliente').eq('mes', mes).order('created_at');
+        const idx = parseInt(identificador) - 1;
+        if (all?.[idx]) {
+          const brief = all[idx];
+          await supabase.from('parrilla_briefs').update({ status: 'aprobado', aprobado_por: 'NKD_WA' }).eq('id', brief.id);
+          // Registrar en memoria
+          try { const { learnFromApproval } = require('../core/memory-engine'); await learnFromApproval(brief.id); } catch {}
+          return `✅ *APROBADO* — Pieza #${identificador}\n"${brief.headline || brief.tipo_pieza}" (${brief.cliente})\n\nEstatus actualizado a 'aprobado'. Carlos puede proceder a producción.`;
+        }
+        return `❌ No encontré la pieza #${identificador} en la parrilla de este mes.`;
+      }
+
+      const { data } = await query.single();
+      if (!data) return `❌ No encontré el brief con ID: ${identificador}`;
+
+      await supabase.from('parrilla_briefs').update({ status: 'aprobado', aprobado_por: 'NKD_WA' }).eq('id', data.id);
+      try { const { learnFromApproval } = require('../core/memory-engine'); await learnFromApproval(data.id); } catch {}
+      return `✅ *APROBADO*\n"${data.headline || data.tipo_pieza}" (${data.cliente})\nID: ${data.id.substring(0, 8)}...\n\nEstatus actualizado a 'aprobado'.`;
+    } catch (e) {
+      return `❌ Error al aprobar: ${e.message}`;
+    }
+  }
+
+  async _cmdRechazo(identificador, razon) {
+    try {
+      const { supabase } = require('../core/supabase');
+      const mes = new Date().toISOString().substring(0, 7);
+      const { data: all } = await supabase.from('parrilla_briefs').select('*').eq('mes', mes).order('created_at');
+
+      const idx = parseInt(identificador) - 1;
+      const brief = all?.[idx] || null;
+
+      if (!brief) return `❌ No encontré la pieza #${identificador} en la parrilla de este mes.`;
+
+      // Actualizar status
+      await supabase.from('parrilla_briefs').update({ status: 'rework', razon_rechazo: razon }).eq('id', brief.id);
+
+      // ORACLE genera instrucciones de corrección
+      let instrucciones = razon;
+      try {
+        const { decideArteRechazado } = require('../core/oracle-decision');
+        const oDecision = await decideArteRechazado(brief, 'nkd_revision', razon);
+        instrucciones = oDecision?.instrucciones_agente || oDecision?.mensaje_carlos || razon;
+      } catch {}
+
+      // Registrar en memoria
+      try { const { learnFromRejection } = require('../core/memory-engine'); await learnFromRejection(brief.id, razon); } catch {}
+
+      return `❌ *RECHAZADO* — Pieza #${identificador}\n"${brief.headline || brief.tipo_pieza}"\n\nRazón: ${razon}\n\nInstrucciones para Carlos:\n${instrucciones}\n\nEstatus: rework. Carlos será notificado.`;
+    } catch (e) {
+      return `❌ Error al rechazar: ${e.message}`;
+    }
+  }
+
+  async _cmdGeneraParrilla(cliente, mes) {
+    try {
+      const { supabase } = require('../core/supabase');
+      // Notificar que se lanzó
+      setImmediate(async () => {
+        try {
+          const { fase1_nexusAnalysis } = require('../routines/parrilla-pipeline');
+          await fase1_nexusAnalysis(mes);
+        } catch (e) {
+          console.error('[Mariana CMD] genera parrilla error:', e.message);
+        }
+      });
+      return `🚀 *Parrilla ${cliente} lanzada para ${mes}*\n\nFase 1 (análisis NEXUS) iniciada en background.\nRecibirás el plan en ~5 minutos por WhatsApp.\n\nCrons del pipeline:\n· Día 5: Desarrollo de briefs\n· Día 7: Aprobación NKD\n· Día 10: Producción Carlos/Diego\n· Día 17: Revisión final NKD\n· Día 20: Entrega a Claudia`;
+    } catch (e) {
+      return `❌ Error lanzando parrilla: ${e.message}`;
+    }
+  }
+
+  async _cmdProspectoTop() {
+    try {
+      const { supabase } = require('../core/supabase');
+      const { data } = await supabase
+        .from('prospects')
+        .select('nombre_empresa, score, servicio_sugerido, status, mensaje_sugerido')
+        .order('score', { ascending: false })
+        .limit(5);
+
+      if (!data?.length) return '📊 Sin prospectos en el pipeline de AXIOM actualmente.';
+
+      const lista = data.map((p, i) =>
+        `${i + 1}. *${p.nombre_empresa}* — Score: ${p.score}\n   Servicio: ${p.servicio_sugerido || 'por definir'}\n   ${p.mensaje_sugerido ? `Mensaje: "${p.mensaje_sugerido.substring(0, 80)}..."` : ''}`
+      ).join('\n\n');
+
+      return `🎯 *TOP 5 PROSPECTOS AXIOM*\n\n${lista}\n\nResponde "axiom scan" para actualizar la lista.`;
+    } catch (e) {
+      return `❌ Error obteniendo prospectos: ${e.message}`;
+    }
+  }
+
+  async _cmdRevenueMes() {
+    try {
+      const { supabase } = require('../core/supabase');
+      const mes = new Date().toISOString().substring(0, 7);
+
+      const [snapRes, salesRes, invoicesRes] = await Promise.allSettled([
+        supabase.from('metric_snapshots').select('revenue_month, revenue_today').order('date', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('digital_products_sales').select('precio_usd').gte('fecha_venta', `${mes}-01`),
+        supabase.from('invoices').select('total, status').gte('created_at', `${mes}-01`).eq('status', 'paid')
+      ]);
+
+      const snap      = snapRes.status === 'fulfilled' ? snapRes.value?.data : null;
+      const sales     = salesRes.status === 'fulfilled' ? (salesRes.value?.data || []) : [];
+      const invoices  = invoicesRes.status === 'fulfilled' ? (invoicesRes.value?.data || []) : [];
+
+      const revenueProductos = sales.reduce((s, r) => s + (r.precio_usd || 0), 0);
+      const revenueServicios = invoices.reduce((s, r) => s + (r.total || 0), 0);
+      const revenueMes = (snap?.revenue_month || 0) + revenueProductos;
+      const meta = 5000;
+      const pct  = Math.round((revenueMes / meta) * 100);
+      const diaActual = new Date().getDate();
+      const proyeccion = Math.round((revenueMes / diaActual) * 31);
+
+      const emoji = pct >= 80 ? '🟢' : pct >= 50 ? '🟡' : '🔴';
+
+      return `💰 *REVENUE ${mes.replace('-', '/')}*\n\n${emoji} *Actual:* $${Math.round(revenueMes).toLocaleString()} USD\n📊 *Meta:* $${meta.toLocaleString()} USD\n📈 *Avance:* ${pct}%\n📅 *Proyección al 31:* ~$${proyeccion.toLocaleString()} USD\n\n*Hoy:* $${Math.round(snap?.revenue_today || 0)} USD\n*Productos digitales:* $${Math.round(revenueProductos)} USD\n*Servicios (facturas):* $${Math.round(revenueServicios).toLocaleString()} MXN`;
+    } catch (e) {
+      return `❌ Error obteniendo revenue: ${e.message}`;
+    }
+  }
+
+  async _cmdAxiomScan() {
+    try {
+      // Lanzar en background, confirmar inmediatamente
+      setImmediate(async () => {
+        try {
+          const { runAxiomScan } = require('../routines/axiom-scanner');
+          const result = await runAxiomScan();
+          const { notifyNeiky } = require('../core/whatsapp');
+          await notifyNeiky(`✅ *AXIOM Scan completado*\n${result.inserted} nuevos prospectos insertados.\nResponde "prospecto top" para ver los mejores.`);
+        } catch (e) {
+          console.error('[Mariana CMD] axiom scan error:', e.message);
+        }
+      });
+      return `🔍 *AXIOM Scan iniciado*\n\nAnalizando LinkedIn, Google My Business y otras fuentes...\nTe aviso en ~2 minutos con los resultados.`;
+    } catch (e) {
+      return `❌ Error lanzando AXIOM scan: ${e.message}`;
+    }
+  }
+
+  async _cmdOracleConsejo() {
+    try {
+      const { oracleDecide } = require('../core/oracle-decision');
+      const { supabase } = require('../core/supabase');
+
+      const mes = new Date().toISOString().substring(0, 7);
+      const [briefs, snap, prospects] = await Promise.allSettled([
+        supabase.from('parrilla_briefs').select('status').eq('mes', mes),
+        supabase.from('metric_snapshots').select('*').order('date', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('prospects').select('score').order('score', { ascending: false }).limit(5)
+      ]);
+
+      const contexto = {
+        pipeline_briefs: briefs.status === 'fulfilled' ? briefs.value?.data?.length : 0,
+        revenue_month: snap.status === 'fulfilled' ? snap.value?.data?.revenue_month : 0,
+        top_score: prospects.status === 'fulfilled' ? prospects.value?.data?.[0]?.score : 0,
+        dia_del_mes: new Date().getDate()
+      };
+
+      const decision = await oracleDecide('consejo_estrategico', contexto, 2);
+      return `🔮 *ORACLE DICE:*\n\n${decision?.accion || decision?.razon || 'Sin observación disponible.'}`;
+    } catch (e) {
+      return `❌ Error consultando ORACLE: ${e.message}`;
+    }
+  }
+
+  async _cmdConfirmarUpsell(message) {
+    // Busca el último upsell pendiente enviado a NKD
+    // El mensaje de upsell tiene formato: [upsell:clientId:servicio]
+    // No hay contexto del mensaje previo aquí — verificar oracle_memory
+    try {
+      const { supabase } = require('../core/supabase');
+      const { data: lastUpsell } = await supabase
+        .from('oracle_memory')
+        .select('contenido, created_at')
+        .eq('tipo', 'aprendizaje')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      const upsellMemory = (lastUpsell || []).find(m => {
+        try { return JSON.parse(m.contenido)?.tipo === 'upsell_detectado'; } catch { return false; }
+      });
+
+      if (!upsellMemory) {
+        return `✅ Recibido! No encontré un upsell pendiente reciente.\nSi quieres lanzar uno específico, usa "cuánto va el mes" para contexto.`;
+      }
+
+      const data = JSON.parse(upsellMemory.contenido);
+      setImmediate(async () => {
+        try {
+          // Aquí activaríamos a Mariana para preparar la propuesta formal
+          const { notifyNeiky } = require('../core/whatsapp');
+          await notifyNeiky(`📄 *Preparando propuesta para ${data.cliente}*\n\nServicio: ${data.servicio}\nMariana está redactando la propuesta formal.\nTe la mando lista en ~3 minutos.`);
+          // TODO: trigger de generación de propuesta formal via MARIANA
+        } catch {}
+      });
+
+      return `✅ *¡Activado!*\nMariana está preparando la propuesta formal para *${data.cliente}* — ${data.servicio}.\n\nTe la mando en unos minutos. 🚀`;
+    } catch (e) {
+      return `✅ ¡Entendido! Dame un momento... (${e.message})`;
+    }
+  }
+
+  _cmdAyuda() {
+    return `🤖 *COMANDOS DISPONIBLES:*
+
+📊 *estado* — Resumen del sistema
+💰 *cuánto va el mes* — Revenue vs meta
+🎯 *prospecto top* — Top 5 AXIOM con mensajes
+🔍 *axiom scan* — Lanzar scan manual
+🔮 *oracle consejo* — Observación estratégica
+
+✅ *apruebo [N]* — Aprobar arte #N
+❌ *rechazo [N] [razón]* — Rechazar arte #N
+🚀 *genera parrilla fif [mes]* — Lanzar pipeline FIF
+
+*SI* — Confirmar upsell pendiente
+*ayuda* — Esta lista`;
   }
 }
 

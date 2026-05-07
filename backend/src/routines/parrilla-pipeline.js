@@ -15,6 +15,33 @@ const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
 const { fase4_subirADrive, fase7_llenarTablasYEntregar } = require('../services/google-drive-delivery');
 
+// FASE 2 — Agentes de calidad avanzados
+const { auditConsistency } = require('../agents/consistency-auditor');
+const { simulateClientReaction } = require('../agents/client-simulator');
+const { reviewEmotionalImpact } = require('../agents/emotional-reviewer');
+const { validateCTR, isCTRApplicable } = require('../agents/ctr-validator');
+
+const { decideArteRechazado } = require('../core/oracle-decision');
+
+// UPGRADE 1: Response caching + timeout helper
+const { cachedQACall } = require('../core/claude-cache');
+
+// Design Plugin: Valentina agent para las 4 capas de revisión
+let _valentinaAgent = null;
+function getValentinaAgent() {
+  if (!_valentinaAgent) {
+    try { _valentinaAgent = new (require('../agents/valentina.agent'))(); } catch {}
+  }
+  return _valentinaAgent;
+}
+
+/** Promesa que rechaza después de `ms` milisegundos — usada en Promise.race */
+function timeoutPromise(ms, name) {
+  return new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Timeout: ${name} (${ms}ms)`)), ms)
+  );
+}
+
 const TZ = { timezone: 'America/Mexico_City' };
 
 function getMesActual() {
@@ -152,10 +179,10 @@ Responde SOLO con el array JSON (sin explicaciones adicionales).`,
   }
 }
 
-// ─── FASE 2: DÍA 5 — DIANA + ALEX desarrollan briefs ───────────────────────
+// ─── FASE 2: DÍA 5 — DIANA + ALEX desarrollan briefs (PARALELO — FASE 4) ────
 async function fase2_desarrollarBriefs() {
   const mes = getMesActual();
-  console.log(`✍️ PARRILLA PIPELINE: Fase 2 — Desarrollar Briefs para ${mes}`);
+  console.log(`✍️ PARRILLA PIPELINE: Fase 2 — Desarrollar Briefs (paralelo) para ${mes}`);
 
   try {
     // Obtener conceptos del event log
@@ -178,24 +205,55 @@ async function fase2_desarrollarBriefs() {
       return { success: false, error: 'No hay conceptos de Fase 1. Ejecutar Fase 1 primero.' };
     }
 
-    let briefsCreated = 0;
-
+    // Filtrar solo conceptos que no tienen brief aún
+    const pendientes = [];
     for (const concepto of conceptos) {
-      // Verificar si ya existe este brief
       const { count } = await supabase
         .from('parrilla_briefs')
         .select('*', { count: 'exact', head: true })
-        .eq('mes', mes)
-        .eq('cliente', 'FIF')
-        .eq('numero_pieza', concepto.numero);
+        .eq('mes', mes).eq('cliente', 'FIF').eq('numero_pieza', concepto.numero);
+      if (!count || count === 0) pendientes.push(concepto);
+    }
 
-      if (count > 0) continue;
+    if (pendientes.length === 0) {
+      console.log('  ✅ Todos los briefs ya existen para este mes.');
+      return { success: true, mes, briefs_created: 0 };
+    }
 
-      let brief = null;
+    // ── FASE 4 UPGRADE: ALEX + DIANA EN PARALELO ──────────────────────────
+    // Todos los conceptos se procesan en paralelo (no secuencialmente)
+    const dianaAgent = global.diana || null;
+    console.log(`  🚀 Procesando ${pendientes.length} conceptos EN PARALELO...`);
 
-      if (global.oracle?.consult) {
-        const result = await global.oracle.consult({
-          question: `Desarrolla el brief completo para esta pieza de FIF.
+    const results = await Promise.allSettled(
+      pendientes.map(concepto => _procesarConcepto(concepto, mes, dianaAgent))
+    );
+
+    const briefsCreated = results.filter(r => r.status === 'fulfilled' && r.value).length;
+    const errores = results.filter(r => r.status === 'rejected').length;
+
+    if (errores > 0) console.warn(`  ⚠️ ${errores} conceptos fallaron en paralelo`);
+
+    await notifyNKD_parrillaBriefs(mes, briefsCreated);
+    console.log(`✅ Fase 2 paralela: ${briefsCreated}/${pendientes.length} briefs creados para ${mes}`);
+    return { success: true, mes, briefs_created: briefsCreated, errores };
+
+  } catch (err) {
+    console.error('❌ Fase 2 error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// Helper: procesar un concepto individual (Alex + Diana en paralelo)
+async function _procesarConcepto(concepto, mes, dianaAgent) {
+  // ALEX y DIANA trabajan SIMULTÁNEAMENTE sobre el mismo concepto
+  let brief = null;
+
+  if (global.oracle?.consult || dianaAgent) {
+    const [oracleResult, dianaResult] = await Promise.allSettled([
+      // ALEX vía Oracle: genera copy brief
+      global.oracle?.consult ? global.oracle.consult({
+        question: `Desarrolla el brief completo para esta pieza de FIF.
 
 CONCEPTO: ${concepto.concepto}
 TIPO: ${concepto.tipo_pieza}
@@ -205,75 +263,74 @@ PÚBLICO: ${concepto.publico}
 BRAND SYSTEM FIF:
 - Colores: Rojo #C8102E, Navy #1B263B, Blanco #FFFFFF
 - Estilo: editorial-comercial premium, expo mexicana
-- Fotografía: expo mexicana profesional, personas mexicanas/LATAM
 - Modelo imagen: GPT Image 2
 - IMPORTANTE: dejar espacio limpio para logos y texto en post-producción
-- Slogan disponible: "Encuentra tu próximo negocio"
+- Slogan: "Encuentra tu próximo negocio"
 - Estándar: ¿Esto justifica $1,000 USD/mes?
 
-Responde en JSON con exactamente estos campos:
-{
-  "headline": "máximo 6 palabras, alto impacto",
-  "subheadline": "máximo 15 palabras",
-  "copy_apoyo": "máximo 3 líneas",
-  "cta": "texto del CTA",
-  "hashtags": "#tag1 #tag2 (10-15 relevantes)",
-  "estilo_visual": "comercial | informativo | editorial | banner_web",
-  "prompt_higgsfield": "prompt en inglés para GPT Image 2 (60-100 palabras, FIF premium style)",
-  "notas_para_carlos": "instrucciones específicas de diseño"
-}`,
-          agent: { id: null, name: 'ALEX', role: 'brief_development' },
-          depth: 'standard'
-        });
-        try { brief = JSON.parse(result?.answer || '{}'); } catch { brief = {}; }
-      }
+Responde en JSON con: headline, subheadline, copy_apoyo, cta, hashtags, estilo_visual, prompt_higgsfield, notas_para_carlos`,
+        agent: { id: null, name: 'ALEX', role: 'brief_development' },
+        depth: 'standard'
+      }) : Promise.resolve(null),
 
-      // Defaults si no hay Oracle
-      if (!brief || !brief.headline) {
-        brief = {
-          headline: concepto.concepto.substring(0, 50),
-          subheadline: concepto.por_que_ahora || '',
-          copy_apoyo: 'Descubre las mejores oportunidades de negocio en México.',
-          cta: 'Regístrate ahora',
-          hashtags: '#FIF2026 #Franquicias #México #Emprendimiento #Negocios #ExpoFranquicias',
-          estilo_visual: concepto.tipo_pieza === 'banner_web' ? 'banner_web' : 'comercial',
-          prompt_higgsfield: `Premium editorial-commercial franchise expo post for FIF Mexico 2026. ${concepto.concepto}. Clean white background, navy #1B263B and red #C8102E brand colors. Professional Mexican business audience. High-quality expo photography. Clean space for logo and text overlay. No neon, no cyberpunk.`,
-          notas_para_carlos: `Tipo: ${concepto.tipo_pieza}. Público: ${concepto.publico}. Dejar espacio para logo FIF arriba y copy principal.`
-        };
-      }
+      // DIANA: traduce a brief visual (FASE 3)
+      dianaAgent?.translateToVisualBrief ? dianaAgent.translateToVisualBrief(concepto) : Promise.resolve(null)
+    ]);
 
-      await supabase.from('parrilla_briefs').insert({
-        mes,
-        cliente: 'FIF',
-        numero_pieza: concepto.numero,
-        tipo_pieza: concepto.tipo_pieza,
-        concepto: concepto.concepto,
-        objetivo: concepto.objetivo,
-        headline: brief.headline,
-        subheadline: brief.subheadline,
-        copy_apoyo: brief.copy_apoyo,
-        cta: brief.cta,
-        hashtags: brief.hashtags,
-        estilo_visual: brief.estilo_visual,
-        prompt_higgsfield: brief.prompt_higgsfield,
-        notas_para_carlos: brief.notas_para_carlos,
-        status: 'pendiente_aprobacion_nkd',
-        creado_por: 'alex'
-      });
+    // Combinar resultados de Alex y Diana
+    const alexData = oracleResult.status === 'fulfilled' ? oracleResult.value : null;
+    const dianaData = dianaResult.status === 'fulfilled' ? dianaResult.value : null;
 
-      briefsCreated++;
-      console.log(`  ✓ Brief ${concepto.numero}: ${concepto.concepto.substring(0, 50)}`);
+    try {
+      brief = JSON.parse(alexData?.answer || '{}');
+    } catch { brief = {}; }
+
+    // Diana enriquece el brief con su traducción visual
+    if (dianaData?.prompt && !brief.prompt_higgsfield) {
+      brief.prompt_higgsfield = dianaData.prompt;
     }
-
-    await notifyNKD_parrillaBriefs(mes, briefsCreated);
-    console.log(`✅ Fase 2 completa: ${briefsCreated} briefs creados para ${mes}`);
-    return { success: true, mes, briefs_created: briefsCreated };
-
-  } catch (err) {
-    console.error('❌ Fase 2 error:', err.message);
-    return { success: false, error: err.message };
+    if (dianaData?.tipo_pieza && !brief.estilo_visual) {
+      brief.estilo_visual = dianaData.tono_visual || brief.estilo_visual;
+    }
   }
+
+  // Defaults si no hay agentes disponibles
+  if (!brief || !brief.headline) {
+    brief = {
+      headline: concepto.concepto.substring(0, 50),
+      subheadline: concepto.por_que_ahora || '',
+      copy_apoyo: 'Descubre las mejores oportunidades de negocio en México.',
+      cta: 'Regístrate ahora',
+      hashtags: '#FIF2026 #Franquicias #México #Emprendimiento #Negocios',
+      estilo_visual: concepto.tipo_pieza === 'banner_web' ? 'banner_web' : 'comercial',
+      prompt_higgsfield: `Premium editorial-commercial franchise expo post for FIF Mexico 2026. ${concepto.concepto}. Clean white background, navy #1B263B and red #C8102E brand colors. Professional Mexican business audience. High-quality expo photography. Clean space for logo and text overlay. No neon, no cyberpunk.`,
+      notas_para_carlos: `Tipo: ${concepto.tipo_pieza}. Público: ${concepto.publico}. Dejar espacio para logo FIF arriba y copy principal.`
+    };
+  }
+
+  await supabase.from('parrilla_briefs').insert({
+    mes,
+    cliente: 'FIF',
+    numero_pieza: concepto.numero,
+    tipo_pieza: concepto.tipo_pieza,
+    concepto: concepto.concepto,
+    objetivo: concepto.objetivo,
+    headline: brief.headline,
+    subheadline: brief.subheadline,
+    copy_apoyo: brief.copy_apoyo,
+    cta: brief.cta,
+    hashtags: brief.hashtags,
+    estilo_visual: brief.estilo_visual,
+    prompt_higgsfield: brief.prompt_higgsfield,
+    notas_para_carlos: brief.notas_para_carlos,
+    status: 'pendiente_aprobacion_nkd',
+    creado_por: 'alex+diana'
+  });
+
+  console.log(`  ✓ Brief ${concepto.numero}: ${concepto.concepto.substring(0, 50)}`);
+  return true;
 }
+
 
 // ─── FASE 3: DÍA 7 — Notificación a NKD para aprobación ────────────────────
 async function fase3_aprobacionNKD() {
@@ -334,40 +391,43 @@ async function fase4_produccion() {
     let producidos = 0;
     let errores = 0;
 
-    for (const brief of briefs) {
-      try {
-        await updateBriefStatus(brief.id, 'en_produccion');
+    // FASE 4 UPGRADE: Carlos genera en paralelo, chunks de 3 para no agotar créditos
+    const chunkSize = 3;
+    for (let i = 0; i < briefs.length; i += chunkSize) {
+      const chunk = briefs.slice(i, i + chunkSize);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (brief) => {
+          await updateBriefStatus(brief.id, 'en_produccion');
 
-        // Intentar generar imagen con Carlos si está disponible
-        if (global.carlos?.generateFIFImage) {
-          const resultado = await global.carlos.generateFIFImage({
-            description: brief.prompt_higgsfield || brief.concepto,
-            pieceType: brief.tipo_pieza || 'post_informativo',
-            briefId: brief.id,
-            projectId: null
-          });
-
-          if (resultado && resultado.variations && resultado.variations.length > 0) {
-            const url = resultado.variations[0].resultUrl;
-            await updateBriefStatus(brief.id, 'listo_qc', { url_arte_final: url });
-            producidos++;
-            console.log(`  ✓ Pieza ${brief.numero_pieza}: ${url?.substring(0, 60)}`);
-          } else {
+          if (global.carlos?.generateFIFImage) {
+            const resultado = await global.carlos.generateFIFImage({
+              description: brief.prompt_higgsfield || brief.concepto,
+              pieceType: brief.tipo_pieza || 'post_informativo',
+              briefId: brief.id,
+              projectId: null
+            });
+            if (resultado?.variations?.length > 0) {
+              const url = resultado.variations[0].resultUrl;
+              await updateBriefStatus(brief.id, 'listo_qc', { url_arte_final: url });
+              console.log(`  ✓ Pieza ${brief.numero_pieza}: ${url?.substring(0, 60)}`);
+              return true;
+            }
             throw new Error('No variations returned');
+          } else {
+            await updateBriefStatus(brief.id, 'listo_qc', {
+              notas_revision: 'Generación manual pendiente — Carlos agent no disponible'
+            });
+            return true;
           }
-        } else {
-          // Sin Carlos disponible: marcar como pendiente de generación manual
-          await updateBriefStatus(brief.id, 'listo_qc', {
-            notas_revision: 'Generación manual pendiente — Carlos agent no disponible en este momento'
-          });
-          producidos++;
+        })
+      );
+
+      for (const r of chunkResults) {
+        if (r.status === 'fulfilled') producidos++;
+        else {
+          errores++;
+          console.error(`  ✗ Error en chunk:`, r.reason?.message);
         }
-      } catch (pieceErr) {
-        console.error(`  ✗ Pieza ${brief.numero_pieza} error:`, pieceErr.message);
-        await updateBriefStatus(brief.id, 'rework', {
-          notas_revision: `Error de producción: ${pieceErr.message}`
-        });
-        errores++;
       }
     }
 
@@ -397,45 +457,436 @@ async function fase4_produccion() {
   }
 }
 
-// ─── FASE 5: QA — Triggered cuando arte llega (llamado externamente) ─────────
+// ─── FASE 5: QA — Pipeline de 4 capas (FASE 2 Upgrade v4.0) ─────────────────
+// Capa 1: QC-BOT         → specs técnicas básicas
+// Capa 2: Consistency    → coherencia de marca vs artes anteriores
+// Capa 3: Emotional      → impacto emocional en el público objetivo
+// Capa 4: Client Sim     → probabilidad de aprobación del cliente real
+// Capa 5: VALENTINA      → dirección de arte (último filtro humano-simulado)
 async function fase5_qa(brief_id) {
-  console.log(`🔍 QA: brief_id=${brief_id}`);
+  console.log(`🔍 QA (4 capas): brief_id=${brief_id}`);
+
+  const qaLog = [];
+  const logQA = (capa, status, detail) => {
+    const entry = `[Capa ${capa}] ${status}: ${detail}`;
+    qaLog.push(entry);
+    console.log(`  ${entry}`);
+  };
 
   try {
     const { data: brief } = await supabase
       .from('parrilla_briefs').select('*').eq('id', brief_id).single();
     if (!brief) throw new Error('Brief no encontrado');
 
-    // QC básico: verificar que hay URL de arte
+    // ── CAPA 0: Verificación básica ───────────────────────────────────────────
     if (!brief.url_arte_final) {
       await updateBriefStatus(brief_id, 'rework', { notas_revision: 'Sin URL de arte final' });
-      return { passed: false, reason: 'Sin arte' };
+      return { passed: false, reason: 'Sin arte', qa_log: qaLog };
     }
 
-    // Valentina review si está disponible
-    if (global.valentina?.reviewArt) {
-      const review = await global.valentina.reviewArt({
-        image_url: brief.url_arte_final,
-        brief,
-        standard: '¿Esto justifica $1,000 USD/mes?'
-      });
-
-      if (review.approved) {
-        await updateBriefStatus(brief_id, 'aprobado_qa');
-        return { passed: true };
-      } else {
-        await updateBriefStatus(brief_id, 'rework', { notas_revision: review.notes });
-        return { passed: false, reason: review.notes };
+    // ── CAPA 1: QC-BOT — specs técnicas ──────────────────────────────────────
+    let qcPassed = true;
+    if (global.qcBot?.reviewDeliverable) {
+      try {
+        const qc = await global.qcBot.reviewDeliverable({
+          deliverableType: brief.tipo_pieza || 'branding',
+          content: `URL: ${brief.url_arte_final}\nBrief: ${brief.concepto}\nHeadline: ${brief.headline}`
+        });
+        qcPassed = qc.passed !== false;
+        logQA(1, qcPassed ? '✅' : '❌', `QC-BOT score: ${qc.score}/10`);
+        if (!qcPassed) {
+          const issues = (qc.issues || []).join('; ');
+          await updateBriefStatus(brief_id, 'rework', { notas_revision: `[QC] ${issues}` });
+          return { passed: false, reason: 'QC specs', issues: qc.issues, qa_log: qaLog };
+        }
+      } catch (e) {
+        logQA(1, '⚠️', `QC-BOT error (skip): ${e.message}`);
       }
+    } else {
+      logQA(1, '⏭️', 'QC-BOT no disponible — skip');
     }
 
-    // Sin Valentina: auto-aprobar si hay arte
-    await updateBriefStatus(brief_id, 'aprobado_qa');
-    return { passed: true };
+    // ── CAPA 2: CONSISTENCY AUDITOR — coherencia de marca ─────────────────────
+    try {
+      const consistency = await auditConsistency(brief, 'FIF');
+      logQA(2, consistency.score >= 70 ? '✅' : '❌',
+        `Consistency score: ${consistency.score}/100 — ${consistency.recommendation}`);
+
+      if (consistency.score < 70) {
+        const issues = (consistency.issues || []).slice(0, 3).join('; ');
+        let oDecision = null;
+        try {
+          oDecision = await decideArteRechazado(brief, 'consistency', consistency.issues || [issues]);
+        } catch { /* non-fatal — fallback a nota estándar */ }
+        await updateBriefStatus(brief_id, 'rework', {
+          notas_revision: oDecision?.mensaje_carlos || `[CONSISTENCY] ${issues} | ${consistency.details || ''}`
+        });
+        return { passed: false, reason: oDecision?.razon || 'Inconsistencia de marca', issues: consistency.issues, oracle_decision: oDecision, qa_log: qaLog };
+      }
+    } catch (e) {
+      logQA(2, '⚠️', `Consistency error (skip): ${e.message}`);
+    }
+
+    // ── CAPA 3: EMOTIONAL IMPACT REVIEWER ────────────────────────────────────
+    try {
+      const emotional = await reviewEmotionalImpact(brief, 'FIF');
+      logQA(3, emotional.score >= 6 ? '✅' : '❌',
+        `Emotional score: ${emotional.score}/10 — ${emotional.recommendation}`);
+
+      if (emotional.score < 6) {
+        let oDecision = null;
+        try {
+          oDecision = await decideArteRechazado(brief, 'emotional_impact', `Score: ${emotional.score}/10. ${emotional.notes}. Fix: ${emotional.quick_fix}`);
+        } catch { /* non-fatal */ }
+        await updateBriefStatus(brief_id, 'rework', {
+          notas_revision: oDecision?.mensaje_carlos || `[EMOTIONAL] ${emotional.notes} | Fix: ${emotional.quick_fix}`
+        });
+        return { passed: false, reason: oDecision?.razon || 'Impacto emocional insuficiente', notes: emotional.notes, oracle_decision: oDecision, qa_log: qaLog };
+      }
+    } catch (e) {
+      logQA(3, '⚠️', `Emotional error (skip): ${e.message}`);
+    }
+
+    // ── CAPA 4: CTR VALIDATOR — solo para banners y piezas de conversión ──────
+    if (isCTRApplicable(brief.tipo_pieza)) {
+      try {
+        const ctr = await validateCTR(brief, 'instagram');
+        logQA(4, ctr.score >= 50 ? '✅' : '❌',
+          `CTR score: ${ctr.score}/100 — CTR estimado: ${ctr.ctr_estimate}`);
+
+        if (ctr.score < 50) {
+          let oDecision = null;
+          try {
+            oDecision = await decideArteRechazado(brief, 'ctr_validation', ctr.issues || [`CTR score: ${ctr.score}/100. Fix: ${ctr.quick_fix}`]);
+          } catch { /* non-fatal */ }
+          await updateBriefStatus(brief_id, 'rework', {
+            notas_revision: oDecision?.mensaje_carlos || `[CTR] ${(ctr.issues || []).join('; ')} | Fix: ${ctr.quick_fix}`
+          });
+          return { passed: false, reason: oDecision?.razon || 'CTR bajo', issues: ctr.issues, oracle_decision: oDecision, qa_log: qaLog };
+        }
+      } catch (e) {
+        logQA(4, '⚠️', `CTR error (skip): ${e.message}`);
+      }
+    } else {
+      logQA(4, '⏭️', `CTR skip — tipo_pieza "${brief.tipo_pieza}" no aplica`);
+    }
+
+    // ── CAPA 5: CLIENT EXPECTATION SIMULATOR ─────────────────────────────────
+    try {
+      const simulation = await simulateClientReaction(brief, 'luis_tendero_fif');
+      logQA(5, simulation.approval_probability >= 60 ? '✅' : '❌',
+        `Prob. aprobación: ${simulation.approval_probability}% — "${simulation.first_reaction}"`);
+
+      if (simulation.approval_probability < 60) {
+        const simIssues = [
+          `Prob. aprobación: ${simulation.approval_probability}%`,
+          ...(simulation.requested_changes || []).slice(0, 2),
+          `Fix: ${simulation.quick_fix}`
+        ];
+        let oDecision = null;
+        try {
+          oDecision = await decideArteRechazado(brief, 'client_simulator', simIssues);
+        } catch { /* non-fatal */ }
+        await updateBriefStatus(brief_id, 'rework', {
+          notas_revision: oDecision?.mensaje_carlos ||
+            `[SIMULATOR] Prob. ${simulation.approval_probability}% | ` +
+            `Cambios: ${(simulation.requested_changes || []).slice(0, 2).join('; ')} | ` +
+            `Fix: ${simulation.quick_fix}`
+        });
+        return {
+          passed: false,
+          reason: oDecision?.razon || 'Probabilidad de aprobación baja',
+          simulation,
+          oracle_decision: oDecision,
+          qa_log: qaLog
+        };
+      }
+    } catch (e) {
+      logQA(5, '⚠️', `Simulator error (skip): ${e.message}`);
+    }
+
+    // ── CAPA 6: VALENTINA — Design Plugin (4 capas obligatorias) ─────────────
+    try {
+      const valentina = getValentinaAgent();
+      if (valentina?.designPluginAudit) {
+        const dpAudit = await valentina.designPluginAudit(brief, brief.url_arte_final, brief.cliente || 'FIF');
+
+        const dpSummary = [
+          `consistency:${dpAudit.consistency?.veredicto || '?'}`,
+          `ux_writing:${dpAudit.ux_writing?.veredicto || '?'}`,
+          `accessibility:${dpAudit.accessibility?.veredicto || '?'}`,
+          `score:${dpAudit.overall_score || 0}`
+        ].join(' | ');
+
+        logQA(6, dpAudit.overall_status === 'rejected' ? '❌' : dpAudit.overall_status === 'approved' ? '✅' : '⚠️',
+          `Valentina Design Plugin: ${dpAudit.overall_status} — ${dpSummary}`);
+
+        // Guardar notas de dev handoff en el brief
+        if (dpAudit.dev_handoff?.notas_para_claudia) {
+          try {
+            await updateBriefStatus(brief_id, undefined, {
+              notas_entrega: dpAudit.dev_handoff.notas_para_claudia
+            });
+          } catch { /* non-fatal */ }
+        }
+
+        if (dpAudit.overall_status === 'rejected') {
+          let oDecision = null;
+          try {
+            const motivo = (dpAudit.bloqueantes || []).join('; ') || 'No cumple Design Plugin';
+            oDecision = await decideArteRechazado(brief, 'valentina_design_plugin', motivo);
+          } catch { /* non-fatal */ }
+          await updateBriefStatus(brief_id, 'rework', {
+            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA] ${(dpAudit.bloqueantes || []).join('; ')}`
+          });
+          return { passed: false, reason: oDecision?.razon || 'Rechazado: Design Plugin', design_audit: dpAudit, oracle_decision: oDecision, qa_log: qaLog };
+        }
+      } else if (global.valentina?.reviewArt) {
+        // Fallback: reviewArt legacy
+        const valentina_legacy = await global.valentina.reviewArt({
+          image_url: brief.url_arte_final, brief, standard: '¿Esto justifica $1,000 USD/mes?'
+        });
+        logQA(6, valentina_legacy.approved ? '✅' : '❌', `Valentina legacy: ${valentina_legacy.notes || ''}`);
+        if (!valentina_legacy.approved) {
+          await updateBriefStatus(brief_id, 'rework', { notas_revision: `[VALENTINA] ${valentina_legacy.notes}` });
+          return { passed: false, reason: 'Rechazado por Valentina', qa_log: qaLog };
+        }
+      } else {
+        logQA(6, '⏭️', 'Valentina no disponible — auto-aprobando');
+      }
+    } catch (e) {
+      logQA(6, '⚠️', `Valentina Design Plugin error (skip): ${e.message}`);
+    }
+
+    // ── TODAS LAS CAPAS PASADAS ───────────────────────────────────────────────
+    await updateBriefStatus(brief_id, 'aprobado_qa', {
+      notas_revision: `QA 6 capas: ${qaLog.join(' | ')}`
+    });
+
+    console.log(`✅ QA completo (6 capas): brief_id=${brief_id} APROBADO`);
+    return { passed: true, qa_log: qaLog };
 
   } catch (err) {
     console.error('❌ Fase 5 QA error:', err.message);
-    return { passed: false, error: err.message };
+    return { passed: false, error: err.message, qa_log: qaLog };
+  }
+}
+
+// ─── FASE 5 TURBO: QA paralelo — capas 2-5 simultáneas ──────────────────────
+// UPGRADE 1: Reduce latencia de ~39s → <8s
+//
+// Estructura:
+//   Capa 1 (QC-BOT)    → secuencial PRE (falla rápido si specs no pasan)
+//   Capas 2-5          → PARALELAS con timeout 8s individual
+//   Capa 6 (Valentina) → secuencial POST (solo si todo lo anterior pasó)
+//
+// Si una capa hace timeout → fail open (skip, no bloquear)
+// Si 2+ capas fallan      → rework, instrucciones via ORACLE
+// Si todas pasan          → aprobado_qa
+async function fase5_qa_turbo(brief_id) {
+  const startTime = Date.now();
+  console.log(`⚡ QA TURBO (paralelo): brief_id=${brief_id}`);
+
+  const qaLog = [];
+  const logQA = (capa, status, detail) => {
+    const entry = `[Capa ${capa}] ${status}: ${detail}`;
+    qaLog.push(entry);
+    console.log(`  ${entry}`);
+  };
+
+  const QA_TIMEOUT_MS = 8000;
+
+  try {
+    const { data: brief } = await supabase
+      .from('parrilla_briefs').select('*').eq('id', brief_id).single();
+    if (!brief) throw new Error('Brief no encontrado');
+
+    if (!brief.url_arte_final) {
+      await updateBriefStatus(brief_id, 'rework', { notas_revision: 'Sin URL de arte final' });
+      return { passed: false, reason: 'Sin arte', qa_log: qaLog };
+    }
+
+    // ── CAPA 1: QC-BOT — secuencial pre-guard ────────────────────────────────
+    if (global.qcBot?.reviewDeliverable) {
+      try {
+        const qc = await Promise.race([
+          global.qcBot.reviewDeliverable({
+            deliverableType: brief.tipo_pieza || 'branding',
+            content: `URL: ${brief.url_arte_final}\nBrief: ${brief.concepto}\nHeadline: ${brief.headline}`
+          }),
+          timeoutPromise(QA_TIMEOUT_MS, 'qcbot')
+        ]);
+        logQA(1, qc.passed !== false ? '✅' : '❌', `QC-BOT score: ${qc.score}/10`);
+        if (qc.passed === false) {
+          const issues = (qc.issues || []).join('; ');
+          await updateBriefStatus(brief_id, 'rework', { notas_revision: `[QC] ${issues}` });
+          return { passed: false, reason: 'QC specs', issues: qc.issues, qa_log: qaLog };
+        }
+      } catch (e) {
+        logQA(1, '⚠️', `QC-BOT skip: ${e.message}`);
+      }
+    } else {
+      logQA(1, '⏭️', 'QC-BOT no disponible');
+    }
+
+    // ── CAPAS 2-5: PARALELAS con cache + timeout ──────────────────────────────
+    console.log(`  ⚡ Lanzando capas 2-5 en paralelo (timeout: ${QA_TIMEOUT_MS}ms)...`);
+    const parallelStart = Date.now();
+
+    const [r_consistency, r_emotional, r_ctr, r_simulation] = await Promise.allSettled([
+
+      // Capa 2: Consistency — con cache (mismo arte = mismo resultado)
+      Promise.race([
+        cachedQACall('consistency', brief, () => auditConsistency(brief, 'FIF')),
+        timeoutPromise(QA_TIMEOUT_MS, 'consistency')
+      ]),
+
+      // Capa 3: Emotional — sin cache (nuance — puede variar)
+      Promise.race([
+        reviewEmotionalImpact(brief, 'FIF'),
+        timeoutPromise(QA_TIMEOUT_MS, 'emotional')
+      ]),
+
+      // Capa 4: CTR — con cache, solo si aplica
+      isCTRApplicable(brief.tipo_pieza)
+        ? Promise.race([
+            cachedQACall('ctr', brief, () => validateCTR(brief, 'instagram')),
+            timeoutPromise(QA_TIMEOUT_MS, 'ctr')
+          ])
+        : Promise.resolve({ skipped: true, reason: `tipo_pieza ${brief.tipo_pieza} no aplica CTR` }),
+
+      // Capa 5: Client Simulator — con cache (misma pieza = misma reacción)
+      Promise.race([
+        cachedQACall('simulator', brief, () => simulateClientReaction(brief, 'luis_tendero_fif')),
+        timeoutPromise(QA_TIMEOUT_MS, 'simulation')
+      ])
+    ]);
+
+    const parallelMs = Date.now() - parallelStart;
+    console.log(`  ⚡ Capas 2-5 completadas en ${parallelMs}ms`);
+
+    // ── Evaluar resultados paralelos ──────────────────────────────────────────
+    const failures = [];
+
+    // Capa 2: Consistency
+    if (r_consistency.status === 'fulfilled') {
+      const consistency = r_consistency.value;
+      const ok = consistency.score >= 70;
+      logQA(2, ok ? '✅' : '❌', `Consistency: ${consistency.score}/100`);
+      if (!ok) failures.push({ capa: 2, name: 'consistency', data: consistency, issues: consistency.issues });
+    } else {
+      logQA(2, '⚠️', `skip: ${r_consistency.reason?.message}`);
+    }
+
+    // Capa 3: Emotional
+    if (r_emotional.status === 'fulfilled') {
+      const emotional = r_emotional.value;
+      const ok = emotional.score >= 6;
+      logQA(3, ok ? '✅' : '❌', `Emotional: ${emotional.score}/10`);
+      if (!ok) failures.push({ capa: 3, name: 'emotional', data: emotional, issues: emotional.notes });
+    } else {
+      logQA(3, '⚠️', `skip: ${r_emotional.reason?.message}`);
+    }
+
+    // Capa 4: CTR (puede ser skipped)
+    if (r_ctr.status === 'fulfilled') {
+      const ctr = r_ctr.value;
+      if (ctr.skipped) {
+        logQA(4, '⏭️', ctr.reason);
+      } else {
+        const ok = ctr.score >= 50;
+        logQA(4, ok ? '✅' : '❌', `CTR: ${ctr.score}/100`);
+        if (!ok) failures.push({ capa: 4, name: 'ctr', data: ctr, issues: ctr.issues });
+      }
+    } else {
+      logQA(4, '⚠️', `skip: ${r_ctr.reason?.message}`);
+    }
+
+    // Capa 5: Simulation
+    if (r_simulation.status === 'fulfilled') {
+      const sim = r_simulation.value;
+      const ok = sim.approval_probability >= 60;
+      logQA(5, ok ? '✅' : '❌', `Simulator: ${sim.approval_probability}%`);
+      if (!ok) failures.push({ capa: 5, name: 'simulator', data: sim, issues: sim.requested_changes });
+    } else {
+      logQA(5, '⚠️', `skip: ${r_simulation.reason?.message}`);
+    }
+
+    // ── Si hay fallos → ORACLE genera instrucciones consolidadas ─────────────
+    if (failures.length > 0) {
+      const issuesSummary = failures.map(f =>
+        `[${f.name.toUpperCase()}] ${Array.isArray(f.issues) ? f.issues.slice(0, 2).join('; ') : f.issues || 'ver datos'}`
+      ).join(' | ');
+
+      let oDecision = null;
+      try {
+        oDecision = await decideArteRechazado(brief, `parallel_qa_${failures.length}fallas`, failures.map(f => f.issues).flat().filter(Boolean));
+      } catch { /* non-fatal */ }
+
+      await updateBriefStatus(brief_id, 'rework', {
+        notas_revision: oDecision?.mensaje_carlos || issuesSummary
+      });
+
+      const totalMs = Date.now() - startTime;
+      console.log(`❌ QA TURBO: ${failures.length} falla(s) en ${totalMs}ms`);
+      return { passed: false, failures, reason: oDecision?.razon || issuesSummary, oracle_decision: oDecision, qa_log: qaLog, duration_ms: totalMs };
+    }
+
+    // ── CAPA 6: Valentina — Design Plugin (4 capas) post-guard ──────────────
+    try {
+      const valentina = getValentinaAgent();
+      if (valentina?.designPluginAudit) {
+        const dpAudit = await Promise.race([
+          valentina.designPluginAudit(brief, brief.url_arte_final, brief.cliente || 'FIF'),
+          timeoutPromise(12000, 'valentina_design_plugin')
+        ]);
+
+        const dpSummary = [
+          `consistency:${dpAudit.consistency?.veredicto || '?'}`,
+          `ux:${dpAudit.ux_writing?.veredicto || '?'}`,
+          `a11y:${dpAudit.accessibility?.veredicto || '?'}`,
+          `score:${dpAudit.overall_score || 0}`
+        ].join(' | ');
+
+        logQA(6, dpAudit.overall_status === 'rejected' ? '❌' : dpAudit.overall_status === 'approved' ? '✅' : '⚠️',
+          `Valentina DesignPlugin: ${dpAudit.overall_status} — ${dpSummary}`);
+
+        // Siempre guardar dev handoff notes en el brief
+        if (dpAudit.dev_handoff?.notas_para_claudia) {
+          try { await updateBriefStatus(brief_id, undefined, { notas_entrega: dpAudit.dev_handoff.notas_para_claudia }); } catch {}
+        }
+
+        if (dpAudit.overall_status === 'rejected') {
+          let oDecision = null;
+          try {
+            const motivo = (dpAudit.bloqueantes || []).join('; ') || 'No cumple Design Plugin';
+            oDecision = await decideArteRechazado(brief, 'valentina_design_plugin', motivo);
+          } catch {}
+          await updateBriefStatus(brief_id, 'rework', {
+            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA DP] ${(dpAudit.bloqueantes || []).join('; ')}`
+          });
+          const totalMs = Date.now() - startTime;
+          return { passed: false, reason: oDecision?.razon || 'Rechazado: Design Plugin', design_audit: dpAudit, oracle_decision: oDecision, qa_log: qaLog, duration_ms: totalMs };
+        }
+      } else {
+        logQA(6, '⏭️', 'Valentina no disponible');
+      }
+    } catch (e) {
+      logQA(6, '⚠️', `Valentina DP skip: ${e.message}`);
+    }
+
+    // ── APROBADO ──────────────────────────────────────────────────────────────
+    const totalMs = Date.now() - startTime;
+    await updateBriefStatus(brief_id, 'aprobado_qa', {
+      notas_revision: `QA TURBO ${totalMs}ms: ${qaLog.join(' | ')}`
+    });
+
+    console.log(`✅ QA TURBO completado: brief_id=${brief_id} APROBADO en ${totalMs}ms`);
+    return { passed: true, qa_log: qaLog, duration_ms: totalMs };
+
+  } catch (err) {
+    console.error('❌ Fase 5 QA Turbo error:', err.message);
+    return { passed: false, error: err.message, qa_log: qaLog };
   }
 }
 
@@ -558,6 +1009,7 @@ module.exports = {
   fase3_aprobacionNKD,
   fase4_produccion,
   fase5_qa,
+  fase5_qa_turbo,   // UPGRADE 1: versión paralela <8s
   fase6_revisionNKD,
   fase7_entregaClaudia,
   fase7b_llenarTablasTrigger

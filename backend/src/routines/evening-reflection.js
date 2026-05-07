@@ -5,6 +5,7 @@
 
 const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
+const obsidianSync = require('../services/obsidian-sync');
 
 async function getDayMetrics() {
   const today = new Date().toISOString().split('T')[0];
@@ -47,11 +48,11 @@ async function getDayMetrics() {
   };
 }
 
-async function saveToOracleMemory(type, data) {
+async function saveToOracleMemory(tipo, data) {
   try {
     await supabase.from('oracle_memory').insert({
-      type,
-      content: JSON.stringify(data),
+      tipo,
+      contenido: JSON.stringify(data),
       created_at: new Date().toISOString()
     });
   } catch (err) {
@@ -111,6 +112,11 @@ Máximo 200 palabras.`,
       metrics: hoy,
       reflection
     });
+
+    // ── Sync automático a BOVEDA NKD ────────────────────────────────
+    obsidianSync.saveEveningReflection(reflection, hoy).catch(err =>
+      console.warn('[EveningReflection] Obsidian sync skipped:', err.message)
+    );
 
     console.log('✅ Evening Reflection enviado a NKD');
     return { success: true, reflection };

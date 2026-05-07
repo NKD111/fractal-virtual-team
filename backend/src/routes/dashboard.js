@@ -74,8 +74,13 @@ router.get('/financials', async (req, res) => {
   }
 });
 
-// ─── BLOQUE P — Business OS v3.0 Dashboard ────────────────────────────────────
-// GET /api/dashboard/business-os — Dashboard completo del Business OS v3.0
+// ─── BLOQUE P — Business OS v4.0 Dashboard ────────────────────────────────────
+// GET /api/dashboard/business-os — Dashboard completo del Business OS v4.0
+const agentRegistry  = require('../core/agent-registry');
+const memoryEngine   = require('../core/memory-engine');
+const pipelineEngine = require('../core/pipeline-engine');
+const { calculateHealthScore } = require('../core/health-score');
+
 router.get('/business-os', async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -125,6 +130,39 @@ router.get('/business-os', async (req, res) => {
     const sales = productsResult.status === 'fulfilled' ? (productsResult.value?.data || []) : [];
     const projects = projectsResult.status === 'fulfilled' ? (projectsResult.value?.data || []) : [];
 
+    // ── v4: Cargar métricas de agentes, memoria y pipelines ──────────────────
+    const [
+      memoriaVictorias,
+      memoriaErrores,
+      memoriaPatrones,
+      memoriaPrompts,
+      allPipelinesStatus
+    ] = await Promise.allSettled([
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.VICTORIA),
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.ERROR),
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.PATRON_CLIENTE),
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.PROMPT_EXITOSO),
+      pipelineEngine.getAllPipelinesStatus(month)
+    ]);
+
+    // Health Score v5 — cálculo en tiempo real si no hay snapshot reciente
+    const healthResult = await calculateHealthScore().catch(() => null);
+
+    const registryStatus = agentRegistry.getSystemStatus();
+
+    const victorias    = memoriaVictorias.status    === 'fulfilled' ? memoriaVictorias.value    : 0;
+    const erroresAprendidos = memoriaErrores.status === 'fulfilled' ? memoriaErrores.value       : 0;
+    const patronesCliente   = memoriaPatrones.status === 'fulfilled' ? memoriaPatrones.value    : 0;
+    const promptsExitosos   = memoriaPrompts.status  === 'fulfilled' ? memoriaPrompts.value     : 0;
+    const pipelines    = allPipelinesStatus.status   === 'fulfilled' ? allPipelinesStatus.value  : [];
+
+    // QA metrics — calcular desde briefs del mes
+    const totalBriefs      = briefs.length;
+    const aprobadosQA      = briefs.filter(b => ['aprobado_qa','en_produccion','entregado'].includes(b.status)).length;
+    const aprobadosNKD     = briefs.filter(b => b.status === 'entregado').length;
+    const tasaQA           = totalBriefs > 0 ? Math.round((aprobadosQA / totalBriefs) * 100) : 0;
+    const tasaNKD          = totalBriefs > 0 ? Math.round((aprobadosNKD / totalBriefs) * 100) : 0;
+
     // Calcular día actual del pipeline FIF (1-20)
     const dayOfMonth = new Date().getDate();
     const pipelineDay = Math.min(dayOfMonth, 20);
@@ -154,9 +192,46 @@ router.get('/business-os', async (req, res) => {
 
     res.json({
       success: true,
-      version: 'Business OS v3.0',
+      version: 'Business OS v4.0',
       timestamp: new Date().toISOString(),
       layers,
+      // ── v4 sections ─────────────────────────────────────────────────────────
+      sistema: {
+        nivel:              '4/9',
+        fases_completadas:  ['F1_contexto_modular','F2_qa_pipeline','F3_diana_translate',
+                             'F4_parallel_exec','F5_pipeline_engine','F6_estrategicos',
+                             'F7_agent_registry','F8_memory_engine','F9_dashboard_v4'],
+        agentes_activos:    registryStatus.activos,
+        agentes_standby:    registryStatus.standby,
+        agentes_calidad:    registryStatus.calidad,
+        agentes_estrategicos: registryStatus.estrategicos,
+        total_agentes:      registryStatus.total,
+        crons_activos:      snapshot?.crons_active || 0,
+        api_cost_hoy:       snapshot?.api_cost_today || 0,
+        system_health:      snapshot?.system_health || 'unknown',
+        proyectos_activos:  projects.length
+      },
+      health: healthResult ? {
+        score:          healthResult.score,
+        emoji:          healthResult.emoji,
+        interpretation: healthResult.interpretation,
+        breakdown:      healthResult.breakdown
+      } : { score: snapshot?.health_score || 0, emoji: '⬜', interpretation: 'calculando...' },
+      calidad: {
+        tasa_aprobacion_qa:  tasaQA,
+        tasa_aprobacion_nkd: tasaNKD,
+        piezas_evaluadas:    totalBriefs,
+        aprobadas_qa:        aprobadosQA,
+        entregadas_cliente:  aprobadosNKD
+      },
+      memoria: {
+        victorias_registradas: victorias,
+        errores_aprendidos:    erroresAprendidos,
+        patrones_cliente:      patronesCliente,
+        prompts_exitosos:      promptsExitosos,
+        total_memoria:         victorias + erroresAprendidos + patronesCliente + promptsExitosos
+      },
+      pipelines,
       revenue: {
         hoy: snapshot?.revenue_today || 0,
         mes: revenueTotal,
@@ -181,12 +256,6 @@ router.get('/business-os', async (req, res) => {
         imagenes_generadas: snapshot?.images_generated || 0,
         creditos_usados: snapshot?.higgsfield_credits_used || 0
       },
-      sistema: {
-        crons_activos: snapshot?.crons_active || 0,
-        api_cost_hoy: snapshot?.api_cost_today || 0,
-        system_health: snapshot?.system_health || 'unknown',
-        proyectos_activos: projects.length
-      },
       pendientes_nkd: [
         'Email de Claudia (Central Interactiva) → CLAUDIA_EMAIL env var',
         'Aprobar 5 PDFs cuando Code los entregue',
@@ -197,6 +266,109 @@ router.get('/business-os', async (req, res) => {
         'Canal YouTube: nombre + faceless% + frecuencia'
       ]
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /api/dashboard/telemetry ─────────────────────────────────────────────
+// UPGRADE 5: Observabilidad completa — costo, latencia, errores en tiempo real
+router.get('/telemetry', async (req, res) => {
+  try {
+    const { getCostsToday, getCostsMonth, getCostsByAgent, getLatencyByTask, getErrorRate } = require('../core/telemetry');
+    const { getCacheStats } = require('../core/claude-cache');
+    const hours = parseInt(req.query.hours) || 24;
+
+    const [costHoy, costMes, costByAgent, latencia, errores] = await Promise.allSettled([
+      getCostsToday(),
+      getCostsMonth(),
+      getCostsByAgent(hours),
+      getLatencyByTask(hours),
+      getErrorRate(hours)
+    ]);
+
+    const cacheStats = getCacheStats();
+
+    res.json({
+      success:   true,
+      periodo:   `últimas ${hours}h`,
+      timestamp: new Date().toISOString(),
+
+      costos: {
+        hoy:           costHoy.status === 'fulfilled' ? costHoy.value : { error: costHoy.reason?.message },
+        mes:           costMes.status === 'fulfilled' ? costMes.value : { error: costMes.reason?.message },
+        por_agente:    costByAgent.status === 'fulfilled' ? costByAgent.value : [],
+      },
+
+      latencia: {
+        por_tarea:     latencia.status === 'fulfilled' ? latencia.value : [],
+        nota:          'Capas QA: objetivo <8000ms con UPGRADE 1 turbo'
+      },
+
+      errores: errores.status === 'fulfilled' ? errores.value : { overall: 'N/A' },
+
+      cache: cacheStats,
+
+      alertas: await buildTelemetryAlerts(
+        costHoy.status === 'fulfilled' ? costHoy.value?.total : 0,
+        latencia.status === 'fulfilled' ? latencia.value : [],
+        errores.status === 'fulfilled' ? errores.value : {}
+      )
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+async function buildTelemetryAlerts(costToday, latencias, errorRates) {
+  const alerts = [];
+  if (costToday > 10) alerts.push({ level: 'warn', msg: `Costo hoy: $${costToday} USD (umbral: $10)` });
+  if (costToday > 25) alerts.push({ level: 'critical', msg: `Costo crítico: $${costToday} USD` });
+  const slowTasks = latencias.filter(t => t.avg_ms > 15000);
+  if (slowTasks.length) alerts.push({ level: 'warn', msg: `Tareas lentas (>15s): ${slowTasks.map(t => t.task).join(', ')}` });
+  const errRate = parseFloat(errorRates.overall);
+  if (errRate > 10) alerts.push({ level: 'warn', msg: `Tasa de error: ${errorRates.overall}% (umbral: 10%)` });
+  if (errRate > 25) alerts.push({ level: 'critical', msg: `Error rate crítica: ${errorRates.overall}%` });
+  return alerts;
+}
+
+// ── GET /api/dashboard/circuit-breakers ──────────────────────────────────────
+// UPGRADE 3: Estado en tiempo real de todos los circuit breakers
+// Muestra qué servicios están caídos, cuántos fallos tienen y error rate
+router.get('/circuit-breakers', (req, res) => {
+  try {
+    const { breakers } = require('../core/circuit-breaker');
+    const status = Object.entries(breakers).reduce((acc, [key, cb]) => {
+      acc[key] = cb.getStatus();
+      return acc;
+    }, {});
+
+    const openCount = Object.values(status).filter(s => s.state === 'OPEN').length;
+    const degraded  = openCount > 0;
+
+    res.json({
+      success:        true,
+      timestamp:      new Date().toISOString(),
+      sistema_status: degraded ? 'DEGRADADO' : 'OPERACIONAL',
+      servicios_caidos: openCount,
+      breakers:       status
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /api/dashboard/circuit-breakers/:name/reset ─────────────────────────
+// Permite reset manual de un circuito específico desde el dashboard
+router.post('/circuit-breakers/:name/reset', (req, res) => {
+  try {
+    const { breakers } = require('../core/circuit-breaker');
+    const { name } = req.params;
+    if (!breakers[name]) {
+      return res.status(404).json({ error: `Circuit breaker '${name}' no encontrado` });
+    }
+    breakers[name].reset();
+    res.json({ success: true, message: `Circuit breaker '${name}' reseteado`, status: breakers[name].getStatus() });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

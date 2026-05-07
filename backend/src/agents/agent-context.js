@@ -1,13 +1,15 @@
 // backend/src/agents/agent-context.js
 // Fase 8.5 PASO 2: Contexto base que todos los agentes conocen.
+// FASE 1 Upgrade v4.0: usa context-loader para contexto modular.
 // Inyectado en cada conversación. Hidrata clientes/proyectos/promesas
 // desde Supabase en vivo.
 
 const { supabase } = require('../core/supabase');
+const contextLoader = require('../core/context-loader');
 
 class AgentContext {
 
-  async buildContext(agentName) {
+  async buildContext(agentName, clienteName = null) {
     const [clients, projects, promises, teammates] = await Promise.all([
       this.getClients(),
       this.getActiveProjects(),
@@ -15,9 +17,15 @@ class AgentContext {
       this.getTeammates(agentName)
     ]);
 
-    return `
-=== CONTEXTO DE FRACTAL MX ===
-
+    // FASE 1 — Memoria Modular: carga contexto específico del agente
+    // Si context-loader está disponible → contexto modular (eficiente)
+    // Si no → fallback al bloque hardcoded (seguridad)
+    let staticContext;
+    if (contextLoader.isAvailable()) {
+      staticContext = contextLoader.loadContext(agentName, clienteName);
+    } else {
+      // Fallback: contexto hardcoded para no romper nada
+      staticContext = `
 EMPRESA:
 Fractal MX es una agencia creativa AI-powered en CDMX.
 Director: Neiky (Fermín Monroy) — WhatsApp +525534189583
@@ -30,6 +38,13 @@ REGLAS DE NEGOCIO CRÍTICAS:
 - Los demás clientes: 2 rondas de revisión incluidas
 - La 3ra ronda en adelante tiene costo extra
 - Pago Central Interactiva: siempre los miércoles
+      `.trim();
+    }
+
+    return `
+=== CONTEXTO DE FRACTAL MX ===
+
+${staticContext}
 
 TU ROL:
 ${this.getRoleDescription(agentName)}
@@ -41,7 +56,7 @@ LA MASCOTA:
 Glitch — golden retriever que vive en la oficina, parte del equipo,
 deambula entre salas. NPC, no es agente.
 
-CLIENTES ACTIVOS:
+CLIENTES ACTIVOS (en vivo desde Supabase):
 ${clients}
 
 PROYECTOS EN CURSO:
