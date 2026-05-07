@@ -323,27 +323,58 @@ ${data.notes || 'Sin notas adicionales'}`;
   }
 
   /**
-   * Carga conocimiento colectivo relevante
+   * Carga conocimiento relevante para este agente:
+   * 1. Investigaciones autónomas propias (tasks con metadata.agent = this.name)
+   * 2. Conocimiento colectivo general del equipo (collective_knowledge)
    */
   async loadRelevantKnowledge(context) {
-    let query = this.supabase
-      .from('collective_knowledge')
-      .select('*')
-      .eq('is_active', true)
-      .order('effectiveness_score', { ascending: false })
-      .limit(5);
+    const agentName = (this.name || '').toLowerCase();
+    const since7d   = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
 
-    if (context.clientId) {
-      query = query.or(`client_specific.eq.${context.clientId},client_specific.is.null`);
+    const [ownResearchRes, collectiveRes] = await Promise.allSettled([
+      // Investigaciones propias del agente (últimos 7 días)
+      this.supabase
+        .from('tasks')
+        .select('metadata, result, updated_at')
+        .eq('metadata->>task_type', 'auto_research')
+        .eq('metadata->>agent', agentName)
+        .eq('status', 'completed')
+        .gte('updated_at', since7d)
+        .order('updated_at', { ascending: false })
+        .limit(4),
+
+      // Conocimiento colectivo (sin UUID — solo campos text)
+      this.supabase
+        .from('collective_knowledge')
+        .select('category, topic, insight')
+        .eq('is_active', true)
+        .is('applicable_to', null)
+        .order('effectiveness_score', { ascending: false })
+        .limit(3)
+    ]);
+
+    const ownResearch = ownResearchRes.status === 'fulfilled' ? (ownResearchRes.value?.data || []) : [];
+    const collective  = collectiveRes.status  === 'fulfilled' ? (collectiveRes.value?.data  || []) : [];
+
+    const lines = [];
+
+    if (ownResearch.length > 0) {
+      lines.push('── Tu conocimiento reciente (investigaciones propias) ──');
+      ownResearch.forEach(k => {
+        const topic = k.metadata?.topic || 'investigación';
+        const area  = k.metadata?.area  || k.metadata?.agent_rol || '';
+        // Mostrar solo primeras 300 chars del resultado para no inflar el prompt
+        const insight = (k.result || '').substring(0, 300);
+        lines.push(`• [${area}] ${topic}: ${insight}`);
+      });
     }
 
-    const { data } = await query;
+    if (collective.length > 0) {
+      lines.push('── Conocimiento colectivo del equipo ──');
+      collective.forEach(k => lines.push(`• [${k.category}] ${k.topic}: ${k.insight?.substring(0, 150)}`));
+    }
 
-    if (!data || data.length === 0) return 'Sin conocimiento previo aplicable';
-
-    return data.map(k =>
-      `• [${k.category}] ${k.topic}: ${k.insight}`
-    ).join('\n');
+    return lines.length > 0 ? lines.join('\n') : 'Sin conocimiento previo aplicable';
   }
 
   /**
