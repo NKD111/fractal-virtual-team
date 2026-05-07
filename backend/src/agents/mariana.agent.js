@@ -469,7 +469,23 @@ Solo JSON, sin markdown:`;
   }
 
   async respondToNeiky(message, sender, history, intent) {
-    const content = this._sanitizeText(message.content || message.text || '');
+    const rawContent = message.content || message.text || '';
+    const content = this._sanitizeText(rawContent);
+
+    // ── Interceptar preguntas sobre el equipo ANTES de llamar Haiku ───────────
+    // Si Haiku responde a "qué hace el equipo?" sin datos reales, inventa. Evitamos eso.
+    if (this._isTeamStatusQuery(rawContent)) {
+      try {
+        console.log('[Mariana] respondToNeiky → interceptando query de equipo');
+        return await this._cmdEquipoStatus(false);
+      } catch (err) {
+        console.error('[Mariana] team status query fallthrough:', err.message);
+        // Si falla, deja pasar al LLM pero con instrucción de honestidad
+      }
+    }
+
+    // eslint-disable-next-line no-unused-vars
+    const _content_already_set = true; // content está definido arriba
     const historyText = history.slice(0, 6).map(h =>
       `[${h.channel?.toUpperCase() || '?'}] Neiky: "${this._sanitizeText(h.message_in || '')}" → Mariana: "${this._sanitizeText(h.message_out || '')}"`
     ).join('\n') || 'Sin historial previo';
@@ -1012,12 +1028,46 @@ Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en for
       // No había upsell pendiente → dejar pasar al LLM normalmente
     }
 
+    // ─── "equipo" — status real del equipo ───────────────────────────────────
+    if (t === 'equipo' || t === 'team' || t === 'status equipo' || t === 'que hace el equipo'
+        || t === 'que esta haciendo el equipo' || t === 'como va el equipo'
+        || t === 'que estan haciendo' || t.includes('status del equipo')
+        || t.includes('que hace') && t.includes('equipo')) {
+      return this._cmdEquipoStatus(false);
+    }
+
+    // ─── "asigna trabajo" — fuerza auto-investigación a todos los idle ───────
+    if (t === 'asigna trabajo' || t === 'ponlos a trabajar' || t === 'asigna investigacion'
+        || t === 'asigna tareas' || t.includes('ponlos a investigar')) {
+      return this._cmdEquipoStatus(true);
+    }
+
     // ─── "ayuda" ──────────────────────────────────────────────────────────────
     if (t === 'ayuda' || t === 'help' || t === 'comandos' || t === '?') {
       return this._cmdAyuda();
     }
 
     return null; // No es un comando — procesar normalmente
+  }
+
+  // ─── _cmdEquipoStatus ─────────────────────────────────────────────────────
+  async _cmdEquipoStatus(forceAssign = false) {
+    const { getTeamStatus, assignAutoWork, formatTeamStatusMessage } = require('../core/agent-work-manager');
+    try {
+      const teamStatus = await getTeamStatus();
+      const idleAgents = teamStatus.filter(a => a.status === 'idle');
+      let newWork = [];
+
+      if (forceAssign || idleAgents.length > 0) {
+        // Asignar trabajo real a todos los idle (máximo 4)
+        newWork = await assignAutoWork(idleAgents.slice(0, 4).map(a => a.agent));
+      }
+
+      return formatTeamStatusMessage(teamStatus, newWork);
+    } catch (err) {
+      console.error('[Mariana] _cmdEquipoStatus:', err.message);
+      return '⚠️ No pude consultar el status del equipo en este momento. Intenta en un segundo.';
+    }
   }
 
   async _cmdEstado() {
@@ -1287,6 +1337,8 @@ Responde "ayuda" para ver todos los comandos.`;
     return `🤖 *COMANDOS DISPONIBLES:*
 
 📊 *estado* — Resumen del sistema
+👥 *equipo* — Status real del equipo (qué está haciendo cada uno)
+💼 *asigna trabajo* — Poner a investigar a los que estén idle
 💰 *cuánto va el mes* — Revenue vs meta
 🎯 *prospecto top* — Top 5 AXIOM con mensajes
 🔍 *axiom scan* — Lanzar scan manual
@@ -1298,6 +1350,24 @@ Responde "ayuda" para ver todos los comandos.`;
 
 *SI* — Confirmar upsell pendiente
 *ayuda* — Esta lista`;
+  }
+
+  // ─── Detector de intent "equipo" para respuestas naturales ───────────────
+  // Usado por respondToNeiky para interceptar ANTES de llamar Haiku
+  _isTeamStatusQuery(text = '') {
+    const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const patterns = [
+      /qu[eé]\s+(est[aá](n|s)?\s+)?(haciendo|trabajando|ocupados?)/,
+      /c[oó]mo\s+va\s+(el\s+)?equipo/,
+      /status\s+(del\s+)?equipo/,
+      /qu[eé]\s+hace\s+(el\s+)?equipo/,
+      /en\s+qu[eé]\s+(est[aá](n|s)?|andan)\s+/,
+      /qu[eé]\s+tiene[ns]?\s+pendiente/,
+      /qu[eé]\s+(hace|hacen|tiene[ns]?)\s+(carlos|alex|diego|max|valentina|sofia|diana|lucas|roberto|nexus)/,
+      /est[aá](n)?\s+(trabajando|ocupados?|disponibles?|libres?)/,
+      /tienen\s+(trabajo|tareas?|algo\s+asignado)/
+    ];
+    return patterns.some(p => p.test(t));
   }
 }
 
