@@ -162,9 +162,18 @@ async function oracleDecide(situacion, contexto, nivel) {
 
   console.log(`[ORACLE] decisión iniciada — situacion: ${situacion}, nivel: ${nivelFinal}, id: ${decisionId}`);
 
-  // ── 1. Generar análisis con Claude ───────────────────────────────────────────
+  // ── 1. Obtener contexto de memoria semántica ─────────────────────────────────
+  let memoriaCtx = '';
+  try {
+    const cliente = contexto?.cliente || contexto?.brief?.cliente || '';
+    const tipoPieza = contexto?.tipo_pieza || contexto?.brief?.tipo_pieza || '';
+    const briefText = contexto?.concepto || contexto?.brief?.concepto || contexto?.razon || '';
+    memoriaCtx = await memoryEngine.buildMemoryContext(cliente, tipoPieza, briefText);
+  } catch { /* no bloquea decisión */ }
+
+  // ── 2. Generar análisis con Claude ───────────────────────────────────────────
   const promptFn   = SITUACION_PROMPTS[situacion] || ((ctx) => `Analiza esta situación y decide la mejor acción:\n${JSON.stringify(ctx, null, 2)}`);
-  const promptBody = promptFn(contexto);
+  const promptBody = (memoriaCtx ? memoriaCtx + '\n\n' : '') + promptFn(contexto);
 
   const system = `Eres ORACLE, el motor de decisión autónomo de Fractal MX.
 Fractal MX es una agencia creativa AI-powered en CDMX. Tu dueña es Neiky Valentina Domínguez (NKD).

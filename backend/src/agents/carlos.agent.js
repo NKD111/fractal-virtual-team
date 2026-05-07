@@ -1,10 +1,12 @@
 // backend/src/agents/carlos.agent.js
 // Fractal Virtual Team v4.2 — CARLOS (Senior Designer - Branding & Visual Systems)
 // BLOQUE H: JSON prompting + generateFromBrief + generateCarousel
+// UPGRADE 4: Memoria semántica inyectada en generateFromBrief y generateBrandingConcepts
 
 const BaseAgent = require('../core/BaseAgent');
 const CARLOS_PROMPT = require('../prompts/carlos.prompts');
 const higgsfield = require('../core/higgsfield-client');
+const { buildMemoryContext } = require('../core/memory-engine');
 
 // ─── SISTEMA DE PROMPTS FIF (BLOQUE H) ────────────────────────────────────────
 // Base siempre presente en cada imagen generada para FIF.
@@ -108,8 +110,18 @@ class CarlosAgent extends BaseAgent {
    * Genera 3 conceptos de branding para un cliente
    */
   async generateBrandingConcepts(clientBrief) {
-    const conceptPrompt = `${this.basePrompt}
+    // UPGRADE 4: memoria semántica de victorias y patrones del cliente
+    let memoriaCtx = '';
+    try {
+      memoriaCtx = await buildMemoryContext(
+        clientBrief.cliente || clientBrief.client_id || '',
+        'branding',
+        JSON.stringify(clientBrief).slice(0, 500)
+      );
+    } catch { /* no bloquea */ }
 
+    const conceptPrompt = `${this.basePrompt}
+${memoriaCtx ? memoriaCtx + '\n' : ''}
 BRIEF DEL CLIENTE:
 ${JSON.stringify(clientBrief, null, 2)}
 
@@ -349,7 +361,7 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
    * @param {object} brief - registro de parrilla_briefs
    * @returns {string} prompt listo para enviar a Higgsfield
    */
-  buildPromptFromBrief(brief) {
+  buildPromptFromBrief(brief, memoriaCtx = '') {
     const composicion = brief.tipo_pieza === 'banner'
       ? FIF_VISUAL_SYSTEM.composicion_banner
       : FIF_VISUAL_SYSTEM.composicion_post;
@@ -361,7 +373,9 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
       `BRIEF ESPECÍFICO:\n${brief.prompt_higgsfield || brief.concepto || ''}`,
       brief.headline ? `Headline concept: "${brief.headline}"` : '',
       brief.objetivo ? `Visual objective: ${brief.objetivo}` : '',
-      brief.notas_para_carlos ? brief.notas_para_carlos : ''
+      brief.notas_para_carlos ? brief.notas_para_carlos : '',
+      // UPGRADE 4: contexto de memoria semántica (victorias, errores, patrones)
+      memoriaCtx ? `\n${memoriaCtx}` : ''
     ].filter(Boolean).join('\n\n');
   }
 
@@ -381,8 +395,21 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
       return this.generateCarousel(brief);
     }
 
+    // UPGRADE 4: Enriquecer prompt con memoria semántica
+    let memoriaCtx = '';
+    try {
+      memoriaCtx = await buildMemoryContext(
+        brief.cliente || 'FIF',
+        brief.tipo_pieza,
+        brief.concepto || brief.prompt_higgsfield || ''
+      );
+      if (memoriaCtx) {
+        console.log(`[Carlos] Memoria semántica inyectada (${memoriaCtx.length} chars)`);
+      }
+    } catch { /* no bloquea si falla */ }
+
     // Pieza individual
-    const prompt = this.buildPromptFromBrief(brief);
+    const prompt = this.buildPromptFromBrief(brief, memoriaCtx);
     const isBanner = brief.tipo_pieza === 'banner';
     const aspectRatio = isBanner ? '16:9' : '4:5';
     const quality = '2k';

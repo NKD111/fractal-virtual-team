@@ -2,10 +2,12 @@
 // FASE 2 — Agentes de Calidad Avanzados
 // Detecta inconsistencias de marca ANTES de que el cliente las vea.
 // Se activa en QA pipeline (capa 2), después de QC-BOT técnico.
+// UPGRADE 4: Memoria semántica inyectada — errores pasados evitan repetición
 
 const { chat } = require('../core/anthropic');
 const { supabase } = require('../core/supabase');
 const contextLoader = require('../core/context-loader');
+const { buildMemoryContext } = require('./memory-engine');
 
 // UPGRADE 2: Haiku para validación binaria de marca (67% más barato que Sonnet)
 // Brand check es determinístico con reglas fijas — Haiku es suficiente
@@ -47,6 +49,16 @@ async function auditConsistency(arte_nuevo, cliente = 'FIF') {
   // Cargar contexto del cliente (brand system)
   const brandContext = contextLoader.loadClientContext(cliente.toLowerCase());
 
+  // UPGRADE 4: memoria de errores anteriores (evitar repetir rechazos documentados)
+  let memoriaCtx = '';
+  try {
+    memoriaCtx = await buildMemoryContext(
+      cliente,
+      arte_nuevo.tipo_pieza,
+      arte_nuevo.concepto || arte_nuevo.brief || ''
+    );
+  } catch { /* no bloquea QA */ }
+
   // Artes anteriores aprobados como referencia
   const artes_anteriores = await getLastApprovedArts(cliente, 3);
 
@@ -60,7 +72,8 @@ async function auditConsistency(arte_nuevo, cliente = 'FIF') {
 Tu trabajo es detectar inconsistencias de marca ANTES de que el cliente las vea.
 Eres preciso, técnico y brutalmente honesto. No apruebas por quedar bien.
 
-${brandContext}`;
+${brandContext}
+${memoriaCtx ? '\n' + memoriaCtx : ''}`;
 
   const userMessage = `ARTE NUEVO A AUDITAR:
 Tipo: ${arte_nuevo.tipo_pieza || 'post'}
