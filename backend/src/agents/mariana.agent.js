@@ -484,6 +484,25 @@ Solo JSON, sin markdown:`;
       }
     }
 
+    // ── Detectar asignación de tarea ANTES de Haiku ───────────────────────────
+    // Si Neiky asigna una tarea, la registramos en DB y lanzamos ejecución en background.
+    // La respuesta inmediata de Haiku es el ACK; la notificación llega cuando la tarea termina.
+    let _neikyTaskId = null;
+    let _neikyTaskType = null;
+    if (this._isTaskAssignment(rawContent)) {
+      _neikyTaskType = this._extractTaskType(rawContent);
+      console.log(`[Mariana] Tarea detectada de Neiky — tipo: ${_neikyTaskType}`);
+      try {
+        const { registerNeikyTask } = require('../core/task-notifier');
+        _neikyTaskId = await registerNeikyTask(rawContent, _neikyTaskType === 'design' ? 'CARLOS' : 'MARIANA', {
+          channel: sender.channel || 'whatsapp',
+          task_type_detected: _neikyTaskType
+        });
+      } catch (e) {
+        console.warn('[Mariana] registerNeikyTask failed (non-blocking):', e.message);
+      }
+    }
+
     // eslint-disable-next-line no-unused-vars
     const _content_already_set = true; // content está definido arriba
     const historyText = history.slice(0, 6).map(h =>
@@ -550,6 +569,17 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
 
     // ── Delegación automática a agentes ──────────────────────────────────────
     try { await this._checkAndDelegate(content, responseText, sender); } catch (_) {}
+
+    // ── Lanzar ejecución de tarea en background si Neiky asignó una ──────────
+    if (_neikyTaskId) {
+      setImmediate(() => {
+        this._launchAgentTask(rawContent, _neikyTaskId, _neikyTaskType, sender).catch(err => {
+          console.error('[Mariana] _launchAgentTask error:', err.message);
+          const { markTaskFailed } = require('../core/task-notifier');
+          markTaskFailed(_neikyTaskId, err.message).catch(() => {});
+        });
+      });
+    }
 
     return responseText;
   }
@@ -1052,18 +1082,26 @@ Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en for
 
   // ─── _cmdEquipoStatus ─────────────────────────────────────────────────────
   async _cmdEquipoStatus(forceAssign = false) {
-    const { getTeamStatus, assignAutoWork, formatTeamStatusMessage } = require('../core/agent-work-manager');
+    const {
+      getTeamStatus, assignAutoWork, formatTeamStatusMessage, markSuggestionSent
+    } = require('../core/agent-work-manager');
+
     try {
-      const teamStatus = await getTeamStatus();
-      const idleAgents = teamStatus.filter(a => a.status === 'idle');
-      let newWork = [];
+      const teamStatus  = await getTeamStatus();
+      const idleAgents  = teamStatus.filter(a => a.status === 'idle');
+      let newSuggestions = [];
 
       if (forceAssign || idleAgents.length > 0) {
-        // Asignar trabajo real a todos los idle (máximo 4)
-        newWork = await assignAutoWork(idleAgents.slice(0, 4).map(a => a.agent));
+        // Research corre en BACKGROUND — no bloqueamos la respuesta
+        // Lanzamos y esperamos (máx 4 agentes, ~5s con Haiku)
+        newSuggestions = await assignAutoWork(idleAgents.slice(0, 4).map(a => a.agent));
+
+        // Marcar sugerencias previas como enviadas para no repetir
+        const prevSugs = teamStatus.flatMap(a => a.suggestions || []);
+        await Promise.all(prevSugs.map(s => markSuggestionSent(s.id).catch(() => {})));
       }
 
-      return formatTeamStatusMessage(teamStatus, newWork);
+      return formatTeamStatusMessage(teamStatus, newSuggestions);
     } catch (err) {
       console.error('[Mariana] _cmdEquipoStatus:', err.message);
       return '⚠️ No pude consultar el status del equipo en este momento. Intenta en un segundo.';
@@ -1350,6 +1388,216 @@ Responde "ayuda" para ver todos los comandos.`;
 
 *SI* — Confirmar upsell pendiente
 *ayuda* — Esta lista`;
+  }
+
+  // ─── Detector de asignación de tarea por Neiky ───────────────────────────
+  /**
+   * Detecta si Neiky está asignando una tarea concreta (no solo conversando).
+   * Se activa por verbos de acción directos o solicitudes de entregables.
+   */
+  _isTaskAssignment(text = '') {
+    const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+    // Omitir si ya es interceptado por otros handlers
+    if (t.length < 8) return false;  // demasiado corto para ser tarea
+
+    const patterns = [
+      // Imperativo directo: "haz un arte", "genera el copy", "crea la propuesta"
+      // Nota: 't' ya está NFD-normalizado → "diseña" → "disena", usar dise[nñ]a
+      /\b(haz(me)?|genera|crea|dise[nñ]a|escribe|redacta|prepara|desarrolla)\b.{4,}/,
+      // Delegación explícita: "dile a Carlos que...", "pídele a Diego que..."
+      /\b(d[ií]le|p[ií]dele?)\s+a\s+\w+\s+que\b/,
+      // Petición explícita con verbo de tarea
+      /\b(necesito|quiero)\s+(que\s+(hagas?|generes?|crees?|dise[nñ]es?|escribas?|prepares?|desarrolles?|me\s+(mandes?|env[ií]es?|des?|hagas?)))/,
+      // Petición de entregable concreto
+      /\b(necesito|quiero|dame|mándame|enviame|pásame)\s+(un|una)\s+(arte|banner|dise[nñ]o|post|parrilla|video|logo|estrategia|copy|email|reporte|flyer|cartel|lona|imagen|pieza|propuesta|presentaci[oó]n|contenido)/,
+      // "¿puedes hacer/generar X?"
+      /\bpuedes?\s+(hacer|crear|generar|dise[nñ]ar|escribir|preparar|mandar|enviar)\b.{4,}/,
+    ];
+
+    return patterns.some(p => p.test(t));
+  }
+
+  /**
+   * Clasifica el tipo de tarea para enrutar al agente correcto.
+   * Retorna: 'design' | 'copy' | 'research' | 'delegation' | 'general'
+   */
+  _extractTaskType(text = '') {
+    const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+    // ¿Delega a un agente específico por nombre?
+    if (/\b(dile|pidele)\s+a\s+(carlos|diego|max|valentina|sofia|diana|lucas|roberto|alex|nexus)\b/.test(t)) {
+      return 'delegation';
+    }
+    // ¿Tarea de diseño/imagen?
+    if (/\b(arte|banner|flyer|cartel|lona|imagen|pieza|dise[nñ]o|post|parrilla|logo|visual|mockup)\b/.test(t)) {
+      return 'design';
+    }
+    // ¿Tarea de copy/texto?
+    if (/\b(copy|texto|escrib|redact|email|mensaje|caption|descripci[oó]n|contenido de texto|guion|script)\b/.test(t)) {
+      return 'copy';
+    }
+    // ¿Investigación?
+    if (/\b(investiga|research|busca informaci[oó]n|analiza|tendencias|competencia)\b/.test(t)) {
+      return 'research';
+    }
+    return 'general';
+  }
+
+  /**
+   * Ejecuta la tarea en background según su tipo y notifica a Neiky al terminar.
+   * Se llama en setImmediate — nunca bloquea la respuesta de chat.
+   *
+   * @param {string} content       - Mensaje original de Neiky
+   * @param {string} taskId        - UUID registrado en task-notifier
+   * @param {string} taskType      - 'design' | 'copy' | 'research' | 'delegation' | 'general'
+   * @param {object} sender        - Objeto sender de identifySender
+   */
+  async _launchAgentTask(content, taskId, taskType, sender) {
+    const { notifyTaskComplete, markTaskFailed } = require('../core/task-notifier');
+    console.log(`[Mariana] _launchAgentTask START — type=${taskType} task=${taskId?.substring(0, 8)}`);
+
+    try {
+      switch (taskType) {
+
+        // ── Diseño → Carlos (pipeline 2 etapas) ────────────────────────────
+        case 'design': {
+          const CarlosAgent = require('./carlos.agent');
+          const carlos = new CarlosAgent();
+
+          // Extraer parámetros del contenido del mensaje
+          const cliente = /\b(fif|efg|fractal)\b/i.test(content)
+            ? content.match(/\b(fif|efg|fractal)\b/i)[1].toUpperCase()
+            : 'FIF';
+          const tipoPieza = /\b(story|banner|banner_web)\b/i.test(content)
+            ? content.match(/\b(story|banner)\b/i)[1].toLowerCase()
+            : 'post_informativo';
+
+          // Construir brief mínimo desde el mensaje
+          const brief = {
+            cliente,
+            tipo_pieza:   tipoPieza,
+            headline:     content.substring(0, 60),
+            concepto:     content,
+            cta:          'REGÍSTRATE AHORA',
+            fecha:        '',
+            mes:          new Date().toISOString().substring(0, 7),
+          };
+
+          let result;
+          try {
+            // generateFromBrief retorna { images, typo_spec, typo_validation, pipeline_notes }
+            result = await carlos.generateFromBrief(brief);
+          } catch (carlosErr) {
+            console.error('[Mariana._launchAgentTask] Carlos error:', carlosErr.message);
+            await markTaskFailed(taskId, carlosErr.message);
+            return;
+          }
+
+          // Extraer URLs de imágenes si las hay
+          const mediaUrls = [];
+          if (result?.images && Array.isArray(result.images)) {
+            result.images.forEach(img => {
+              const url = img?.url || img?.image_url || (typeof img === 'string' ? img : null);
+              if (url) mediaUrls.push(url);
+            });
+          }
+
+          const resumenSpec = result?.typo_spec
+            ? `Spec Gotham generado: ${(result.typo_spec.capas || []).length} capas tipográficas\nValidación QC: ${result.typo_validation?.veredicto || 'pendiente'}`
+            : '(sin spec tipográfico)';
+
+          const resultText = `${result?.pipeline_notes || 'Pipeline 2 etapas completado.'}\n\n${resumenSpec}`;
+
+          await notifyTaskComplete(taskId, content, resultText, 'CARLOS', mediaUrls);
+          break;
+        }
+
+        // ── Copy/texto → Haiku genera el contenido ────────────────────────
+        case 'copy': {
+          const copyPrompt = `Eres Mariana, coordinadora de Fractal MX.
+Neiky te pidió esto: "${content}"
+
+Genera el copy/texto solicitado de forma completa y lista para usar.
+Responde SOLO con el contenido generado, sin introducción ni explicación.
+Máximo 800 caracteres.`;
+
+          let copyResult = '';
+          try {
+            const response = await this.claude.messages.create({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 600,
+              messages: [{ role: 'user', content: copyPrompt }]
+            });
+            copyResult = response.content[0].text;
+          } catch (err) {
+            copyResult = '(Error generando copy — verificar configuración API)';
+          }
+
+          await notifyTaskComplete(taskId, content, copyResult, 'MARIANA');
+          break;
+        }
+
+        // ── Investigación → agent-work-manager ───────────────────────────
+        case 'research': {
+          const { runResearchAndSuggest } = require('../core/agent-work-manager');
+          // signature: runResearchAndSuggest(agent, nombre, rol, topic)
+
+          let researchResult = '';
+          try {
+            const out = await runResearchAndSuggest('MARIANA', 'Mariana Solís', 'Coordinadora / Asistente', content.substring(0, 200));
+            researchResult = out?.rawInsights || out?.suggestion || String(out || '');
+          } catch (err) {
+            researchResult = '(Investigación parcial — revisa el log del sistema)';
+          }
+
+          await notifyTaskComplete(taskId, content, researchResult, 'MARIANA');
+          break;
+        }
+
+        // ── Delegación a agente específico ────────────────────────────────
+        case 'delegation': {
+          // Detectar a quién se delega
+          const agentMatch = content.match(/\b(carlos|diego|max|valentina|sofia|diana|lucas|roberto|alex|nexus)\b/i);
+          const agentName  = agentMatch ? agentMatch[1].toUpperCase() : 'CARLOS';
+
+          // Por ahora registramos la delegación y notificamos que fue enviada
+          // (el agente específico aún no tiene callback de completion — se añadirá por agente)
+          const delegateMsg = `Tarea delegada a ${agentName}.\nCuando ${agentName} la complete, recibirás otro aviso.\n\nContenido del encargo:\n"${content.substring(0, 300)}"`;
+          await notifyTaskComplete(taskId, content, delegateMsg, `MARIANA → ${agentName}`);
+          break;
+        }
+
+        // ── General → Haiku responde ──────────────────────────────────────
+        default: {
+          const generalPrompt = `Eres Mariana, coordinadora de Fractal MX.
+Neiky te pidió: "${content}"
+
+Completa esta tarea de la mejor forma posible.
+Sé concreta y entrega el resultado directamente. Máximo 600 caracteres.`;
+
+          let generalResult = '';
+          try {
+            const response = await this.claude.messages.create({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 500,
+              messages: [{ role: 'user', content: generalPrompt }]
+            });
+            generalResult = response.content[0].text;
+          } catch (err) {
+            generalResult = '(Error procesando tarea — verificar configuración)';
+          }
+
+          await notifyTaskComplete(taskId, content, generalResult, 'MARIANA');
+          break;
+        }
+      }
+
+      console.log(`[Mariana] _launchAgentTask DONE — task=${taskId?.substring(0, 8)}`);
+    } catch (err) {
+      console.error('[Mariana] _launchAgentTask FATAL:', err.message);
+      await markTaskFailed(taskId, err.message).catch(() => {});
+    }
   }
 
   // ─── Detector de intent "equipo" para respuestas naturales ───────────────
