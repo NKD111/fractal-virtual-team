@@ -171,12 +171,12 @@ async function getRelevantMemory(agent, cliente, tipo_pieza = null, limit = 5) {
   try {
     let query = supabase
       .from('oracle_memory')
-      .select('type, content, created_at')
+      .select('tipo, contenido, created_at')
       .order('created_at', { ascending: false })
       .limit(limit);
 
     // Filtrar por cliente si se especifica
-    // Nota: el campo content es JSON serializado, filtrar en aplicación
+    // Nota: el campo contenido es JSON serializado, filtrar en aplicación
     const { data } = await query;
 
     if (!data) return [];
@@ -185,8 +185,9 @@ async function getRelevantMemory(agent, cliente, tipo_pieza = null, limit = 5) {
     return (data || [])
       .map(m => {
         try {
-          return { ...m, data: typeof m.content === 'string' ? JSON.parse(m.content) : m.content };
-        } catch { return m; }
+          return { ...m, type: m.tipo, content: m.contenido,
+                   data: typeof m.contenido === 'string' ? JSON.parse(m.contenido) : m.contenido };
+        } catch { return { ...m, type: m.tipo }; }
       })
       .filter(m => !cliente || (m.data?.cliente || '').toUpperCase() === cliente.toUpperCase())
       .slice(0, limit);
@@ -206,7 +207,7 @@ async function getMemoryCount(tipo) {
     const { count } = await supabase
       .from('oracle_memory')
       .select('*', { count: 'exact', head: true })
-      .eq('type', tipo);
+      .eq('tipo', tipo);
     return count || 0;
   } catch { return 0; }
 }
@@ -218,9 +219,8 @@ async function getMemoryCount(tipo) {
 async function saveMemory(data) {
   try {
     await supabase.from('oracle_memory').insert({
-      type: data.tipo || data.type || 'aprendizaje',
-      content: typeof data === 'string' ? data : JSON.stringify(data),
-      agent: 'MEMORY_ENGINE',
+      tipo:      data.tipo || data.type || 'aprendizaje',
+      contenido: typeof data === 'string' ? data : JSON.stringify(data),
       created_at: data.created_at || new Date().toISOString()
     });
   } catch (err) {
@@ -238,10 +238,10 @@ async function buildMemoryContext(cliente, tipo_pieza = null) {
 
   if (!memorias.length) return '';
 
-  const victorias = memorias.filter(m => m.type === MEMORY_TYPES.VICTORIA || m.data?.tipo === MEMORY_TYPES.VICTORIA);
-  const errores   = memorias.filter(m => m.type === MEMORY_TYPES.ERROR || m.data?.tipo === MEMORY_TYPES.ERROR);
-  const patrones  = memorias.filter(m => m.type === MEMORY_TYPES.PATRON_CLIENTE);
-  const prompts   = memorias.filter(m => m.type === MEMORY_TYPES.PROMPT_EXITOSO);
+  const victorias = memorias.filter(m => (m.tipo||m.type) === MEMORY_TYPES.VICTORIA || m.data?.tipo === MEMORY_TYPES.VICTORIA);
+  const errores   = memorias.filter(m => (m.tipo||m.type) === MEMORY_TYPES.ERROR || m.data?.tipo === MEMORY_TYPES.ERROR);
+  const patrones  = memorias.filter(m => (m.tipo||m.type) === MEMORY_TYPES.PATRON_CLIENTE || m.data?.tipo === MEMORY_TYPES.PATRON_CLIENTE);
+  const prompts   = memorias.filter(m => (m.tipo||m.type) === MEMORY_TYPES.PROMPT_EXITOSO || m.data?.tipo === MEMORY_TYPES.PROMPT_EXITOSO);
 
   let ctx = '=== MEMORIA DEL SISTEMA ===\n';
 

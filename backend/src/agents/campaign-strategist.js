@@ -115,9 +115,8 @@ Responde SOLO en JSON sin markdown:
 
     // Guardar en oracle_memory
     await supabase.from('oracle_memory').insert({
-      type: 'campaign_strategy',
-      content: JSON.stringify(strategy),
-      agent: 'CAMPAIGN_STRATEGIST',
+      tipo:      'campaign_strategy',
+      contenido: JSON.stringify(strategy),
       created_at: new Date().toISOString()
     }).catch(() => {});
 
