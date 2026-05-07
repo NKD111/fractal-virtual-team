@@ -91,13 +91,14 @@ router.post('/', async (req, res) => {
       brief,
       status = 'active',
       budget_mxn,
-      assigned_to
+      assigned_to,
+      name // permite pasar nombre explícito
     } = req.body || {};
 
     if (!client_name) return res.status(400).json({ error: 'client_name requerido' });
 
     const insertData = {
-      name: `${project_type || 'Proyecto'} — ${client_name}`,
+      name: name || `${project_type || 'Proyecto'} — ${client_name}`,
       client_name,
       client_whatsapp: client_whatsapp || null,
       project_type: project_type || null,
@@ -107,13 +108,25 @@ router.post('/', async (req, res) => {
       assigned_to: assigned_to || null
     };
 
+    console.log('[projects POST] insertData:', JSON.stringify(insertData));
+
     const { data, error } = await supabase
       .from('projects')
       .insert(insertData)
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      console.error('[projects POST] Supabase error:', JSON.stringify(error));
+      // Exponer todos los campos del error para diagnóstico
+      return res.status(400).json({
+        error: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        inserted: insertData
+      });
+    }
 
     // Audit log (silently)
     await auditLog({

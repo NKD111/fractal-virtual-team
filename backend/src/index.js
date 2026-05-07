@@ -532,7 +532,48 @@ server.listen(PORT, async () => {
     console.warn('[UpsellEngine] init error (non-fatal):', e.message);
   }
 
-  console.log(`\n✅ Fractal MX — Business OS v5.0 listo`);
+  // ─── DAILY COST REPORT — 11 PM CDMX (Plan v6 Día 4) ─────────────────────────
+  // Envía a Neiky por WhatsApp el costo real del día vs revenue FIF.
+  // Usa cost_log (ya existe) — no requiere ai_cost_events por ahora.
+  try {
+    const { getCostsToday } = require('./core/telemetry');
+    const { notifyNeiky } = require('./core/whatsapp');
+    const FIF_DAILY_REVENUE = 1000 / 30; // ~$33.33 USD/día (FIF $1k/mes)
+
+    async function sendDailyCostReport() {
+      try {
+        const costs = await getCostsToday();
+        const totalCost = costs.total || 0;
+        const anthropicCost = costs.by_provider?.anthropic || 0;
+        const higgsfield = costs.by_provider?.higgsfield || 0;
+        const twilioEst  = costs.by_provider?.twilio || 0;
+        const profitToday = FIF_DAILY_REVENUE - totalCost;
+        const emoji = profitToday > 0 ? '✅' : '🔴';
+
+        await notifyNeiky(
+          `💰 *Reporte de Costos — ${new Date().toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' })}*\n\n` +
+          `Claude API: $${anthropicCost.toFixed(4)} USD (${costs.calls || 0} llamadas)\n` +
+          `Higgsfield: $${higgsfield.toFixed(4)} USD\n` +
+          `Twilio/WA: ~$${twilioEst.toFixed(4)} USD\n` +
+          `─────────────────────\n` +
+          `*Total hoy:* $${totalCost.toFixed(4)} USD\n` +
+          `*Revenue FIF/día:* $${FIF_DAILY_REVENUE.toFixed(2)} USD\n` +
+          `*Margen est:* $${profitToday.toFixed(2)} USD ${emoji}`
+        );
+      } catch (e) {
+        console.warn('[CostReport] error:', e.message);
+      }
+    }
+
+    // Cron 11 PM CDMX todos los días
+    const cron = require('node-cron');
+    cron.schedule('0 23 * * *', sendDailyCostReport, { timezone: 'America/Mexico_City' });
+    console.log('✅ Daily Cost Report: 11 PM CDMX activo (v6 Día 4)');
+  } catch (e) {
+    console.warn('[DailyCostReport] init error (non-fatal):', e.message);
+  }
+
+  console.log(`\n✅ Fractal MX — Business OS v6 (stabilization) listo`);
   console.log(`   Agentes: 14 activos (+ AXIOM + ORACLE)`);
   console.log(`   Bloques: A-S completados + Design Plugin + Health Score`);
   console.log(`   Crons activos (27 total):`);
