@@ -1426,7 +1426,11 @@ Responde "ayuda" para ver todos los comandos.`;
     const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
     // ¿Delega a un agente específico por nombre?
-    if (/\b(dile|pidele)\s+a\s+(carlos|diego|max|valentina|sofia|diana|lucas|roberto|alex|nexus)\b/.test(t)) {
+    if (/\b(dile|pidele)\s+a\s+(carlos|diego|max|valentina|sofia|diana|lucas|roberto|alex|nexus|axiom)\b/.test(t)) {
+      return 'delegation';
+    }
+    // Menciones directas de AXIOM sin verbo de delegación
+    if (/\b(axiom)\b/.test(t) && /\b(scan|escanea|analiza|prospectos?|oportunidades?|busca)\b/.test(t)) {
       return 'delegation';
     }
     // ¿Tarea de diseño/imagen?
@@ -1557,12 +1561,50 @@ Máximo 800 caracteres.`;
 
         // ── Delegación a agente específico ────────────────────────────────
         case 'delegation': {
-          // Detectar a quién se delega
-          const agentMatch = content.match(/\b(carlos|diego|max|valentina|sofia|diana|lucas|roberto|alex|nexus)\b/i);
+          const agentMatch = content.match(/\b(carlos|diego|max|valentina|sofia|diana|lucas|roberto|alex|nexus|axiom)\b/i);
           const agentName  = agentMatch ? agentMatch[1].toUpperCase() : 'CARLOS';
 
-          // Por ahora registramos la delegación y notificamos que fue enviada
-          // (el agente específico aún no tiene callback de completion — se añadirá por agente)
+          // ── AXIOM: puede recibir tareas concretas ────────────────────────
+          if (agentName === 'AXIOM') {
+            try {
+              const AxiomAgent = require('./axiom.agent');
+              const axiom      = new AxiomAgent();
+
+              // ¿Pide análisis de un prospecto específico?
+              const empresaMatch = content.match(/analiza[r]?\s+(?:a\s+|la\s+empresa\s+)?["']?([A-Za-z0-9 ÁÉÍÓÚáéíóúñÑ&.,-]+?)["']?(?:\s|$|,|\.)/i);
+              if (empresaMatch) {
+                const empresa = empresaMatch[1].trim();
+                const { data: prospect } = await require('../core/supabase').supabase
+                  .from('prospects')
+                  .select('*')
+                  .ilike('nombre_empresa', `%${empresa}%`)
+                  .maybeSingle();
+
+                if (prospect) {
+                  const result = await axiom.deepProspectAnalysis(prospect);
+                  const resultText = result.success
+                    ? `✅ Análisis de ${empresa} completado.\nScore: ${result.data?.close_probability}/100\nServicio sugerido: ${result.data?.recommended_service}\nPrecio: $${result.data?.suggested_price} USD\n\nPuntos débiles:\n${(result.data?.weak_points || []).map(p => `• ${p}`).join('\n')}`
+                    : `Error en análisis: ${result.error}`;
+                  await notifyTaskComplete(taskId, content, resultText, 'AXIOM');
+                } else {
+                  // No existe en DB — crear entrada mínima y analizar
+                  const resultText = `No encontré "${empresa}" en la DB de prospectos.\nPuedes agregar el prospecto con: /agregar prospecto ${empresa}\nO pedirle a AXIOM que haga un scan general.`;
+                  await notifyTaskComplete(taskId, content, resultText, 'AXIOM');
+                }
+              } else {
+                // ¿Pide scan general?
+                const scanResult = await axiom.scanCycle();
+                const resultText = `🔍 AXIOM Scan completado.\n• ${scanResult.opportunities_count} oportunidades detectadas\n• ${scanResult.urgent_count} urgentes\n• Duración: ${scanResult.duration_ms}ms\n\nTop hallazgos:\n${(scanResult.summary || []).join('\n')}`;
+                await notifyTaskComplete(taskId, content, resultText, 'AXIOM');
+              }
+            } catch (axiomErr) {
+              console.error('[Mariana._launchAgentTask] AXIOM error:', axiomErr.message);
+              await notifyTaskComplete(taskId, content, `AXIOM no pudo completar la tarea: ${axiomErr.message}`, 'AXIOM');
+            }
+            break;
+          }
+
+          // Otros agentes: registrar delegación y confirmar
           const delegateMsg = `Tarea delegada a ${agentName}.\nCuando ${agentName} la complete, recibirás otro aviso.\n\nContenido del encargo:\n"${content.substring(0, 300)}"`;
           await notifyTaskComplete(taskId, content, delegateMsg, `MARIANA → ${agentName}`);
           break;
