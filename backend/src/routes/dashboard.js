@@ -74,8 +74,12 @@ router.get('/financials', async (req, res) => {
   }
 });
 
-// ─── BLOQUE P — Business OS v3.0 Dashboard ────────────────────────────────────
-// GET /api/dashboard/business-os — Dashboard completo del Business OS v3.0
+// ─── BLOQUE P — Business OS v4.0 Dashboard ────────────────────────────────────
+// GET /api/dashboard/business-os — Dashboard completo del Business OS v4.0
+const agentRegistry  = require('../core/agent-registry');
+const memoryEngine   = require('../core/memory-engine');
+const pipelineEngine = require('../core/pipeline-engine');
+
 router.get('/business-os', async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
@@ -125,6 +129,36 @@ router.get('/business-os', async (req, res) => {
     const sales = productsResult.status === 'fulfilled' ? (productsResult.value?.data || []) : [];
     const projects = projectsResult.status === 'fulfilled' ? (projectsResult.value?.data || []) : [];
 
+    // ── v4: Cargar métricas de agentes, memoria y pipelines ──────────────────
+    const [
+      memoriaVictorias,
+      memoriaErrores,
+      memoriaPatrones,
+      memoriaPrompts,
+      allPipelinesStatus
+    ] = await Promise.allSettled([
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.VICTORIA),
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.ERROR),
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.PATRON_CLIENTE),
+      memoryEngine.getMemoryCount(memoryEngine.MEMORY_TYPES.PROMPT_EXITOSO),
+      pipelineEngine.getAllPipelinesStatus(month)
+    ]);
+
+    const registryStatus = agentRegistry.getSystemStatus();
+
+    const victorias    = memoriaVictorias.status    === 'fulfilled' ? memoriaVictorias.value    : 0;
+    const erroresAprendidos = memoriaErrores.status === 'fulfilled' ? memoriaErrores.value       : 0;
+    const patronesCliente   = memoriaPatrones.status === 'fulfilled' ? memoriaPatrones.value    : 0;
+    const promptsExitosos   = memoriaPrompts.status  === 'fulfilled' ? memoriaPrompts.value     : 0;
+    const pipelines    = allPipelinesStatus.status   === 'fulfilled' ? allPipelinesStatus.value  : [];
+
+    // QA metrics — calcular desde briefs del mes
+    const totalBriefs      = briefs.length;
+    const aprobadosQA      = briefs.filter(b => ['aprobado_qa','en_produccion','entregado'].includes(b.status)).length;
+    const aprobadosNKD     = briefs.filter(b => b.status === 'entregado').length;
+    const tasaQA           = totalBriefs > 0 ? Math.round((aprobadosQA / totalBriefs) * 100) : 0;
+    const tasaNKD          = totalBriefs > 0 ? Math.round((aprobadosNKD / totalBriefs) * 100) : 0;
+
     // Calcular día actual del pipeline FIF (1-20)
     const dayOfMonth = new Date().getDate();
     const pipelineDay = Math.min(dayOfMonth, 20);
@@ -154,9 +188,40 @@ router.get('/business-os', async (req, res) => {
 
     res.json({
       success: true,
-      version: 'Business OS v3.0',
+      version: 'Business OS v4.0',
       timestamp: new Date().toISOString(),
       layers,
+      // ── v4 sections ─────────────────────────────────────────────────────────
+      sistema: {
+        nivel:              '4/9',
+        fases_completadas:  ['F1_contexto_modular','F2_qa_pipeline','F3_diana_translate',
+                             'F4_parallel_exec','F5_pipeline_engine','F6_estrategicos',
+                             'F7_agent_registry','F8_memory_engine','F9_dashboard_v4'],
+        agentes_activos:    registryStatus.activos,
+        agentes_standby:    registryStatus.standby,
+        agentes_calidad:    registryStatus.calidad,
+        agentes_estrategicos: registryStatus.estrategicos,
+        total_agentes:      registryStatus.total,
+        crons_activos:      snapshot?.crons_active || 0,
+        api_cost_hoy:       snapshot?.api_cost_today || 0,
+        system_health:      snapshot?.system_health || 'unknown',
+        proyectos_activos:  projects.length
+      },
+      calidad: {
+        tasa_aprobacion_qa:  tasaQA,
+        tasa_aprobacion_nkd: tasaNKD,
+        piezas_evaluadas:    totalBriefs,
+        aprobadas_qa:        aprobadosQA,
+        entregadas_cliente:  aprobadosNKD
+      },
+      memoria: {
+        victorias_registradas: victorias,
+        errores_aprendidos:    erroresAprendidos,
+        patrones_cliente:      patronesCliente,
+        prompts_exitosos:      promptsExitosos,
+        total_memoria:         victorias + erroresAprendidos + patronesCliente + promptsExitosos
+      },
+      pipelines,
       revenue: {
         hoy: snapshot?.revenue_today || 0,
         mes: revenueTotal,
@@ -180,12 +245,6 @@ router.get('/business-os', async (req, res) => {
       higgsfield: {
         imagenes_generadas: snapshot?.images_generated || 0,
         creditos_usados: snapshot?.higgsfield_credits_used || 0
-      },
-      sistema: {
-        crons_activos: snapshot?.crons_active || 0,
-        api_cost_hoy: snapshot?.api_cost_today || 0,
-        system_health: snapshot?.system_health || 'unknown',
-        proyectos_activos: projects.length
       },
       pendientes_nkd: [
         'Email de Claudia (Central Interactiva) → CLAUDIA_EMAIL env var',

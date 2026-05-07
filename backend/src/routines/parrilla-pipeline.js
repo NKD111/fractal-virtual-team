@@ -158,10 +158,10 @@ Responde SOLO con el array JSON (sin explicaciones adicionales).`,
   }
 }
 
-// ─── FASE 2: DÍA 5 — DIANA + ALEX desarrollan briefs ───────────────────────
+// ─── FASE 2: DÍA 5 — DIANA + ALEX desarrollan briefs (PARALELO — FASE 4) ────
 async function fase2_desarrollarBriefs() {
   const mes = getMesActual();
-  console.log(`✍️ PARRILLA PIPELINE: Fase 2 — Desarrollar Briefs para ${mes}`);
+  console.log(`✍️ PARRILLA PIPELINE: Fase 2 — Desarrollar Briefs (paralelo) para ${mes}`);
 
   try {
     // Obtener conceptos del event log
@@ -184,24 +184,55 @@ async function fase2_desarrollarBriefs() {
       return { success: false, error: 'No hay conceptos de Fase 1. Ejecutar Fase 1 primero.' };
     }
 
-    let briefsCreated = 0;
-
+    // Filtrar solo conceptos que no tienen brief aún
+    const pendientes = [];
     for (const concepto of conceptos) {
-      // Verificar si ya existe este brief
       const { count } = await supabase
         .from('parrilla_briefs')
         .select('*', { count: 'exact', head: true })
-        .eq('mes', mes)
-        .eq('cliente', 'FIF')
-        .eq('numero_pieza', concepto.numero);
+        .eq('mes', mes).eq('cliente', 'FIF').eq('numero_pieza', concepto.numero);
+      if (!count || count === 0) pendientes.push(concepto);
+    }
 
-      if (count > 0) continue;
+    if (pendientes.length === 0) {
+      console.log('  ✅ Todos los briefs ya existen para este mes.');
+      return { success: true, mes, briefs_created: 0 };
+    }
 
-      let brief = null;
+    // ── FASE 4 UPGRADE: ALEX + DIANA EN PARALELO ──────────────────────────
+    // Todos los conceptos se procesan en paralelo (no secuencialmente)
+    const dianaAgent = global.diana || null;
+    console.log(`  🚀 Procesando ${pendientes.length} conceptos EN PARALELO...`);
 
-      if (global.oracle?.consult) {
-        const result = await global.oracle.consult({
-          question: `Desarrolla el brief completo para esta pieza de FIF.
+    const results = await Promise.allSettled(
+      pendientes.map(concepto => _procesarConcepto(concepto, mes, dianaAgent))
+    );
+
+    const briefsCreated = results.filter(r => r.status === 'fulfilled' && r.value).length;
+    const errores = results.filter(r => r.status === 'rejected').length;
+
+    if (errores > 0) console.warn(`  ⚠️ ${errores} conceptos fallaron en paralelo`);
+
+    await notifyNKD_parrillaBriefs(mes, briefsCreated);
+    console.log(`✅ Fase 2 paralela: ${briefsCreated}/${pendientes.length} briefs creados para ${mes}`);
+    return { success: true, mes, briefs_created: briefsCreated, errores };
+
+  } catch (err) {
+    console.error('❌ Fase 2 error:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// Helper: procesar un concepto individual (Alex + Diana en paralelo)
+async function _procesarConcepto(concepto, mes, dianaAgent) {
+  // ALEX y DIANA trabajan SIMULTÁNEAMENTE sobre el mismo concepto
+  let brief = null;
+
+  if (global.oracle?.consult || dianaAgent) {
+    const [oracleResult, dianaResult] = await Promise.allSettled([
+      // ALEX vía Oracle: genera copy brief
+      global.oracle?.consult ? global.oracle.consult({
+        question: `Desarrolla el brief completo para esta pieza de FIF.
 
 CONCEPTO: ${concepto.concepto}
 TIPO: ${concepto.tipo_pieza}
@@ -211,75 +242,74 @@ PÚBLICO: ${concepto.publico}
 BRAND SYSTEM FIF:
 - Colores: Rojo #C8102E, Navy #1B263B, Blanco #FFFFFF
 - Estilo: editorial-comercial premium, expo mexicana
-- Fotografía: expo mexicana profesional, personas mexicanas/LATAM
 - Modelo imagen: GPT Image 2
 - IMPORTANTE: dejar espacio limpio para logos y texto en post-producción
-- Slogan disponible: "Encuentra tu próximo negocio"
+- Slogan: "Encuentra tu próximo negocio"
 - Estándar: ¿Esto justifica $1,000 USD/mes?
 
-Responde en JSON con exactamente estos campos:
-{
-  "headline": "máximo 6 palabras, alto impacto",
-  "subheadline": "máximo 15 palabras",
-  "copy_apoyo": "máximo 3 líneas",
-  "cta": "texto del CTA",
-  "hashtags": "#tag1 #tag2 (10-15 relevantes)",
-  "estilo_visual": "comercial | informativo | editorial | banner_web",
-  "prompt_higgsfield": "prompt en inglés para GPT Image 2 (60-100 palabras, FIF premium style)",
-  "notas_para_carlos": "instrucciones específicas de diseño"
-}`,
-          agent: { id: null, name: 'ALEX', role: 'brief_development' },
-          depth: 'standard'
-        });
-        try { brief = JSON.parse(result?.answer || '{}'); } catch { brief = {}; }
-      }
+Responde en JSON con: headline, subheadline, copy_apoyo, cta, hashtags, estilo_visual, prompt_higgsfield, notas_para_carlos`,
+        agent: { id: null, name: 'ALEX', role: 'brief_development' },
+        depth: 'standard'
+      }) : Promise.resolve(null),
 
-      // Defaults si no hay Oracle
-      if (!brief || !brief.headline) {
-        brief = {
-          headline: concepto.concepto.substring(0, 50),
-          subheadline: concepto.por_que_ahora || '',
-          copy_apoyo: 'Descubre las mejores oportunidades de negocio en México.',
-          cta: 'Regístrate ahora',
-          hashtags: '#FIF2026 #Franquicias #México #Emprendimiento #Negocios #ExpoFranquicias',
-          estilo_visual: concepto.tipo_pieza === 'banner_web' ? 'banner_web' : 'comercial',
-          prompt_higgsfield: `Premium editorial-commercial franchise expo post for FIF Mexico 2026. ${concepto.concepto}. Clean white background, navy #1B263B and red #C8102E brand colors. Professional Mexican business audience. High-quality expo photography. Clean space for logo and text overlay. No neon, no cyberpunk.`,
-          notas_para_carlos: `Tipo: ${concepto.tipo_pieza}. Público: ${concepto.publico}. Dejar espacio para logo FIF arriba y copy principal.`
-        };
-      }
+      // DIANA: traduce a brief visual (FASE 3)
+      dianaAgent?.translateToVisualBrief ? dianaAgent.translateToVisualBrief(concepto) : Promise.resolve(null)
+    ]);
 
-      await supabase.from('parrilla_briefs').insert({
-        mes,
-        cliente: 'FIF',
-        numero_pieza: concepto.numero,
-        tipo_pieza: concepto.tipo_pieza,
-        concepto: concepto.concepto,
-        objetivo: concepto.objetivo,
-        headline: brief.headline,
-        subheadline: brief.subheadline,
-        copy_apoyo: brief.copy_apoyo,
-        cta: brief.cta,
-        hashtags: brief.hashtags,
-        estilo_visual: brief.estilo_visual,
-        prompt_higgsfield: brief.prompt_higgsfield,
-        notas_para_carlos: brief.notas_para_carlos,
-        status: 'pendiente_aprobacion_nkd',
-        creado_por: 'alex'
-      });
+    // Combinar resultados de Alex y Diana
+    const alexData = oracleResult.status === 'fulfilled' ? oracleResult.value : null;
+    const dianaData = dianaResult.status === 'fulfilled' ? dianaResult.value : null;
 
-      briefsCreated++;
-      console.log(`  ✓ Brief ${concepto.numero}: ${concepto.concepto.substring(0, 50)}`);
+    try {
+      brief = JSON.parse(alexData?.answer || '{}');
+    } catch { brief = {}; }
+
+    // Diana enriquece el brief con su traducción visual
+    if (dianaData?.prompt && !brief.prompt_higgsfield) {
+      brief.prompt_higgsfield = dianaData.prompt;
     }
-
-    await notifyNKD_parrillaBriefs(mes, briefsCreated);
-    console.log(`✅ Fase 2 completa: ${briefsCreated} briefs creados para ${mes}`);
-    return { success: true, mes, briefs_created: briefsCreated };
-
-  } catch (err) {
-    console.error('❌ Fase 2 error:', err.message);
-    return { success: false, error: err.message };
+    if (dianaData?.tipo_pieza && !brief.estilo_visual) {
+      brief.estilo_visual = dianaData.tono_visual || brief.estilo_visual;
+    }
   }
+
+  // Defaults si no hay agentes disponibles
+  if (!brief || !brief.headline) {
+    brief = {
+      headline: concepto.concepto.substring(0, 50),
+      subheadline: concepto.por_que_ahora || '',
+      copy_apoyo: 'Descubre las mejores oportunidades de negocio en México.',
+      cta: 'Regístrate ahora',
+      hashtags: '#FIF2026 #Franquicias #México #Emprendimiento #Negocios',
+      estilo_visual: concepto.tipo_pieza === 'banner_web' ? 'banner_web' : 'comercial',
+      prompt_higgsfield: `Premium editorial-commercial franchise expo post for FIF Mexico 2026. ${concepto.concepto}. Clean white background, navy #1B263B and red #C8102E brand colors. Professional Mexican business audience. High-quality expo photography. Clean space for logo and text overlay. No neon, no cyberpunk.`,
+      notas_para_carlos: `Tipo: ${concepto.tipo_pieza}. Público: ${concepto.publico}. Dejar espacio para logo FIF arriba y copy principal.`
+    };
+  }
+
+  await supabase.from('parrilla_briefs').insert({
+    mes,
+    cliente: 'FIF',
+    numero_pieza: concepto.numero,
+    tipo_pieza: concepto.tipo_pieza,
+    concepto: concepto.concepto,
+    objetivo: concepto.objetivo,
+    headline: brief.headline,
+    subheadline: brief.subheadline,
+    copy_apoyo: brief.copy_apoyo,
+    cta: brief.cta,
+    hashtags: brief.hashtags,
+    estilo_visual: brief.estilo_visual,
+    prompt_higgsfield: brief.prompt_higgsfield,
+    notas_para_carlos: brief.notas_para_carlos,
+    status: 'pendiente_aprobacion_nkd',
+    creado_por: 'alex+diana'
+  });
+
+  console.log(`  ✓ Brief ${concepto.numero}: ${concepto.concepto.substring(0, 50)}`);
+  return true;
 }
+
 
 // ─── FASE 3: DÍA 7 — Notificación a NKD para aprobación ────────────────────
 async function fase3_aprobacionNKD() {
@@ -340,40 +370,43 @@ async function fase4_produccion() {
     let producidos = 0;
     let errores = 0;
 
-    for (const brief of briefs) {
-      try {
-        await updateBriefStatus(brief.id, 'en_produccion');
+    // FASE 4 UPGRADE: Carlos genera en paralelo, chunks de 3 para no agotar créditos
+    const chunkSize = 3;
+    for (let i = 0; i < briefs.length; i += chunkSize) {
+      const chunk = briefs.slice(i, i + chunkSize);
+      const chunkResults = await Promise.allSettled(
+        chunk.map(async (brief) => {
+          await updateBriefStatus(brief.id, 'en_produccion');
 
-        // Intentar generar imagen con Carlos si está disponible
-        if (global.carlos?.generateFIFImage) {
-          const resultado = await global.carlos.generateFIFImage({
-            description: brief.prompt_higgsfield || brief.concepto,
-            pieceType: brief.tipo_pieza || 'post_informativo',
-            briefId: brief.id,
-            projectId: null
-          });
-
-          if (resultado && resultado.variations && resultado.variations.length > 0) {
-            const url = resultado.variations[0].resultUrl;
-            await updateBriefStatus(brief.id, 'listo_qc', { url_arte_final: url });
-            producidos++;
-            console.log(`  ✓ Pieza ${brief.numero_pieza}: ${url?.substring(0, 60)}`);
-          } else {
+          if (global.carlos?.generateFIFImage) {
+            const resultado = await global.carlos.generateFIFImage({
+              description: brief.prompt_higgsfield || brief.concepto,
+              pieceType: brief.tipo_pieza || 'post_informativo',
+              briefId: brief.id,
+              projectId: null
+            });
+            if (resultado?.variations?.length > 0) {
+              const url = resultado.variations[0].resultUrl;
+              await updateBriefStatus(brief.id, 'listo_qc', { url_arte_final: url });
+              console.log(`  ✓ Pieza ${brief.numero_pieza}: ${url?.substring(0, 60)}`);
+              return true;
+            }
             throw new Error('No variations returned');
+          } else {
+            await updateBriefStatus(brief.id, 'listo_qc', {
+              notas_revision: 'Generación manual pendiente — Carlos agent no disponible'
+            });
+            return true;
           }
-        } else {
-          // Sin Carlos disponible: marcar como pendiente de generación manual
-          await updateBriefStatus(brief.id, 'listo_qc', {
-            notas_revision: 'Generación manual pendiente — Carlos agent no disponible en este momento'
-          });
-          producidos++;
+        })
+      );
+
+      for (const r of chunkResults) {
+        if (r.status === 'fulfilled') producidos++;
+        else {
+          errores++;
+          console.error(`  ✗ Error en chunk:`, r.reason?.message);
         }
-      } catch (pieceErr) {
-        console.error(`  ✗ Pieza ${brief.numero_pieza} error:`, pieceErr.message);
-        await updateBriefStatus(brief.id, 'rework', {
-          notas_revision: `Error de producción: ${pieceErr.message}`
-        });
-        errores++;
       }
     }
 
