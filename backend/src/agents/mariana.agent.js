@@ -197,8 +197,10 @@ class MarianaAgent extends BaseAgent {
       timestamp: new Date()
     });
 
-    // 6. Verificar si necesita escalación urgente
-    await this.checkUrgentEscalation(intent, sender);
+    // 6. Verificar si necesita escalación urgente (non-blocking — nunca bloquear la respuesta)
+    this.checkUrgentEscalation(intent, sender).catch(err =>
+      console.warn('[Mariana] checkUrgentEscalation:', err.message)
+    );
 
     return response;
   }
@@ -218,11 +220,16 @@ class MarianaAgent extends BaseAgent {
     // ── NEIKY DETECTION (multi-canal unificado) ──────────────────────────────
     // Web identifier
     if (identifier === 'web_neiky' || identifier === 'neiky') {
-      const { data: neikyClient } = await this.supabase
-        .from('clients').select('*').eq('email', 'fermin@fractal.mx').maybeSingle();
+      const neikyEmails = ['fermin@fractal.mx', process.env.NEIKY_EMAIL || 'nakedgeometry19@gmail.com'];
+      let neikyClient = null;
+      for (const email of neikyEmails) {
+        const { data } = await this.supabase.from('clients').select('*').eq('email', email).maybeSingle();
+        if (data) { neikyClient = data; break; }
+      }
       return {
         isNeiky: true, isClient: false,
         name: 'Neiky', channel,
+        identifier,
         neikyClientId: neikyClient?.id || null,
         clientData: neikyClient || null
       };
@@ -237,11 +244,26 @@ class MarianaAgent extends BaseAgent {
     const isNeikyPhone = identifierDigits.endsWith(neikyPhoneDigits.slice(-10)) && identifierDigits.length >= 10;
 
     if (isNeikyPhone) {
-      const { data: neikyClient } = await this.supabase
-        .from('clients').select('*').eq('email', 'fermin@fractal.mx').maybeSingle();
+      // Buscar el perfil de Neiky por múltiples emails posibles
+      const neikyEmails = ['fermin@fractal.mx', process.env.NEIKY_EMAIL || 'nakedgeometry19@gmail.com'];
+      let neikyClient = null;
+      for (const email of neikyEmails) {
+        const { data } = await this.supabase
+          .from('clients').select('*').eq('email', email).maybeSingle();
+        if (data) { neikyClient = data; break; }
+      }
+      // También intentar por número de teléfono en clients
+      if (!neikyClient) {
+        const { data } = await this.supabase
+          .from('clients').select('*')
+          .or(`phone.eq.${identifier},whatsapp.eq.${identifier}`)
+          .maybeSingle();
+        if (data) neikyClient = data;
+      }
       return {
         isNeiky: true, isClient: false,
         name: 'Neiky', channel,
+        identifier,
         neikyClientId: neikyClient?.id || null,
         clientData: neikyClient || null
       };
@@ -273,18 +295,38 @@ class MarianaAgent extends BaseAgent {
     if (!sender.isNeiky && !sender.isClient) return [];
 
     const clientId = sender.neikyClientId || sender.clientData?.id;
-    if (!clientId) return [];
 
     try {
-      // 1. Obtener todas las conversaciones del cliente
-      const { data: convs } = await this.supabase
-        .from('conversations')
-        .select('id, channel')
-        .eq('client_id', clientId)
-        .order('created_at', { ascending: false })
-        .limit(10); // últimas 10 conversaciones
+      let convs;
 
-      if (!convs || convs.length === 0) return [];
+      if (clientId) {
+        // Búsqueda por client_id (preferido, cross-channel completo)
+        const { data } = await this.supabase
+          .from('conversations')
+          .select('id, channel')
+          .eq('client_id', clientId)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        convs = data;
+      }
+
+      // Fallback: buscar por external_id (phone number) si no hay clientId o no se encontraron convs
+      if ((!convs || convs.length === 0) && sender.identifier) {
+        const phone = this._normalizePhone(sender.identifier);
+        const { data } = await this.supabase
+          .from('conversations')
+          .select('id, channel')
+          .or(`external_id.eq.${sender.identifier},external_id.eq.whatsapp:${sender.identifier},external_id.ilike.%${phone.slice(-10)}%`)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        convs = data;
+        console.log(`[Mariana] loadCrossChannelHistory: fallback por phone=${phone}, encontradas ${convs?.length || 0} convs`);
+      }
+
+      if (!convs || convs.length === 0) {
+        console.log('[Mariana] loadCrossChannelHistory: sin historial previo para este sender');
+        return [];
+      }
 
       const convIds = convs.map(c => c.id);
       const channelMap = Object.fromEntries(convs.map(c => [c.id, c.channel]));
@@ -454,16 +496,23 @@ Tipo: ${intent.type} | Urgencia: ${intent.urgency}/5 | Tema: ${intent.topic}
 Responde como Mariana directamente a Neiky. Máximo 3-4 líneas, natural y cálida.
 Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`;
 
-    const response = await this.claude.messages.create({
-      model: this.model,
-      max_tokens: 500,
-      messages: [{ role: 'user', content: neikyPrompt }]
-    });
-
-    const responseText = response.content[0].text;
+    let responseText;
+    try {
+      const response = await this.claude.messages.create({
+        model: this.model,
+        max_tokens: 500,
+        system: this.basePrompt,
+        messages: [{ role: 'user', content: neikyPrompt.replace(this.basePrompt, '').trim() }]
+      });
+      responseText = response.content[0].text;
+    } catch (err) {
+      console.error('[Mariana] respondToNeiky LLM error:', err.message);
+      // Fallback: respuesta de marcador de posición mientras se diagnostica
+      responseText = `Ey nene 👋 Ahorita estoy teniendo un problemita técnico pero ya lo estoy viendo. ¿Puedes repetirme lo que me decías? 🙏`;
+    }
 
     // ── Delegación automática a agentes ──────────────────────────────────────
-    await this._checkAndDelegate(content, responseText, sender);
+    try { await this._checkAndDelegate(content, responseText, sender); } catch (_) {}
 
     return responseText;
   }

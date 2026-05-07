@@ -12,7 +12,8 @@ const MODELS = {
   // Equilibrio calidad/costo — para la mayoría de tareas creativas
   SONNET: 'claude-sonnet-4-6',
   // Velocidad — para tareas simples y de bajo costo
-  HAIKU: 'claude-haiku-4-5'
+  // IMPORTANTE: 'claude-haiku-4-5' sin fecha no existe en la API — usar la versión con fecha
+  HAIKU: 'claude-haiku-4-5-20251001'
 };
 
 /**

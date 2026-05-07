@@ -163,7 +163,7 @@ class HuddleSystem {
     const description = AGENT_DESCRIPTIONS[agentSlug] || 'Agente del equipo';
 
     const response = await this.claude.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 250,
       messages: [{
         role: 'user',
@@ -200,7 +200,7 @@ Da tu opinión desde tu rol. JSON:
 
     try {
       const response = await this.claude.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 300,
         messages: [{
           role: 'user',

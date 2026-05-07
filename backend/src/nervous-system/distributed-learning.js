@@ -85,7 +85,7 @@ class DistributedLearning {
   async identifyRelevantAgents(memory) {
     try {
       const response = await this.claude.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 150,
         messages: [{
           role: 'user',
@@ -121,7 +121,7 @@ Agentes: mariana (hub coordinator), diana (client manager), alex (content creato
 
     try {
       const response = await this.claude.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 300,
         messages: [{
           role: 'user',
@@ -178,7 +178,7 @@ Extrae la lección en JSON:
       if (!project) return;
 
       const response = await this.claude.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 500,
         messages: [{
           role: 'user',

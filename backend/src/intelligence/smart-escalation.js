@@ -47,7 +47,7 @@ ${situation.what_neiky_needs || situation.needs_decision || 'Cómo proceder con 
   async _analyzeImpact(situation, context) {
     try {
       const response = await this.claude.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 200,
         messages: [{
           role: 'user',
@@ -66,7 +66,7 @@ En 2 bullets: impacto financiero y relacional.`
   async _generateOptions(situation, context) {
     try {
       const response = await this.claude.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 200,
         messages: [{
           role: 'user',
@@ -84,7 +84,7 @@ Lista 3 opciones concretas de acción (máximo 1 línea cada una):`
   async _recommend(situation, context) {
     try {
       const response = await this.claude.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 150,
         messages: [{
           role: 'user',

@@ -285,7 +285,7 @@ Ya revisaste y tienes la información. Responde de forma breve, cálida y concre
 Máximo 3 líneas. Tono: coqueto-profesional. Si no tienes info específica, da una respuesta útil y honesta.`;
 
     const response = await claude.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       messages: [{ role: 'user', content: prompt }]
     });

@@ -50,8 +50,8 @@ class BaseAgent {
       process.env.SUPABASE_SERVICE_KEY
     );
 
-    // Configuración
-    this.model = config.model || 'claude-opus-4-5';
+    // Configuración — usar claude-opus-4-7 (claude-opus-4-5 sin fecha no existe en la API)
+    this.model = config.model || 'claude-opus-4-7';
     this.maxTokens = config.maxTokens || 2000;
 
     // Socket.io para office visualization

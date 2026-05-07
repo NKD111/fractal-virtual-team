@@ -36,7 +36,7 @@ class InsightDistributor {
 
       // Use Haiku (cheap) to identify which agents should care
       const relevanceCheck = await anthropic.messages.create({
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 300,
         messages: [{
           role: 'user',
