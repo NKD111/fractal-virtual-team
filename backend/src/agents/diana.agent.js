@@ -6,6 +6,7 @@ const BaseAgent = require('../core/BaseAgent');
 const DIANA_PROMPT = require('../prompts/diana.prompts');
 const { chat } = require('../core/anthropic');
 const contextLoader = require('../core/context-loader');
+const { decideBriefVago } = require('../core/oracle-decision');
 
 class DianaAgent extends BaseAgent {
   constructor() {
@@ -176,6 +177,27 @@ Responde SOLO en JSON sin markdown:
       }
 
       console.log(`[Diana.translateBrief] ${cliente} — confidence: ${translation.confidence}%`);
+
+      // ORACLE toma el control si confianza < 70
+      if (translation.confidence < 70) {
+        console.log(`[Diana.translateBrief] confidence baja (${translation.confidence}%) — consultando ORACLE`);
+        try {
+          const oDecision = await decideBriefVago(brief_raw, cliente, translation.confidence);
+          // Si ORACLE pudo generar el brief completo, retornarlo enriquecido
+          if (oDecision?.instrucciones_agente) {
+            translation.oracle_decision = oDecision;
+            translation.notas_diana = (translation.notas_diana || '') +
+              ` | ORACLE: ${oDecision.accion}`;
+            // Si ORACLE tiene preguntas definidas, usarlas
+            if (oDecision.preguntas_cliente?.length) {
+              translation.preguntas_cliente = oDecision.preguntas_cliente;
+            }
+          }
+        } catch (oErr) {
+          console.warn('[Diana.translateBrief] ORACLE skip:', oErr.message);
+        }
+      }
+
       return translation;
 
     } catch (err) {

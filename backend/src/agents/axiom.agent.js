@@ -11,6 +11,7 @@ const AXIOM_PROMPT = require('../prompts/axiom.prompts');
 const { supabase } = require('../core/supabase');
 const { chat } = require('../core/anthropic');
 const crypto = require('crypto');
+const { decideProspectoCaliente } = require('../core/oracle-decision');
 
 class AxiomAgent extends BaseAgent {
   constructor() {
@@ -405,24 +406,38 @@ ANALIZA y responde SOLO en JSON válido con estos campos exactos:
       console.warn('[AXIOM deepProspect] DB update error (non-fatal):', dbErr.message);
     }
 
-    // Activar a Mariana si score > 40
+    // Activar flujo de decisión por score
     if (data.close_probability > 40) {
       try {
-        const requireNKD = data.close_probability > 70;
-        const notification = {
-          type: 'nuevo_prospecto_caliente',
-          prospect_id: opportunity.id,
-          empresa: opportunity.nombre_empresa,
-          score: data.close_probability,
-          servicio: data.recommended_service,
-          precio: data.suggested_price,
-          mensaje_sugerido: data.whatsapp_message,
-          instruccion: requireNKD
-            ? `Score > 70. CONFIRMAR con NKD antes de enviar. Prospecto: ${opportunity.nombre_empresa}. Servicio sugerido: ${data.recommended_service} ($${data.suggested_price} USD).`
-            : `Contactar a ${opportunity.nombre_empresa} por WhatsApp. Usar mensaje sugerido como base. Personalizar con nombre del contacto si disponible.`
-        };
-        await this.sendMessageTo('MARIANA', JSON.stringify(notification), { type: 'axiom_prospect_alert' });
-        console.log(`[AXIOM] Mariana notificada — score=${data.close_probability}, nkd_required=${requireNKD}`);
+        if (data.close_probability > 70) {
+          // ORACLE decide y notifica a NKD (Nivel 2)
+          await decideProspectoCaliente({
+            nombre_empresa: opportunity.nombre_empresa,
+            website: opportunity.website,
+            industria: opportunity.industria,
+            score: data.close_probability,
+            servicio_sugerido: data.recommended_service,
+            precio_sugerido: data.suggested_price,
+            mensaje_propuesto: data.whatsapp_message,
+            timing: data.timing_reason,
+            puntos_debiles: data.weak_points
+          });
+          console.log(`[AXIOM] ORACLE consultado — score=${data.close_probability}, NKD notificada`);
+        } else {
+          // Score 40-70: notificar a Mariana directamente
+          const notification = {
+            type: 'nuevo_prospecto_caliente',
+            prospect_id: opportunity.id,
+            empresa: opportunity.nombre_empresa,
+            score: data.close_probability,
+            servicio: data.recommended_service,
+            precio: data.suggested_price,
+            mensaje_sugerido: data.whatsapp_message,
+            instruccion: `Contactar a ${opportunity.nombre_empresa} por WhatsApp. Usar mensaje sugerido como base.`
+          };
+          await this.sendMessageTo('MARIANA', JSON.stringify(notification), { type: 'axiom_prospect_alert' });
+          console.log(`[AXIOM] Mariana notificada — score=${data.close_probability}`);
+        }
       } catch (notifyErr) {
         console.warn('[AXIOM deepProspect] notifyMariana error (non-fatal):', notifyErr.message);
       }

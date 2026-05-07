@@ -148,4 +148,33 @@ router.post('/memory', async (req, res) => {
   }
 });
 
+// ── POST /api/oracle/decide ───────────────────────────────────────────────────
+// Endpoint para disparar una decisión autónoma de ORACLE desde cualquier cliente
+// o desde testing. Soporta todos los niveles de autoridad.
+//
+// Body: { situacion, contexto, nivel? }
+// Ejemplo: { "situacion": "arte_rechazado", "contexto": {...}, "nivel": 1 }
+router.post('/decide', async (req, res) => {
+  try {
+    const { situacion, contexto, nivel } = req.body || {};
+    if (!situacion) return res.status(400).json({ error: 'situacion es requerido' });
+    if (!contexto)  return res.status(400).json({ error: 'contexto es requerido' });
+
+    const { oracleDecide, SITUACION_NIVELES } = require('../core/oracle-decision');
+
+    const nivelUsado = nivel ?? SITUACION_NIVELES[situacion] ?? 1;
+    if (![1, 2, 3].includes(nivelUsado)) {
+      return res.status(400).json({ error: 'nivel debe ser 1, 2 o 3' });
+    }
+
+    console.log(`[/api/oracle/decide] situacion=${situacion}, nivel=${nivelUsado}`);
+    const decision = await oracleDecide(situacion, contexto, nivelUsado);
+
+    res.json({ success: true, decision });
+  } catch (err) {
+    console.error('[/api/oracle/decide] error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

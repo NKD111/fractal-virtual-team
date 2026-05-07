@@ -21,6 +21,8 @@ const { simulateClientReaction } = require('../agents/client-simulator');
 const { reviewEmotionalImpact } = require('../agents/emotional-reviewer');
 const { validateCTR, isCTRApplicable } = require('../agents/ctr-validator');
 
+const { decideArteRechazado } = require('../core/oracle-decision');
+
 const TZ = { timezone: 'America/Mexico_City' };
 
 function getMesActual() {
@@ -493,10 +495,14 @@ async function fase5_qa(brief_id) {
 
       if (consistency.score < 70) {
         const issues = (consistency.issues || []).slice(0, 3).join('; ');
+        let oDecision = null;
+        try {
+          oDecision = await decideArteRechazado(brief, 'consistency', consistency.issues || [issues]);
+        } catch { /* non-fatal — fallback a nota estándar */ }
         await updateBriefStatus(brief_id, 'rework', {
-          notas_revision: `[CONSISTENCY] ${issues} | ${consistency.details || ''}`
+          notas_revision: oDecision?.mensaje_carlos || `[CONSISTENCY] ${issues} | ${consistency.details || ''}`
         });
-        return { passed: false, reason: 'Inconsistencia de marca', issues: consistency.issues, qa_log: qaLog };
+        return { passed: false, reason: oDecision?.razon || 'Inconsistencia de marca', issues: consistency.issues, oracle_decision: oDecision, qa_log: qaLog };
       }
     } catch (e) {
       logQA(2, '⚠️', `Consistency error (skip): ${e.message}`);
@@ -509,10 +515,14 @@ async function fase5_qa(brief_id) {
         `Emotional score: ${emotional.score}/10 — ${emotional.recommendation}`);
 
       if (emotional.score < 6) {
+        let oDecision = null;
+        try {
+          oDecision = await decideArteRechazado(brief, 'emotional_impact', `Score: ${emotional.score}/10. ${emotional.notes}. Fix: ${emotional.quick_fix}`);
+        } catch { /* non-fatal */ }
         await updateBriefStatus(brief_id, 'rework', {
-          notas_revision: `[EMOTIONAL] ${emotional.notes} | Fix: ${emotional.quick_fix}`
+          notas_revision: oDecision?.mensaje_carlos || `[EMOTIONAL] ${emotional.notes} | Fix: ${emotional.quick_fix}`
         });
-        return { passed: false, reason: 'Impacto emocional insuficiente', notes: emotional.notes, qa_log: qaLog };
+        return { passed: false, reason: oDecision?.razon || 'Impacto emocional insuficiente', notes: emotional.notes, oracle_decision: oDecision, qa_log: qaLog };
       }
     } catch (e) {
       logQA(3, '⚠️', `Emotional error (skip): ${e.message}`);
@@ -526,10 +536,14 @@ async function fase5_qa(brief_id) {
           `CTR score: ${ctr.score}/100 — CTR estimado: ${ctr.ctr_estimate}`);
 
         if (ctr.score < 50) {
+          let oDecision = null;
+          try {
+            oDecision = await decideArteRechazado(brief, 'ctr_validation', ctr.issues || [`CTR score: ${ctr.score}/100. Fix: ${ctr.quick_fix}`]);
+          } catch { /* non-fatal */ }
           await updateBriefStatus(brief_id, 'rework', {
-            notas_revision: `[CTR] ${(ctr.issues || []).join('; ')} | Fix: ${ctr.quick_fix}`
+            notas_revision: oDecision?.mensaje_carlos || `[CTR] ${(ctr.issues || []).join('; ')} | Fix: ${ctr.quick_fix}`
           });
-          return { passed: false, reason: 'CTR bajo', issues: ctr.issues, qa_log: qaLog };
+          return { passed: false, reason: oDecision?.razon || 'CTR bajo', issues: ctr.issues, oracle_decision: oDecision, qa_log: qaLog };
         }
       } catch (e) {
         logQA(4, '⚠️', `CTR error (skip): ${e.message}`);
@@ -545,15 +559,26 @@ async function fase5_qa(brief_id) {
         `Prob. aprobación: ${simulation.approval_probability}% — "${simulation.first_reaction}"`);
 
       if (simulation.approval_probability < 60) {
+        const simIssues = [
+          `Prob. aprobación: ${simulation.approval_probability}%`,
+          ...(simulation.requested_changes || []).slice(0, 2),
+          `Fix: ${simulation.quick_fix}`
+        ];
+        let oDecision = null;
+        try {
+          oDecision = await decideArteRechazado(brief, 'client_simulator', simIssues);
+        } catch { /* non-fatal */ }
         await updateBriefStatus(brief_id, 'rework', {
-          notas_revision: `[SIMULATOR] Prob. ${simulation.approval_probability}% | ` +
+          notas_revision: oDecision?.mensaje_carlos ||
+            `[SIMULATOR] Prob. ${simulation.approval_probability}% | ` +
             `Cambios: ${(simulation.requested_changes || []).slice(0, 2).join('; ')} | ` +
             `Fix: ${simulation.quick_fix}`
         });
         return {
           passed: false,
-          reason: 'Probabilidad de aprobación baja',
+          reason: oDecision?.razon || 'Probabilidad de aprobación baja',
           simulation,
+          oracle_decision: oDecision,
           qa_log: qaLog
         };
       }
@@ -573,10 +598,14 @@ async function fase5_qa(brief_id) {
           `Valentina: ${valentina.approved ? 'APROBADO' : 'RECHAZADO'} — ${valentina.notes || ''}`);
 
         if (!valentina.approved) {
+          let oDecision = null;
+          try {
+            oDecision = await decideArteRechazado(brief, 'valentina_art_direction', valentina.notes || 'No cumple estándar Valentina');
+          } catch { /* non-fatal */ }
           await updateBriefStatus(brief_id, 'rework', {
-            notas_revision: `[VALENTINA] ${valentina.notes}`
+            notas_revision: oDecision?.mensaje_carlos || `[VALENTINA] ${valentina.notes}`
           });
-          return { passed: false, reason: 'Rechazado por Valentina', notes: valentina.notes, qa_log: qaLog };
+          return { passed: false, reason: oDecision?.razon || 'Rechazado por Valentina', notes: valentina.notes, oracle_decision: oDecision, qa_log: qaLog };
         }
       } catch (e) {
         logQA(6, '⚠️', `Valentina error (skip): ${e.message}`);
