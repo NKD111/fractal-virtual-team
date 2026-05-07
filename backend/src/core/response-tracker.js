@@ -292,7 +292,7 @@ Mensaje del usuario: "${possibleAnswer.substring(0, 300)}"
 Responde solo: SI o NO`;
 
     const response = await claude.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 10,
       messages: [{ role: 'user', content: prompt }]
     });

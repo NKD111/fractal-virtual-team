@@ -11,7 +11,7 @@ const { buildMemoryContext } = require('./memory-engine');
 
 // UPGRADE 2: Haiku para validación binaria de marca (67% más barato que Sonnet)
 // Brand check es determinístico con reglas fijas — Haiku es suficiente
-const MODEL = 'claude-haiku-4-5';
+const MODEL = 'claude-haiku-4-5-20251001';
 
 /**
  * Obtiene los últimos N artes aprobados de un cliente.

@@ -154,7 +154,7 @@ async function test_3_1_anthropic_api() {
   try {
     const a = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const haiku = await a.messages.create({
-      model: 'claude-haiku-4-5', max_tokens: 50,
+      model: 'claude-haiku-4-5-20251001', max_tokens: 50,
       messages: [{ role: 'user', content: 'Responde solo: HAIKU_OK' }]
     });
     checks.api_reachable = true;

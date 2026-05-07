@@ -12,7 +12,7 @@ class CollectiveMemory {
       process.env.SUPABASE_SERVICE_KEY
     );
     this.claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    this.model = 'claude-haiku-4-5'; // Rápido y barato para síntesis
+    this.model = 'claude-haiku-4-5-20251001'; // Rápido y barato para síntesis
   }
 
   async initialize() {

@@ -8,7 +8,7 @@ const { chat } = require('../core/anthropic');
 
 // UPGRADE 2: Haiku para validación numérica de CTR (benchmark lookup + score)
 // Evaluación mecánica con benchmarks fijos — no requiere Sonnet
-const MODEL = 'claude-haiku-4-5';
+const MODEL = 'claude-haiku-4-5-20251001';
 
 // Benchmarks de CTR por plataforma y nicho
 const CTR_BENCHMARKS = {

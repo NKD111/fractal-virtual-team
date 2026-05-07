@@ -84,7 +84,7 @@ async function generateOpportunities(scanRunId) {
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1500,
       system: `Eres AXIOM, el sistema de inteligencia de oportunidades de Fractal MX.
 Tu tarea es identificar oportunidades de negocio REALES y ACCIONABLES que Fractal MX puede aprovechar HOY o esta semana.
