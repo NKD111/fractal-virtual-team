@@ -143,14 +143,18 @@ async function generateImage(prompt, opts = {}) {
   const aspectRatio = opts.aspectRatio || '3:4';
   const quality = opts.quality || '2k';
 
-  const args = [
-    'generate', 'create', model,
-    '--prompt', prompt,
-    '--aspect_ratio', aspectRatio,
-    '--quality', quality,
-    '--wait',
-    '--json'
-  ];
+  // Mapeo de quality legacy (2k/1.5k) → formato nuevo (high/medium/low)
+  // gpt_image_2 acepta: low, medium, high
+  // nano_banana_2: no acepta --quality (se omite)
+  const QUALITY_MAP = { '2k': 'high', '1.5k': 'medium', 'high': 'high', 'medium': 'medium', 'low': 'low' };
+  const MODELS_WITH_QUALITY = ['gpt_image_2', 'text2image_soul_v2'];
+  const mappedQuality = QUALITY_MAP[quality] || 'high';
+
+  const args = ['generate', 'create', model, '--prompt', prompt, '--aspect_ratio', aspectRatio];
+  if (MODELS_WITH_QUALITY.includes(model)) {
+    args.push('--quality', mappedQuality);
+  }
+  args.push('--wait', '--json');
 
   const raw = await runHF(args, 120000);
   const results = JSON.parse(raw);
