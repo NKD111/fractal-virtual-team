@@ -246,6 +246,12 @@ async function getTeamStatus() {
 // NO reporta el research a Neiky. Devuelve sugerencias generadas para que
 // Mariana las muestre si lo considera oportuno.
 async function assignAutoWork(agentNames) {
+  // 🛑 PAUSA GLOBAL — ningún agente trabaja en automático
+  if (process.env.SYSTEM_PAUSED === 'true') {
+    console.log('[AgentWorkManager] 🛑 SYSTEM_PAUSED=true — assignAutoWork bloqueado');
+    return [];
+  }
+
   const idle = agentNames
     ? agentNames.map(a => AGENT_ROSTER[a] ? { agent: a, ...AGENT_ROSTER[a] } : null).filter(Boolean)
     : (await getTeamStatus()).filter(a => a.status === 'idle');
