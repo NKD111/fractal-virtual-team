@@ -16,6 +16,11 @@ class RoutineManager {
   constructor() { this._tasks = []; this._initialized = false; }
 
   initialize() {
+    // 🛑 PAUSA TOTAL — NKD ordenó detener todos los crons hasta nuevo aviso
+    if (process.env.SYSTEM_PAUSED === 'true') {
+      console.log('🛑 ROUTINES: SYSTEM_PAUSED=true — TODOS los crons desactivados');
+      return;
+    }
     if (this._initialized) return;
     console.log('⏰ ROUTINES: inicializando schedules...');
 

@@ -213,6 +213,15 @@ server.listen(PORT, async () => {
   console.log(`🔗 Webhook Meta: POST /webhook/meta`);
   console.log(`🔗 Webhook Twilio: POST /webhook/twilio`);
 
+  // 🛑 PAUSA TOTAL — NKD ordenó detener todos los workers y crons hasta nuevo aviso
+  // Para reactivar: eliminar este bloque (o cambiar SYSTEM_PAUSED=false) y hacer push
+  if (process.env.SYSTEM_PAUSED === 'true') {
+    console.log('\n🛑 SYSTEM_PAUSED=true — TODOS los workers, crons y agentes automáticos DESACTIVADOS');
+    console.log('🛑 Solo el servidor HTTP responde (webhooks entrantes deshabilitados también)');
+    console.log('🛑 Para reactivar: cambiar SYSTEM_PAUSED=false en Railway\n');
+    return; // ← No inicia NADA automático
+  }
+
   await initAllAgents(io);
 
   // Start resources worker (checks Gmail for client assets every 5 min)
