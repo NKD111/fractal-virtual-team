@@ -60,51 +60,47 @@ const FLAGS = {
 console.log(`[Flags] AXIOM=${FLAGS.AXIOM} MESHY=${FLAGS.MESHY} OBSIDIAN=${FLAGS.OBSIDIAN}`);
 
 // ─── /api/health ──────────────────────────────────────────────────────────────
-// Health check principal — ruta canónica según v6 plan.
-// Chequea servicios críticos y devuelve 200 (ok) o 503 (degraded).
+// Health check principal — formato exacto plan estabilización v6.
 app.get('/api/health', async (req, res) => {
-  const start = Date.now();
-  const critical = {};
-  const optional = {};
   const { supabase } = require('./core/supabase');
+  const checks = {}
 
-  // Supabase (crítico)
   try {
-    const { error } = await supabase.from('conversations').select('id', { count: 'exact', head: true }).limit(1);
-    critical.supabase = error ? `degraded: ${error.message.slice(0,60)}` : 'ok';
-  } catch (e) { critical.supabase = `error: ${e.message.slice(0,60)}`; }
+    const { error } = await supabase
+      .from('webhooks_log')
+      .select('id').limit(1)
+    checks.supabase = !error ? '✅' : `❌ ${error.message}`
+  } catch(e) {
+    checks.supabase = `❌ ${e.message}`
+  }
 
-  // Claude API key (crítico)
-  critical.claude = process.env.ANTHROPIC_API_KEY ? 'ok' : 'missing';
+  checks.claude_api_key = process.env.ANTHROPIC_API_KEY
+    ? '✅' : '❌ missing'
 
-  // WhatsApp / Twilio (crítico — canal principal con Neiky)
-  critical.twilio = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ? 'ok' : 'missing';
+  checks.twilio = process.env.TWILIO_ACCOUNT_SID
+    ? '✅' : '❌ missing'
 
-  // WhatsApp / Meta (opcional — producción futura)
-  optional.meta_wa = process.env.META_ACCESS_TOKEN ? 'configured' : 'not_configured';
+  checks.higgsfield = process.env.HIGGSFIELD_API_KEY &&
+    process.env.HIGGSFIELD_API_KEY !== 'PENDING'
+    ? '✅' : '❌ PENDING'
 
-  // Higgsfield (opcional — PENDING API key)
-  optional.higgsfield = process.env.HIGGSFIELD_API_KEY ? 'configured' : 'not_configured';
+  checks.cloudinary = process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_KEY !== 'PENDING'
+    ? '✅' : '❌ PENDING'
 
-  // Cloudinary (opcional)
-  optional.cloudinary = process.env.CLOUDINARY_API_KEY ? 'configured' : 'not_configured';
+  checks.claudia_email = process.env.CLAUDIA_EMAIL
+    ? '✅' : '⚠️ missing'
 
-  // Flags activos
-  const flags = { ...FLAGS };
+  const criticalFails = ['supabase','claude_api_key','twilio']
+    .filter(k => checks[k]?.startsWith('❌'))
 
-  // Determinación de estado global
-  const criticalFailed = Object.values(critical).some(v => v !== 'ok');
-  const httpStatus = criticalFailed ? 503 : 200;
-
-  res.status(httpStatus).json({
-    status: criticalFailed ? 'degraded' : 'ok',
+  res.status(criticalFails.length === 0 ? 200 : 503).json({
+    status: criticalFails.length === 0 ? 'healthy' : 'degraded',
+    checks,
+    critical_failures: criticalFails.length,
     timestamp: new Date().toISOString(),
-    duration_ms: Date.now() - start,
-    critical,
-    optional,
-    flags,
-    version: 'Fractal MX v6 (stabilization)'
-  });
+    version: 'v6.0'
+  })
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
