@@ -134,6 +134,7 @@ async function verify() {
  *   - model       {string}  default: 'text2image_soul_v2'
  *   - aspectRatio {string}  default: '3:4'  (valid: 1:1 16:9 9:16 4:3 3:4 3:2 2:3)
  *   - quality     {string}  default: '2k'   (valid: 1.5k 2k)
+ *   - timeoutMs   {number}  default: 180000 (3 min)
  * @returns {{ jobId, resultUrl, params }}
  */
 async function generateImage(prompt, opts = {}) {
@@ -142,6 +143,7 @@ async function generateImage(prompt, opts = {}) {
   const model = opts.model || 'text2image_soul_v2';
   const aspectRatio = opts.aspectRatio || '3:4';
   const quality = opts.quality || '2k';
+  const timeoutMs = opts.timeoutMs || 180000; // 3 min default (was 120s — too short for some models)
 
   // Mapeo de quality legacy (2k/1.5k) → formato nuevo (high/medium/low)
   // gpt_image_2 acepta: low, medium, high
@@ -156,7 +158,7 @@ async function generateImage(prompt, opts = {}) {
   }
   args.push('--wait', '--json');
 
-  const raw = await runHF(args, 120000);
+  const raw = await runHF(args, timeoutMs);
   const results = JSON.parse(raw);
   const job = Array.isArray(results) ? results[0] : results;
 
@@ -248,8 +250,8 @@ async function listJobs() {
 // ─── BLOQUE Q: Prioridad de modelos y fallback inteligente ─────────────────────
 //
 // Orden de prioridad para imágenes:
-//   1. GPT Image 2 vía CLI (modelo primario — calidad máxima)
-//   2. Nano Banana 2 vía CLI (fallback — soporta 4:5 nativo)
+//   1. Nano Banana 2 vía CLI (modelo primario — rápido ~40s, estable)
+//   2. GPT Image 2 vía CLI (fallback — calidad máxima, timeout 5 min)
 //
 // Orden de prioridad para videos:
 //   1. Seedance 2.0 vía CLI (reels, FIF)
@@ -300,27 +302,30 @@ async function generateImageWithFallback(prompt, opts = {}) {
   // UPGRADE 3: Circuit breaker envuelve todos los intentos de imagen
   // OPEN → fallback textual inmediato (no esperar timeouts)
   return breakers.higgsfield.execute(
-    // ── Intento principal: GPT Image 2 → Nano Banana 2 ───────────────────────
+    // ── Intento principal: Nano Banana 2 → GPT Image 2 (si falla) ───────────
+    // Nano Banana 2 es más rápido y estable (~40s). GPT Image 2 puede tardar
+    // más de 2 min en Railway → se intenta como fallback con timeout 5 min.
     async () => {
-      // 1. GPT Image 2 (calidad máxima)
+      // 1. Nano Banana 2 (rápido, estable, no acepta --quality)
       try {
         const result = await generateImage(prompt, {
-          model: MODELS.images.primary,
-          aspectRatio: primaryRatio,
-          quality
+          model: MODELS.images.fallback,  // nano_banana_2
+          aspectRatio,
+          timeoutMs: 120000  // 2 min para nano banana
         });
-        return { ...result, model: MODELS.images.primary };
+        return { ...result, model: MODELS.images.fallback };
       } catch (err) {
-        console.warn(`[Higgsfield] GPT Image 2 falló: ${err.message} — probando Nano Banana 2`);
+        console.warn(`[Higgsfield] Nano Banana 2 falló: ${err.message} — probando GPT Image 2`);
       }
 
-      // 2. Nano Banana 2 (soporta 4:5 nativo)
+      // 2. GPT Image 2 (calidad máxima, más lento — timeout extendido)
       const result = await generateImage(prompt, {
-        model: MODELS.images.fallback,
-        aspectRatio,
-        quality
+        model: MODELS.images.primary,  // gpt_image_2
+        aspectRatio: primaryRatio,
+        quality,
+        timeoutMs: 300000  // 5 min para gpt_image_2
       });
-      return { ...result, model: MODELS.images.fallback };
+      return { ...result, model: MODELS.images.primary };
     },
 
     // ── Fallback final: descripción textual (pipeline continúa) ──────────────
