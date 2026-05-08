@@ -436,26 +436,34 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
       ? FIF_VISUAL_SYSTEM.composicion_banner
       : FIF_VISUAL_SYSTEM.composicion_post;
 
-    // ── REGLA CRÍTICA: NUNCA inyectar texto del headline en el prompt de imagen ──
-    // El texto se monta en post-producción con Gotham. Ver typography-spec.js.
-    // El headline se usa SOLO como contexto de tono visual, NO como texto a renderizar.
-    const tono_visual = brief.headline
-      ? `Visual tone reference (DO NOT render as text): ${brief.headline}`
-      : '';
+    // ── ROLLBACK 2026-05-08: el compositor Sharp/SVG entregaba texto mal ──
+    // ── compuesto sobre el background. NKD prefiere que gpt-image-1 ──
+    // ── genere la composición completa (texto + arte) en una sola pasada. ──
+    // ── Pasamos el headline + CTA como texto a RENDERIZAR dentro del arte. ──
+    const renderTextBlock = [
+      brief.headline    ? `Render headline text on the image: "${brief.headline}"` : '',
+      brief.subheadline ? `Render subheadline text: "${brief.subheadline}"`        : '',
+      brief.cta         ? `Render CTA text: "${brief.cta}"`                         : '',
+      brief.fecha       ? `Include date in the design: ${brief.fecha}`              : '',
+      brief.sede        ? `Include venue/location: ${brief.sede}`                   : '',
+      'Use Gotham-style sans-serif typography. Strong visual hierarchy: headline largest, supporting text smaller. Position text in clean negative space — never centered over busy image areas. Editorial-grade composition with intentional alignment, generous breathing room, and balanced asymmetry. Brand colors: navy #0B2A4A and red #D7193F.'
+    ].filter(Boolean).join('\n');
 
     const basePrompt = [
       FIF_VISUAL_SYSTEM.base,
       FIF_VISUAL_SYSTEM.fotografia,
       composicion,
       `BRIEF ESPECÍFICO:\n${brief.prompt_higgsfield || brief.concepto || ''}`,
-      tono_visual,
+      renderTextBlock,
       brief.objetivo ? `Visual objective: ${brief.objetivo}` : '',
       brief.notas_para_carlos ? brief.notas_para_carlos : '',
       memoriaCtx ? `\n${memoriaCtx}` : ''
     ].filter(Boolean).join('\n\n');
 
-    // Siempre pasar por generateNoTextImagePrompt para garantizar zonas limpias
-    return generateNoTextImagePrompt(basePrompt, brief.tipo_pieza || 'post_informativo', brief);
+    // ROLLBACK: dejamos que gpt-image-1 renderice texto nativamente.
+    // Antes pasábamos por generateNoTextImagePrompt que forzaba "no-text rules"
+    // y luego el compositor montaba texto mediocre. Ahora una sola pasada de IA.
+    return basePrompt;
   }
 
   /**
@@ -569,15 +577,17 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
       }
     }
 
-    // ── PASO 3: Compositor — overlay texto Gotham + logos sobre el background ──
-    // Toma el background de PASO 1 y monta:
-    //   · Texto tipográfico (headline, subheadline, CTA) con Gotham Font Family
-    //   · Logo del cliente/evento (FIF, VANEXPO, etc.)
-    // Resultado: url_arte_final = arte COMPLETO listo para entregar
+    // ── PASO 3: DESACTIVADO 2026-05-08 (rollback) ──
+    // ── El compositor Sharp/SVG produce texto mediocre encima del arte. ──
+    // ── gpt-image-1 ya renderiza texto + arte en una sola pasada con mejor ──
+    // ── composición visual (entiende jerarquía, espacio negativo, contraste). ──
+    // ── Si en el futuro necesitamos consistencia tipográfica perfecta, ──
+    // ── habrá que rediseñar el compositor con templates por tipo_pieza. ──
     let composedResult = null;
     const backgroundUrl = imageResult.images[0]?.resultUrl;
+    const COMPOSITOR_ENABLED = false; // FLAG: rollback hasta nuevo aviso
 
-    if (backgroundUrl) {
+    if (COMPOSITOR_ENABLED && backgroundUrl) {
       try {
         const compositor = require('../services/workflows/design-compositor');
 
