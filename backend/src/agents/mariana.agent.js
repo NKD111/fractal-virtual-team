@@ -509,6 +509,18 @@ Solo JSON, sin markdown:`;
       `[${h.channel?.toUpperCase() || '?'}] Neiky: "${this._sanitizeText(h.message_in || '')}" → Mariana: "${this._sanitizeText(h.message_out || '')}"`
     ).join('\n') || 'Sin historial previo';
 
+    // ── Contexto de artes recientes — cargado cuando el mensaje menciona artes/texto/logos ──
+    // Si Neiky pregunta "ponles el texto" o "cuál es el arte de FIF", Mariana sabe exactamente
+    // qué artes existen porque cargó los últimos registros de parrilla_briefs.
+    let artsContextSection = '';
+    if (this._isArtsRelatedQuery(rawContent)) {
+      try {
+        artsContextSection = await this._loadRecentArtsContext();
+      } catch (err) {
+        console.warn('[Mariana] _loadRecentArtsContext error (skip):', err.message);
+      }
+    }
+
     // ── Sección extra para tareas detectadas — Haiku debe dar ACK, NO preguntas ──
     const taskAckSection = _neikyTaskId
       ? `\n\n═══ ⚡ TAREA EN EJECUCIÓN (CRÍTICO — LEER ANTES DE RESPONDER) ═══\nEl sistema YA registró y está ejecutando la tarea de Neiky en background.
@@ -527,6 +539,7 @@ Ejemplo INCORRECTO: "¿Para qué plataforma necesitas el arte? ¿Qué dimensione
 ═══ CONTEXTO CRÍTICO ═══
 ESTÁS HABLANDO DIRECTAMENTE CON NEIKY AHORA MISMO. Él es quien te escribe este mensaje.
 Canal actual: ${sender.channel}
+${artsContextSection}
 
 REGLAS ABSOLUTAS DE IDENTIDAD:
 1. TÚ eres Mariana — siempre. No adoptes el personaje de ningún otro agente (Roberto, Carlos, Diego, etc.)
@@ -603,6 +616,72 @@ Recuerda: habla de Neiky en segunda persona (tú/ti), NUNCA en tercera persona:`
     }
 
     return responseText;
+  }
+
+  // ─── CONTEXTO DE ARTES RECIENTES ────────────────────────────────────────────
+
+  /**
+   * Detecta si el mensaje de Neiky es sobre artes, texto o logos.
+   * Si sí, cargamos parrilla_briefs para que Mariana tenga contexto.
+   */
+  _isArtsRelatedQuery(text) {
+    const t = (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const artKeywords = [
+      'arte', 'artes', 'texto', 'logo', 'logos', 'imagen', 'imagenes',
+      'pieza', 'piezas', 'diseño', 'diseno', 'banner', 'post', 'story',
+      'carousel', 'carrusel', 'parrilla', 'brief', 'fif', 'vanexpo',
+      'gotham', 'tipografia', 'fuente', 'coloca', 'coloca texto',
+      'ponle', 'ponles', 'pon el', 'agrega', 'manda el arte', 'el arte',
+      'los artes', 'generados', 'genero', 'carlos', 'compositor'
+    ];
+    return artKeywords.some(kw => t.includes(kw));
+  }
+
+  /**
+   * Carga los artes recientes de parrilla_briefs para dar contexto a Mariana.
+   * Retorna un string con la sección de contexto (vacío si no hay artes).
+   */
+  async _loadRecentArtsContext() {
+    try {
+      // Últimos 10 briefs activos (en producción o listos para QC)
+      const { data: briefs } = await this.supabase
+        .from('parrilla_briefs')
+        .select('id, numero_pieza, tipo_pieza, concepto, headline, cliente, status, url_arte_final, metadata, updated_at')
+        .in('status', ['listo_qc', 'aprobado_qa', 'compositing', 'en_produccion', 'aprobado_nkd', 'rework'])
+        .order('updated_at', { ascending: false })
+        .limit(10);
+
+      if (!briefs || briefs.length === 0) return '';
+
+      const lines = briefs.map(b => {
+        const urlFinal = b.url_arte_final || '';
+        const urlComposed = b.metadata?.composed_url || '';
+        const urlBg = b.metadata?.background_url || '';
+        const artUrl = urlComposed || urlFinal || urlBg || 'Sin URL aún';
+        const pipelineStep = b.metadata?.pipeline_step || b.status || '?';
+
+        return [
+          `• [${b.numero_pieza || '?'}] ${b.tipo_pieza?.toUpperCase() || ''} — "${b.headline || b.concepto || ''}"`,
+          `  Cliente: ${b.cliente || '?'} | Status: ${b.status} | Pipeline: ${pipelineStep}`,
+          `  Arte final: ${artUrl !== 'Sin URL aún' ? artUrl.substring(0, 100) : 'Sin URL aún'}`,
+        ].join('\n');
+      }).join('\n\n');
+
+      return `\n═══ ARTES RECIENTES (contexto para responder a Neiky) ═══
+Estos son los últimos artes en producción. Úsalos para responder con datos reales.
+Si Neiky menciona "esos artes" o "el arte de FIF", se refiere a estos:
+
+${lines}
+
+IMPORTANTE: Si Neiky pide poner texto, manda a Carlos vía comando /arte o dile que el PASO 3
+(compositor automático) ya aplica Gotham + logos cuando genera cada arte. Si el arte tiene
+pipeline_step "background_only_compositor_failed", el compositor necesita revisión.
+═══════════════════════════════════════════════════════════════════════\n`;
+
+    } catch (err) {
+      console.warn('[Mariana] _loadRecentArtsContext DB error:', err.message);
+      return '';
+    }
   }
 
   /**
