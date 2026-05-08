@@ -563,7 +563,12 @@ router.post('/test-generate', async (req, res) => {
 
       const result = await carlos.generateFromBrief(carlosBrief);
 
-      const imageUrl = result?.images?.[0]?.resultUrl ||
+      // FIX: priorizar arte FINAL del PASO 3 (compositor con texto+logo) sobre
+      // el background crudo del PASO 1. Solo fallback al background si el
+      // compositor no tuvo resultado válido.
+      const imageUrl = result?.final_url ||
+                       result?.composed_url ||
+                       result?.images?.[0]?.resultUrl ||
                        result?.images?.[0]?.url ||
                        result?.images?.[0]?.image_url || null;
 
