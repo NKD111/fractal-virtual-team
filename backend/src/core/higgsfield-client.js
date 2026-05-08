@@ -65,24 +65,28 @@ function ensureCredentials() {
 
   if (!combined) return; // sin env vars → confiar en credenciales locales existentes
 
-  // Write to OS-appropriate credentials location
-  const credsDir = process.platform === 'win32'
-    ? path.join(process.env.APPDATA || os.homedir(), 'higgsfield')
-    : path.join(os.homedir(), '.higgsfield');
+  const credsContent = JSON.stringify({ access_token: combined, token_type: 'Bearer' });
 
-  const credsFile = path.join(credsDir, 'credentials.json');
+  // Write to ALL possible credential locations the hf binary might read from
+  const credsDirs = process.platform === 'win32'
+    ? [ path.join(process.env.APPDATA || os.homedir(), 'higgsfield') ]
+    : [
+        path.join(os.homedir(), '.higgsfield'),                          // original
+        path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'higgsfield'), // XDG standard
+        path.join(os.homedir(), '.config', 'higgsfield'),                // explicit fallback
+      ];
 
-  // SIEMPRE sobreescribir — no saltar si existe (puede estar inválido/vacío/stale)
-  try {
-    fs.mkdirSync(credsDir, { recursive: true });
-    fs.writeFileSync(credsFile, JSON.stringify({
-      access_token: combined,
-      token_type:   'Bearer'
-    }), 'utf8');
-    console.log('[Higgsfield] Credentials written/refreshed from env vars');
-  } catch (err) {
-    console.warn('[Higgsfield] Could not write credentials:', err.message);
+  let written = 0;
+  for (const credsDir of credsDirs) {
+    try {
+      fs.mkdirSync(credsDir, { recursive: true });
+      fs.writeFileSync(path.join(credsDir, 'credentials.json'), credsContent, 'utf8');
+      written++;
+    } catch (err) {
+      console.warn(`[Higgsfield] Could not write credentials to ${credsDir}:`, err.message);
+    }
   }
+  console.log(`[Higgsfield] Credentials written to ${written} location(s): ${credsDirs.join(', ')}`);
 }
 
 // Escribir credenciales al cargar el módulo (no lazy) para que Railway
