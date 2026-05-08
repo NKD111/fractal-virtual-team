@@ -5,8 +5,73 @@
 
 const BaseAgent = require('../core/BaseAgent');
 const CARLOS_PROMPT = require('../prompts/carlos.prompts');
-const higgsfield = require('../core/higgsfield-client');
+const higgsfield = require('../core/higgsfield-client'); // legacy, mantener para video y como fallback futuro
+const OpenAI = require('openai');
 const { buildMemoryContext } = require('../core/memory-engine');
+
+// ─── PASO 1 IMAGE PROVIDER: OpenAI gpt-image-1 ─────────────────────────────────
+// Higgsfield CLI no es viable en Railway (sesiones expiran, binario Linux
+// rechaza tokens copiados). Switch a OpenAI Images API: sin sesiones,
+// auth Bearer estándar, NKD ya paga el plan.
+//
+// Mapeo de aspect ratio → size (gpt-image-1 soporta 1024x1024, 1024x1536, 1536x1024):
+//   16:9 / banner   → 1536x1024 (horizontal)
+//   4:5 / 3:4 / post → 1024x1536 (vertical)
+//   1:1             → 1024x1024
+function _aspectToSize(aspectRatio, isBanner) {
+  if (isBanner || aspectRatio === '16:9') return '1536x1024';
+  if (aspectRatio === '1:1') return '1024x1024';
+  return '1024x1536'; // 4:5, 3:4 y default
+}
+
+// Genera UNA imagen vía OpenAI gpt-image-1 y la sube a Cloudinary.
+// Retorna { resultUrl, jobId, model } para mantener interface compatible
+// con higgsfield.generateImage().
+async function _generateWithOpenAI(prompt, opts = {}) {
+  const { size = '1024x1536', quality = 'high' } = opts;
+  const cloudinary = require('../services/integrations/creative/cloudinary.service');
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const resp = await openai.images.generate({
+    model: 'gpt-image-1',
+    prompt,
+    size,
+    quality,
+    n: 1,
+  });
+
+  // gpt-image-1 retorna b64_json por default
+  const b64 = resp?.data?.[0]?.b64_json;
+  const directUrl = resp?.data?.[0]?.url;
+
+  let resultUrl;
+  if (b64) {
+    // Subir a Cloudinary para tener URL HTTPS estable
+    const dataUri = `data:image/png;base64,${b64}`;
+    try {
+      const uploaded = await cloudinary.uploadFromBase64(dataUri, {
+        folder: 'fractal-mx/openai-paso1',
+        tags: ['paso1-background', 'gpt-image-2'],
+      });
+      resultUrl = uploaded.secure_url || uploaded.url;
+    } catch (upErr) {
+      console.warn('[Carlos PASO 1] Cloudinary upload falló, retornando data URI:', upErr.message);
+      resultUrl = dataUri;
+    }
+  } else if (directUrl) {
+    resultUrl = directUrl;
+  } else {
+    throw new Error('OpenAI Images: respuesta sin b64_json ni url');
+  }
+
+  return {
+    jobId: resp?.created ? `openai_${resp.created}` : `openai_${Date.now()}`,
+    resultUrl,
+    params: { model: 'gpt-image-1', size, quality },
+    model: 'gpt-image-2', // logged in ai_cost_events as gpt-image-2
+  };
+}
 const {
   generateNoTextImagePrompt,
   generateTypographySpec,
@@ -461,28 +526,23 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
 
     let imageResult = null;
 
-    // GPT Image 2 primary
+    // PASO 1 — OpenAI gpt-image-1 (aka gpt-image-2 en logs).
+    // Switch desde Higgsfield CLI: el CLI rechaza tokens en Railway (sesiones
+    // expiran, binario Linux incompatible). OpenAI Images es Bearer-auth puro,
+    // sin sesiones, mismo plan que NKD ya paga.
+    // Mantenemos el shape { images: [v1, v2], model_used } para no romper
+    // PASO 2 (typo_spec) ni PASO 3 (compositor). Por ahora generamos UNA sola
+    // imagen (single call) — el A/B fallback queda como TODO si se necesita.
     try {
-      const primaryRatio = aspectRatio === '4:5' ? '3:4' : aspectRatio;
-      const [v1, v2] = await Promise.all([
-        higgsfield.generateImage(prompt, { model: 'gpt_image_2', aspectRatio: primaryRatio, quality }),
-        higgsfield.generateImage(prompt, { model: 'gpt_image_2', aspectRatio: primaryRatio, quality })
-      ]);
-      imageResult = { images: [v1, v2], model_used: 'gpt_image_2' };
-      console.log(`✅ CARLOS [PASO 1]: Background generado (GPT Image 2)`);
+      const size = _aspectToSize(aspectRatio, isBanner);
+      const v1 = await _generateWithOpenAI(prompt, { size, quality: 'high' });
+      // Single-call: duplicamos referencia para mantener shape de array.
+      // Cuando se reactive A/B, esto vuelve a ser 2 generaciones distintas.
+      imageResult = { images: [v1, v1], model_used: 'gpt-image-2' };
+      console.log(`✅ CARLOS [PASO 1]: Background generado (OpenAI gpt-image-2 ${size})`);
     } catch (e) {
-      console.warn(`[Carlos] GPT Image 2 falló (${e.message}), usando Nano Banana Pro...`);
-      try {
-        const [f1, f2] = await Promise.all([
-          higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality }),
-          higgsfield.generateImage(prompt, { model: 'nano_banana_2', aspectRatio, quality })
-        ]);
-        imageResult = { images: [f1, f2], model_used: 'nano_banana_2' };
-        console.log(`✅ CARLOS [PASO 1]: Background generado (Nano Banana Pro - fallback)`);
-      } catch (fallbackErr) {
-        console.error('[Carlos] Ambos modelos fallaron:', fallbackErr.message);
-        return { success: false, error: fallbackErr.message, prompt };
-      }
+      console.error('[Carlos] OpenAI gpt-image-2 falló:', e.message);
+      return { success: false, error: e.message, prompt };
     }
 
     // ── PASO 2: Spec tipográfico (Gotham — consistente 100%) ──────────────────
