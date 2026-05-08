@@ -1,17 +1,113 @@
 // backend/src/services/workflows/design-compositor.js
 // Fractal Virtual Team v4.2 — Design Compositor
 //
-// PROBLEMA RESUELTO: DALL-E genera foto excelente pero sin texto.
-// SOLUCIÓN: sharp + SVG overlay → composita texto, logo, copy y branding
-//           encima de la foto generada por IA.
+// PASO 3 del pipeline de Carlos:
+//   Background (Higgsfield) → overlay texto Gotham + logos → arte final
 //
 // Flujo:
-//   DALL-E foto → fetchImage() → sharp + SVG text overlay → Buffer PNG completo
+//   URL imagen base → fetchImage() → sharp + SVG overlay (Gotham, logos) → PNG completo
 //   → Cloudinary upload → URL permanente con diseño completo
+//
+// Gotham Font Family:
+//   Para Railway/Linux: colocar archivos OTF en backend/vendor/fonts/
+//     Gotham-Black.otf, Gotham-Bold.otf, Gotham-Medium.otf, Gotham-Book.otf
+//   Si no están disponibles, usa Montserrat como fallback visual más cercano.
+//   Los archivos se leen una vez al inicio y se embeben en SVG @font-face (base64).
 
 const sharp = require('sharp');
 const axios = require('axios');
 const path = require('path');
+const fs   = require('fs');
+
+// ─── Gotham / Montserrat font embedding ───────────────────────────────────────
+// Intentar cargar Gotham desde vendor/fonts/. Si no existe, usar Montserrat
+// desde Google Fonts vía HTTP en build time (no en tiempo de request).
+// Para SVG/librsvg en Railway: los fonts deben estar como base64 @font-face.
+
+const FONTS_DIR = path.join(__dirname, '..', '..', '..', 'vendor', 'fonts');
+
+function loadFontBase64(filename) {
+  try {
+    const fullPath = path.join(FONTS_DIR, filename);
+    if (fs.existsSync(fullPath)) {
+      return fs.readFileSync(fullPath).toString('base64');
+    }
+  } catch {}
+  return null;
+}
+
+// Intentar cargar Gotham; si no, intentar Montserrat
+const _gothamBlack  = loadFontBase64('Gotham-Black.otf')  || loadFontBase64('Gotham-Black.ttf');
+const _gothamBold   = loadFontBase64('Gotham-Bold.otf')   || loadFontBase64('Gotham-Bold.ttf');
+const _gothamMedium = loadFontBase64('Gotham-Medium.otf') || loadFontBase64('Gotham-Medium.ttf');
+const _gothamBook   = loadFontBase64('Gotham-Book.otf')   || loadFontBase64('Gotham-Book.ttf');
+const _montB64      = loadFontBase64('Montserrat-Bold.ttf');
+const _montRegB64   = loadFontBase64('Montserrat-Regular.ttf');
+
+// Si tenemos Gotham, usarlo; si no, Montserrat; si no, Arial
+const PRIMARY_FONT = _gothamBlack ? 'Gotham' : (_montB64 ? 'Montserrat' : 'Arial');
+const FONT_FAMILY  = `'${PRIMARY_FONT}', 'Gotham', 'Montserrat', 'Arial Black', 'Liberation Sans Bold', sans-serif`;
+const FONT_FAMILY_BOOK = `'${PRIMARY_FONT}', 'Gotham', 'Montserrat', 'Arial', 'Liberation Sans', sans-serif`;
+
+/**
+ * Genera el bloque @font-face SVG para embeber los fonts disponibles.
+ * librsvg (usado por Sharp) soporta @font-face con data: URIs.
+ */
+function buildFontFaceBlock() {
+  const faces = [];
+
+  if (_gothamBlack) {
+    const fmt = 'Gotham-Black.otf'.endsWith('.otf') ? 'opentype' : 'truetype';
+    faces.push(`@font-face { font-family: 'Gotham'; font-weight: 900; src: url('data:font/${fmt};base64,${_gothamBlack}') format('${fmt}'); }`);
+  }
+  if (_gothamBold) {
+    const fmt = 'Gotham-Bold.otf'.endsWith('.otf') ? 'opentype' : 'truetype';
+    faces.push(`@font-face { font-family: 'Gotham'; font-weight: 700; src: url('data:font/${fmt};base64,${_gothamBold}') format('${fmt}'); }`);
+  }
+  if (_gothamMedium) {
+    const fmt = 'Gotham-Medium.otf'.endsWith('.otf') ? 'opentype' : 'truetype';
+    faces.push(`@font-face { font-family: 'Gotham'; font-weight: 500; src: url('data:font/${fmt};base64,${_gothamMedium}') format('${fmt}'); }`);
+  }
+  if (_gothamBook) {
+    const fmt = 'Gotham-Book.otf'.endsWith('.otf') ? 'opentype' : 'truetype';
+    faces.push(`@font-face { font-family: 'Gotham'; font-weight: 400; src: url('data:font/${fmt};base64,${_gothamBook}') format('${fmt}'); }`);
+  }
+  if (_montB64 && !_gothamBold) {
+    faces.push(`@font-face { font-family: 'Montserrat'; font-weight: 700; src: url('data:font/truetype;base64,${_montB64}') format('truetype'); }`);
+  }
+  if (_montRegB64 && !_gothamBook) {
+    faces.push(`@font-face { font-family: 'Montserrat'; font-weight: 400; src: url('data:font/truetype;base64,${_montRegB64}') format('truetype'); }`);
+  }
+
+  return faces.length ? `<style>${faces.join('\n')}</style>` : '';
+}
+
+if (PRIMARY_FONT === 'Arial') {
+  console.warn('[Compositor] ⚠️  Gotham y Montserrat NO encontrados en vendor/fonts/. Usando Arial como fallback.');
+  console.warn('[Compositor] Para activar Gotham: coloca Gotham-Black.otf, Gotham-Bold.otf, Gotham-Medium.otf, Gotham-Book.otf en backend/vendor/fonts/');
+} else {
+  console.log(`[Compositor] ✅ Font activo: ${PRIMARY_FONT}`);
+}
+
+// ─── Logo config por cliente/evento ──────────────────────────────────────────
+// Los logos PNG deben estar en backend/vendor/logos/<cliente>.png
+// Si no existe el archivo, se usa el logo_text como fallback tipográfico.
+const LOGOS_DIR = path.join(__dirname, '..', '..', '..', 'vendor', 'logos');
+
+function getLogoBuffer(cliente) {
+  const candidates = [
+    `${(cliente || '').toUpperCase()}.png`,
+    `${(cliente || '').toLowerCase()}.png`,
+    `${(cliente || '')}.png`,
+  ];
+  for (const name of candidates) {
+    try {
+      const p = path.join(LOGOS_DIR, name);
+      if (fs.existsSync(p)) return fs.readFileSync(p);
+    } catch {}
+  }
+  return null;
+}
 
 // ─── Paletas y estilos de marca ───────────────────────────────────────────────
 const BRAND_PALETTES = {
@@ -108,9 +204,13 @@ function buildSVGOverlay(brief, layout, palette, opts = {}) {
   const fechaY  = h - 160;
   const ctaY    = h - 80;
 
+  const fontFaceBlock = buildFontFaceBlock();
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
   <defs>
+    ${fontFaceBlock}
+
     <!-- Gradiente overlay banda inferior -->
     <linearGradient id="bandGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="${palette.primary}" stop-opacity="0.0"/>
@@ -139,10 +239,10 @@ function buildSVGOverlay(brief, layout, palette, opts = {}) {
   <!-- ── BANDA SUPERIOR (logo area) ── -->
   <rect x="0" y="0" width="${w}" height="140" fill="url(#topGrad)"/>
 
-  <!-- Logo / Marca superior izquierda -->
+  <!-- Logo / Marca superior izquierda — Gotham Black -->
   <text
     x="52" y="82"
-    font-family="'Arial Black', 'Helvetica Neue', sans-serif"
+    font-family="${FONT_FAMILY}"
     font-size="32" font-weight="900" letter-spacing="4"
     fill="${palette.text}" opacity="0.95"
     filter="url(#textShadow)"
@@ -156,7 +256,8 @@ function buildSVGOverlay(brief, layout, palette, opts = {}) {
   <rect x="${w - 220}" y="30" width="180" height="60" rx="6" fill="${palette.secondary}" opacity="0.92"/>
   <text
     x="${w - 130}" y="68"
-    font-family="'Arial', sans-serif" font-size="22" font-weight="700"
+    font-family="${FONT_FAMILY}"
+    font-size="22" font-weight="700"
     text-anchor="middle" fill="${palette.text}"
   >${badge}</text>
   ` : ''}
@@ -177,32 +278,34 @@ function buildSVGOverlay(brief, layout, palette, opts = {}) {
     stroke="${palette.secondary}" stroke-width="2" opacity="0.5"/>
   ` : ''}
 
-  <!-- ── TÍTULO PRINCIPAL ── -->
+  <!-- ── TÍTULO PRINCIPAL — Gotham Black UPPERCASE ── -->
   <text
     x="52" y="${tituloY}"
-    font-family="'Arial Black', 'Helvetica Neue', sans-serif"
+    font-family="${FONT_FAMILY}"
     font-size="${titulo.length > 30 ? 52 : 62}" font-weight="900"
+    letter-spacing="0.02em"
     fill="${palette.text}"
     filter="url(#textShadow)"
   >${titulo}</text>
 
-  <!-- ── SUBTÍTULO ── -->
+  <!-- ── SUBTÍTULO — Gotham Book ── -->
   ${subtitulo ? `
   <text
     x="52" y="${subtY}"
-    font-family="'Arial', 'Helvetica Neue', sans-serif"
-    font-size="32" font-weight="400" letter-spacing="0.5"
+    font-family="${FONT_FAMILY_BOOK}"
+    font-size="32" font-weight="400" letter-spacing="0"
     fill="${palette.text}" opacity="0.85"
     filter="url(#textShadow)"
   >${truncate(subtitulo, 60)}</text>
   ` : ''}
 
-  <!-- ── FECHA Y LUGAR ── -->
+  <!-- ── FECHA Y LUGAR — Gotham Bold ── -->
   ${fecha ? `
   <text
     x="52" y="${fechaY - (lugar ? 42 : 0)}"
-    font-family="'Arial', sans-serif" font-size="26" font-weight="600"
-    fill="${palette.accent}" letter-spacing="1"
+    font-family="${FONT_FAMILY}"
+    font-size="26" font-weight="700" letter-spacing="0.06em"
+    fill="${palette.accent}"
     filter="url(#textShadow)"
   >${fecha}</text>
   ` : ''}
@@ -210,27 +313,31 @@ function buildSVGOverlay(brief, layout, palette, opts = {}) {
   ${lugar ? `
   <text
     x="52" y="${fechaY}"
-    font-family="'Arial', sans-serif" font-size="24" font-weight="400"
+    font-family="${FONT_FAMILY_BOOK}"
+    font-size="24" font-weight="400"
     fill="${palette.text}" opacity="0.80"
     filter="url(#textShadow)"
-  >📍 ${lugar}</text>
+  >${lugar}</text>
   ` : ''}
 
-  <!-- ── CTA / HASHTAG ── -->
+  <!-- ── CTA BUTTON — Gotham Bold UPPERCASE ── -->
   ${cta ? `
   <rect x="52" y="${ctaY - 42}" width="${Math.min(cta.length * 18 + 48, w - 104)}" height="52"
     rx="26" fill="${palette.secondary}" opacity="0.95"/>
   <text
     x="${52 + Math.min(cta.length * 18 + 48, w - 104) / 2}" y="${ctaY - 8}"
-    font-family="'Arial Black', sans-serif" font-size="22" font-weight="700"
+    font-family="${FONT_FAMILY}"
+    font-size="22" font-weight="700" letter-spacing="0.06em"
     text-anchor="middle" fill="${palette.text}"
   >${cta}</text>
   ` : ''}
 
+  <!-- ── HASHTAG — Gotham Medium ── -->
   ${hashtag && !cta ? `
   <text
     x="52" y="${ctaY}"
-    font-family="'Arial', sans-serif" font-size="26" font-weight="600"
+    font-family="${FONT_FAMILY}"
+    font-size="26" font-weight="500" letter-spacing="0.01em"
     fill="${palette.secondary}" opacity="0.90"
   >${hashtag}</text>
   ` : ''}
@@ -278,12 +385,13 @@ class DesignCompositor {
 
   /**
    * COMPOSITA: toma la URL de imagen IA + brief y devuelve PNG Buffer completo
-   * con texto, branding y copy superpuesto.
+   * con texto Gotham, logo del cliente y copy superpuesto.
    *
-   * @param {string} aiImageUrl - URL de la imagen generada por DALL-E/Higgsfield
+   * @param {string} aiImageUrl - URL de la imagen generada por Higgsfield
    * @param {object} brief - {
    *   titulo, subtitulo, fecha, lugar, cta, logo_text, hashtag, badge,
-   *   evento, marca, formato
+   *   evento, marca, formato,
+   *   typo_spec  (opcional, del typography-spec.js — usa textos exactos del brief)
    * }
    * @returns {Buffer} PNG final con diseño completo
    */
@@ -291,39 +399,77 @@ class DesignCompositor {
     console.log('[Compositor] Descargando imagen base...');
     const imageBuffer = await this.fetchImageBuffer(aiImageUrl);
 
-    const layout = this.detectLayout(brief);
+    const layout  = this.detectLayout(brief);
     const palette = this.detectPalette(brief);
 
-    console.log(`[Compositor] Layout: ${JSON.stringify({ w: layout.w, h: layout.h })} | Paleta detectada`);
+    console.log(`[Compositor] Layout: ${layout.w}x${layout.h} | Paleta: ${brief.evento || brief.marca || 'DEFAULT'} | Font: ${PRIMARY_FONT}`);
+
+    // Si hay typo_spec, usar los textos exactos del spec en lugar del brief directo
+    // El typo_spec viene de carlos.agent.js (generateTypographySpecForBrief)
+    const spec = brief.typo_spec || null;
+    const getCapaTexto = (id) => {
+      if (!spec) return null;
+      const capa = (spec.capas || []).find(c => c.id === id);
+      return capa?.texto_a_montar || null;
+    };
+
+    const enrichedBrief = {
+      ...brief,
+      titulo:    getCapaTexto('headline') || getCapaTexto('titulo') || brief.titulo || '',
+      subtitulo: getCapaTexto('subheadline') || getCapaTexto('subtitulo') || brief.subtitulo || '',
+      cta:       getCapaTexto('cta') || getCapaTexto('cta_badge') || brief.cta || '',
+      fecha:     getCapaTexto('fecha_badge') || getCapaTexto('fecha') || getCapaTexto('fecha_evento') || brief.fecha || '',
+      lugar:     brief.lugar || '',
+    };
 
     // Redimensionar/recortar imagen al canvas deseado
     const resizedImage = await sharp(imageBuffer)
-      .resize(layout.w, layout.h, {
-        fit: 'cover',
-        position: 'centre'
-      })
+      .resize(layout.w, layout.h, { fit: 'cover', position: 'centre' })
       .toBuffer();
 
-    // Generar SVG overlay
-    const svgOverlay = buildSVGOverlay(brief, layout, palette, {
-      showBadge: !!brief.badge,
+    // Generar SVG overlay con Gotham
+    const svgOverlay = buildSVGOverlay(enrichedBrief, layout, palette, {
+      showBadge:     !!enrichedBrief.badge,
       showGeometric: true,
-      showDivider: true
+      showDivider:   true
     });
 
-    const svgBuffer = Buffer.from(svgOverlay);
+    // ── Compositar capas: resized base + SVG overlay + logo PNG (si existe) ──
+    const layers = [{ input: Buffer.from(svgOverlay), top: 0, left: 0 }];
 
-    // Compositar: imagen base + SVG overlay
+    // Logo del cliente: PNG desde vendor/logos/<CLIENTE>.png
+    const cliente = (brief.evento || brief.marca || '').toUpperCase();
+    const logoBuffer = getLogoBuffer(cliente);
+
+    if (logoBuffer) {
+      try {
+        // Redimensionar logo a 160px de ancho, mantener aspecto
+        const resizedLogo = await sharp(logoBuffer)
+          .resize(160, null, { fit: 'inside', withoutEnlargement: true })
+          .png()
+          .toBuffer();
+
+        // Posición: esquina superior derecha con margen
+        const logoPadding = 40;
+        const logoMeta = await sharp(resizedLogo).metadata();
+        const logoTop  = logoPadding;
+        const logoLeft = layout.w - (logoMeta.width || 160) - logoPadding;
+
+        layers.push({ input: resizedLogo, top: logoTop, left: logoLeft });
+        console.log(`[Compositor] ✅ Logo ${cliente} cargado (${logoMeta.width}x${logoMeta.height})`);
+      } catch (logoErr) {
+        console.warn(`[Compositor] Logo ${cliente} error (skip): ${logoErr.message}`);
+      }
+    } else {
+      console.log(`[Compositor] Logo ${cliente}: no encontrado en vendor/logos/ — usando texto como fallback`);
+    }
+
     const composited = await sharp(resizedImage)
-      .composite([{
-        input: svgBuffer,
-        top: 0,
-        left: 0
-      }])
+      .composite(layers)
       .png({ quality: 95 })
       .toBuffer();
 
-    console.log(`[Compositor] ✅ Composición completa — ${(composited.length / 1024).toFixed(0)} KB`);
+    console.log(`[Compositor] ✅ Composición completa (${PRIMARY_FONT}) — ${(composited.length / 1024).toFixed(0)} KB | Logo: ${logoBuffer ? cliente : 'texto'}`);
     return composited;
   }
 

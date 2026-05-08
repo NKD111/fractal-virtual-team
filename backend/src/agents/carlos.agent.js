@@ -489,39 +489,119 @@ Sé apasionado pero respetuoso. Propón un punto de síntesis.`;
     const typoSpec = this.generateTypographySpecForBrief(brief);
     console.log(`📝 CARLOS [PASO 2 - Typography Spec]: ${typoSpec.capas.length} capas Gotham generadas`);
 
-    // Save to Supabase if brief has ID
+    // Guardar background crudo en Supabase (estado intermedio antes de compositar)
     if (brief.id && imageResult) {
       try {
         const { supabase } = require('../core/supabase');
         await supabase.from('parrilla_briefs').update({
-          url_arte_final:  imageResult.images[0]?.resultUrl,
-          url_arte_v2:     imageResult.images[1]?.resultUrl,
-          status:          'listo_qc',
+          status: 'compositing',
           metadata: {
             ...(brief.metadata || {}),
-            typo_spec:     typoSpec,
-            typo_valid:    typoValidation,
-            pipeline_step: 'background_generated_text_pending',
-            nota_produccion: 'Imagen sin texto generada. Montar texto según typo_spec con Gotham.'
+            background_url:    imageResult.images[0]?.resultUrl,
+            background_url_v2: imageResult.images[1]?.resultUrl,
+            typo_spec:         typoSpec,
+            typo_valid:        typoValidation,
+            pipeline_step:     'background_generated_compositing',
           }
         }).eq('id', brief.id);
       } catch (dbErr) {
-        console.warn('[Carlos generateFromBrief] DB update error (non-fatal):', dbErr.message);
+        console.warn('[Carlos PASO 2] DB update error (non-fatal):', dbErr.message);
+      }
+    }
+
+    // ── PASO 3: Compositor — overlay texto Gotham + logos sobre el background ──
+    // Toma el background de PASO 1 y monta:
+    //   · Texto tipográfico (headline, subheadline, CTA) con Gotham Font Family
+    //   · Logo del cliente/evento (FIF, VANEXPO, etc.)
+    // Resultado: url_arte_final = arte COMPLETO listo para entregar
+    let composedResult = null;
+    const backgroundUrl = imageResult.images[0]?.resultUrl;
+
+    if (backgroundUrl) {
+      try {
+        const compositor = require('../services/workflows/design-compositor');
+
+        // Construir brief de composición desde el brief de parrilla
+        const compositionBrief = {
+          titulo:     brief.headline    || brief.concepto  || '',
+          subtitulo:  brief.subheadline || '',
+          fecha:      brief.fecha       || '',
+          lugar:      brief.sede        || '',
+          cta:        brief.cta         || 'REGÍSTRATE AHORA',
+          hashtag:    brief.hashtags    || '',
+          badge:      brief.badge       || '',
+          evento:     brief.cliente     || 'FIF',
+          marca:      brief.cliente     || 'FIF',
+          formato:    brief.tipo_pieza  || 'post_informativo',
+          // Pasar typo_spec para que el compositor use el contenido correcto
+          typo_spec:  typoSpec,
+        };
+
+        const tags = [
+          brief.cliente  || 'FIF',
+          brief.tipo_pieza || 'post',
+          brief.id       || `brief_${Date.now()}`
+        ].filter(Boolean);
+
+        composedResult = await compositor.compositeAndUpload(backgroundUrl, compositionBrief, tags);
+        console.log(`✅ CARLOS [PASO 3 - Compositor]: Arte con texto Gotham + logo → ${composedResult.url?.substring(0, 80)}`);
+
+      } catch (compErr) {
+        console.warn(`[Carlos PASO 3] Compositor falló (non-fatal, entregando background): ${compErr.message}`);
+        // Fallback: usar background crudo si el compositor falla
+        composedResult = {
+          url:    backgroundUrl,
+          source: 'background_fallback',
+          error:  compErr.message
+        };
+      }
+    }
+
+    // Actualizar Supabase con arte FINAL (compuesto o background como fallback)
+    const finalUrl = composedResult?.url || backgroundUrl;
+    if (brief.id) {
+      try {
+        const { supabase } = require('../core/supabase');
+        await supabase.from('parrilla_briefs').update({
+          url_arte_final: finalUrl,
+          url_arte_v2:    imageResult.images[1]?.resultUrl,
+          status:         'listo_qc',
+          metadata: {
+            ...(brief.metadata || {}),
+            background_url:    imageResult.images[0]?.resultUrl,
+            background_url_v2: imageResult.images[1]?.resultUrl,
+            composed_url:      composedResult?.source !== 'background_fallback' ? finalUrl : null,
+            composed_source:   composedResult?.source || null,
+            typo_spec:         typoSpec,
+            typo_valid:        typoValidation,
+            pipeline_step:     composedResult?.source !== 'background_fallback'
+                                 ? 'composed_ready_for_qc'
+                                 : 'background_only_compositor_failed',
+            compositor_error:  composedResult?.error || null,
+          }
+        }).eq('id', brief.id);
+      } catch (dbErr) {
+        console.warn('[Carlos PASO 3] DB final update error (non-fatal):', dbErr.message);
       }
     }
 
     return {
-      success:    true,
-      images:     imageResult.images,
-      model_used: imageResult.model_used,
+      success:      true,
+      images:       imageResult.images,
+      model_used:   imageResult.model_used,
       prompt,
-      typo_spec:  typoSpec,
+      typo_spec:    typoSpec,
       typo_validation: typoValidation,
+      composed_url: composedResult?.url || null,
+      composed_source: composedResult?.source || null,
+      final_url:    finalUrl,
       pipeline_notes: [
-        '✅ Paso 1: Background visual generado SIN texto (listo para montaje)',
+        '✅ Paso 1: Background visual generado SIN texto (sin logos)',
         `✅ Paso 2: Spec tipográfico Gotham generado (${typoSpec.capas.length} capas)`,
-        '⏳ Paso 3: Valentina QC — revisar composición + consistencia de marca',
-        '⏳ Paso 4: Producción monta texto con Gotham según spec',
+        composedResult?.source && composedResult.source !== 'background_fallback'
+          ? `✅ Paso 3: Arte compuesto con texto Gotham + logo → ${composedResult.source}`
+          : `⚠️ Paso 3: Compositor falló — entregando background crudo (${composedResult?.error || 'sin detalle'})`,
+        '⏳ Paso 4: Valentina QC — revisar arte compuesto',
         '⏳ Paso 5: QC final antes de entregar a Claudia',
       ]
     };
