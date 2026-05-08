@@ -74,6 +74,11 @@ async function countTodayMessages(recipient = 'neiky') {
 }
 
 async function canSend(priority = 2, recipient = 'neiky') {
+  // 🛑 PAUSA GLOBAL — detiene TODO mensaje proactivo
+  if (process.env.SYSTEM_PAUSED === 'true') {
+    console.log('[ProactiveScheduler] 🛑 SYSTEM_PAUSED=true — canSend bloqueado');
+    return false;
+  }
   if (!isWithinHours(priority)) return false;
   if (priority === 1) return true; // crítico: siempre
 
