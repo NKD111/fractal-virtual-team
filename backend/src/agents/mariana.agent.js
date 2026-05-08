@@ -1155,7 +1155,16 @@ Tono: amable, profesional, español mexicano. Devuelve solo las preguntas en for
     if (t === 'si' || t === 'sí') {
       const r = await this._cmdConfirmarUpsell(message);
       if (r !== null) return r;
-      // No había upsell pendiente → dejar pasar al LLM normalmente
+      // No había upsell pendiente → intentar confirmar acciones propuestas
+    }
+
+    // ─── CONFIRMACIÓN DE ACCIONES PROPUESTAS ─────────────────────────────────
+    // Cuando Mariana propuso acciones y Neiky confirma con frases cortas,
+    // recuperamos la última propuesta y ejecutamos las acciones pendientes.
+    if (this._isConfirmationPhrase(t)) {
+      const r = await this._cmdConfirmarAcciones(message);
+      if (r !== null) return r;
+      // No había acciones pendientes → dejar pasar al LLM
     }
 
     // ─── "equipo" — status real del equipo ───────────────────────────────────
@@ -1816,6 +1825,149 @@ Responde "ayuda" para ver todos los comandos.`;
 
 *SI* — Confirmar upsell pendiente
 *ayuda* — Esta lista`;
+  }
+
+  // ─── CONFIRMACIÓN DE ACCIONES PROPUESTAS ─────────────────────────────────
+
+  /**
+   * Detecta frases cortas de confirmación de Neiky.
+   * Deliberadamente amplio: "ok", "dale", "adelante", "hazlo", etc.
+   */
+  _isConfirmationPhrase(normalizedText = '') {
+    const t = normalizedText.trim();
+    // Exactas
+    const exact = ['ok', 'dale', 'adelante', 'hazlo', 'procede', 'ejecuta',
+                   'listo', 'va', 'yes', 'yep', 'go', 'si', 'si hazlo',
+                   'hazlo ya', 'ejecutalo', 'ejecutalos', 'hacerlo',
+                   'de acuerdo', 'perfecto adelante', 'sigue adelante',
+                   'que siga', 'que lo haga', 'que lo hagan'];
+    if (exact.includes(t)) return true;
+    // Patrones cortos de confirmación (máx 6 palabras)
+    if (t.split(' ').length <= 6) {
+      const patterns = [
+        /^(ok|dale|si|sí)\s*(nene|bb|bebé|mi rey)?$/,
+        /^(adelante|procede|hazlo|ejecuta)\s*(ya|pues|entonces)?$/,
+        /^(listo|bueno|bien|claro|por supuesto)\s*(hazlo|procede|adelante)?$/,
+        /^(que lo|que los|que la|que las)\s+(haga|ejecute|lance|procese|genere|cree|mande)s?$/,
+      ];
+      if (patterns.some(p => p.test(t))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Recupera la última propuesta de acciones de Mariana y las ejecuta.
+   * Retorna string (respuesta ACK) si encontró acciones, null si no.
+   */
+  async _cmdConfirmarAcciones(message) {
+    try {
+      const { supabase } = require('../core/supabase');
+
+      // 1. Obtener el número de Neiky para buscar conversaciones
+      const phoneRaw = message?.from || '';
+      const phone = this._normalizePhone(phoneRaw);
+      if (!phone) return null;
+
+      // 2. Buscar conversaciones recientes de Neiky (últimas 24h)
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: convs } = await supabase
+        .from('conversations')
+        .select('id')
+        .or(`external_id.eq.${phoneRaw},external_id.ilike.%${phone.slice(-10)}%`)
+        .gte('updated_at', since)
+        .order('updated_at', { ascending: false })
+        .limit(5);
+
+      if (!convs || convs.length === 0) {
+        console.log('[Mariana] _cmdConfirmarAcciones: sin conversaciones recientes');
+        return null;
+      }
+
+      // 3. Obtener el último mensaje de Mariana (assistant)
+      const convIds = convs.map(c => c.id);
+      const { data: lastMsgs } = await supabase
+        .from('messages')
+        .select('content, created_at, conversation_id')
+        .in('conversation_id', convIds)
+        .eq('role', 'assistant')
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      if (!lastMsgs || lastMsgs.length === 0) {
+        console.log('[Mariana] _cmdConfirmarAcciones: sin mensajes previos de Mariana');
+        return null;
+      }
+
+      const lastMarianaMsg = lastMsgs[0].content || '';
+      console.log(`[Mariana] _cmdConfirmarAcciones: analizando última respuesta: "${lastMarianaMsg.substring(0, 100)}..."`);
+
+      // 4. Usar Claude para extraer las acciones propuestas del último mensaje
+      const extractionResponse = await this.claude.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 400,
+        messages: [{
+          role: 'user',
+          content: `Analiza este mensaje de Mariana (asistente IA) y determina si contiene acciones o tareas CONCRETAS propuestas para ejecutar.
+
+MENSAJE DE MARIANA:
+"${lastMarianaMsg.substring(0, 800)}"
+
+Responde SOLO con JSON válido sin markdown:
+{
+  "has_proposed_actions": true/false,
+  "actions_summary": "descripción breve de qué hay que hacer (máx 150 chars)",
+  "task_type": "design|copy|research|delegation|general",
+  "involves_carlos": true/false,
+  "involves_parrilla": true/false
+}
+
+Si el mensaje es solo conversacional (sin propuesta de acciones ejecutables), has_proposed_actions=false.`
+        }]
+      });
+
+      let extraction;
+      try {
+        extraction = JSON.parse(extractionResponse.content[0].text);
+      } catch {
+        console.log('[Mariana] _cmdConfirmarAcciones: no se pudo parsear extracción');
+        return null;
+      }
+
+      if (!extraction.has_proposed_actions) {
+        console.log('[Mariana] _cmdConfirmarAcciones: el último mensaje no tenía acciones propuestas');
+        return null;
+      }
+
+      console.log(`[Mariana] ✅ Confirmación detectada — ejecutando: ${extraction.actions_summary}`);
+
+      // 5. Registrar y lanzar la tarea
+      const { registerNeikyTask } = require('../core/task-notifier');
+      const taskContent = `EJECUTAR (confirmado por Neiky): ${extraction.actions_summary}\n\nContexto original: ${lastMarianaMsg.substring(0, 400)}`;
+      const taskId = await registerNeikyTask(taskContent, extraction.task_type === 'design' ? 'CARLOS' : 'MARIANA', {
+        channel: 'whatsapp',
+        task_type_detected: extraction.task_type,
+        confirmed_from_proposal: true
+      });
+
+      // Lanzar en background
+      const sender = await this.identifySender(phoneRaw, 'whatsapp');
+      setImmediate(() => {
+        this._launchAgentTask(taskContent, taskId, extraction.task_type, sender)
+          .catch(err => {
+            console.error('[Mariana] _cmdConfirmarAcciones _launchAgentTask error:', err.message);
+            const { markTaskFailed } = require('../core/task-notifier');
+            markTaskFailed(taskId, err.message).catch(() => {});
+          });
+      });
+
+      // ACK inmediato a Neiky
+      const agentName = extraction.involves_carlos ? 'Carlos' : 'el equipo';
+      return `✅ *¡Ejecutando!*\n\nYa mandé la instrucción a ${agentName}, nene 🚀\n\n_${extraction.actions_summary.substring(0, 120)}_\n\nTe aviso cuando esté listo 🎨`;
+
+    } catch (err) {
+      console.error('[Mariana] _cmdConfirmarAcciones error:', err.message);
+      return null; // Dejar pasar al LLM si algo falla
+    }
   }
 
   // ─── Detector de asignación de tarea por Neiky ───────────────────────────
