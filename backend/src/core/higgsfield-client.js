@@ -55,13 +55,15 @@ function getBinaryPath() {
 }
 
 // ─── Credentials setup ─────────────────────────────────────────────────────────
+// FIX: siempre sobreescribir desde env vars — Railway containers son efímeros
+// y el archivo puede quedar inválido/vacío de runs anteriores.
 function ensureCredentials() {
   const combined = process.env.HIGGSFIELD_COMBINED
     || (process.env.HIGGSFIELD_API_KEY && process.env.HIGGSFIELD_SECRET
         ? `${process.env.HIGGSFIELD_API_KEY}:${process.env.HIGGSFIELD_SECRET}`
         : null);
 
-  if (!combined) return; // rely on existing local credentials
+  if (!combined) return; // sin env vars → confiar en credenciales locales existentes
 
   // Write to OS-appropriate credentials location
   const credsDir = process.platform === 'win32'
@@ -70,20 +72,22 @@ function ensureCredentials() {
 
   const credsFile = path.join(credsDir, 'credentials.json');
 
-  // Skip if credentials already present
-  if (fs.existsSync(credsFile)) return;
-
+  // SIEMPRE sobreescribir — no saltar si existe (puede estar inválido/vacío/stale)
   try {
     fs.mkdirSync(credsDir, { recursive: true });
     fs.writeFileSync(credsFile, JSON.stringify({
       access_token: combined,
-      token_type: 'Bearer'
+      token_type:   'Bearer'
     }), 'utf8');
-    console.log('[Higgsfield] Credentials written from env vars');
+    console.log('[Higgsfield] Credentials written/refreshed from env vars');
   } catch (err) {
     console.warn('[Higgsfield] Could not write credentials:', err.message);
   }
 }
+
+// Escribir credenciales al cargar el módulo (no lazy) para que Railway
+// tenga auth lista antes de cualquier request.
+ensureCredentials();
 
 // ─── CLI helper ────────────────────────────────────────────────────────────────
 async function runHF(args, timeoutMs = 120000) {
