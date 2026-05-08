@@ -97,11 +97,10 @@ async function sendMetaImage(to, imageUrl, caption = '') {
 // Canal 1: Meta Cloud API; Canal 2: Twilio (fallback si Meta falla).
 // Trunca a 4096 chars (límite WhatsApp).
 async function notifyNeiky(message) {
-  // 🛑 PAUSA GLOBAL — bloquea TODA notificación saliente
-  if (process.env.SYSTEM_PAUSED === 'true') {
-    console.log('[notifyNeiky] 🛑 SYSTEM_PAUSED=true — mensaje bloqueado:', (message || '').substring(0, 80));
-    return null;
-  }
+  // 🛑 PAUSA TOTAL HARDCODEADA — NKD ordenó detener TODO hasta nuevo aviso
+  // Para reactivar: eliminar estas 3 líneas y hacer push
+  console.log('[notifyNeiky] 🛑 PAUSA TOTAL — mensaje bloqueado:', (message || '').substring(0, 80));
+  return null;
   const neikyPhone = process.env.NEIKY_WHATSAPP || '+525534189583';
   const MAX_WA_LEN = 4096;
   const safeMsg = message && message.length > MAX_WA_LEN
