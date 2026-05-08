@@ -65,7 +65,12 @@ function ensureCredentials() {
 
   if (!combined) return; // sin env vars → confiar en credenciales locales existentes
 
-  const credsContent = JSON.stringify({ access_token: combined, token_type: 'Bearer' });
+  // Formato nuevo del hf CLI: { access_token: "hf_xxx", refresh_token: "hfr_xxx" }
+  // (token_type ya no se usa; refresh_token opcional para auto-renovación)
+  const credsObj = { access_token: combined };
+  const refreshToken = process.env.HIGGSFIELD_REFRESH_TOKEN;
+  if (refreshToken) credsObj.refresh_token = refreshToken;
+  const credsContent = JSON.stringify(credsObj);
 
   // Write to ALL possible credential locations the hf binary might read from
   const credsDirs = process.platform === 'win32'
