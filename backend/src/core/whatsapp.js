@@ -11,6 +11,10 @@ const TWILIO_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_FROM   = process.env.TWILIO_WHATSAPP_NUMBER || process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886';
 
 async function sendTwilioMessage(to, text) {
+  // 🛑 PAUSA TOTAL — bloquear TODO hasta nuevo aviso de NKD
+  console.log('[Twilio] 🛑 PAUSA TOTAL — bloqueado:', (text || '').substring(0, 60));
+  return null;
+
   if (!TWILIO_SID || !TWILIO_TOKEN) {
     console.warn('[Twilio] No credentials — mensaje no enviado');
     return;
@@ -34,6 +38,10 @@ async function sendTwilioMessage(to, text) {
 
 // Send text via Meta Cloud API (production WhatsApp)
 async function sendMetaMessage(to, text) {
+  // 🛑 PAUSA TOTAL — bloquear TODO hasta nuevo aviso de NKD
+  console.log('[Meta] 🛑 PAUSA TOTAL — bloqueado:', (text || '').substring(0, 60));
+  return null;
+
   const phone = to.replace('whatsapp:', '').replace('+', '');
   try {
     const { data } = await axios.post(META_API_URL, {
