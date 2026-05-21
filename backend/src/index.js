@@ -107,6 +107,54 @@ app.post('/api/pipelines/kdp', async (req, res) => {
   }
 });
 
+// KDP download: serve a generated PDF
+app.get('/api/pipelines/kdp/download/:fname', (req, res) => {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const fname = req.params.fname;
+    // Sanitize: only allow [a-z0-9-_.]+\.pdf and reject path traversal
+    if (!/^[a-z0-9._-]+\.pdf$/i.test(fname) || fname.includes('..')) {
+      return res.status(400).json({ error: 'invalid filename' });
+    }
+    const dir = path.join(__dirname, '..', 'output', 'kdp');
+    const full = path.join(dir, fname);
+    // Extra safety: ensure resolved path is inside dir
+    if (!full.startsWith(dir + path.sep)) {
+      return res.status(400).json({ error: 'invalid path' });
+    }
+    if (!fs.existsSync(full)) {
+      return res.status(404).json({ error: 'file not found', fname });
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    fs.createReadStream(full).pipe(res);
+  } catch (err) {
+    console.error('[KDP download]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// KDP list: see what PDFs are available
+app.get('/api/pipelines/kdp/list', (_req, res) => {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const dir = path.join(__dirname, '..', 'output', 'kdp');
+    if (!fs.existsSync(dir)) return res.json({ files: [] });
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.pdf'))
+      .map(f => {
+        const st = fs.statSync(path.join(dir, f));
+        return { fname: f, sizeKB: Math.round(st.size / 1024), created: st.mtime };
+      })
+      .sort((a, b) => new Date(b.created) - new Date(a.created));
+    res.json({ files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Whop Vault: tema → videos 16:9
 app.post('/api/pipelines/whop-vault', async (req, res) => {
   try {
