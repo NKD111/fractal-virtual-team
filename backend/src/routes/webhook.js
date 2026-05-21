@@ -333,20 +333,10 @@ router.post('/email-inbound', async (req, res) => {
 
     console.log(`[Webhook Email] Inbound from=${from} subject="${subject?.slice(0, 80)}"`);
 
-    const { parseTaskIdFromSubject, extractReplyBody, resumeTask } = require('../routines/task-runner');
-    const taskId = parseTaskIdFromSubject(subject);
-    if (!taskId) {
-      console.log('[Webhook Email] No [FX-taskId] tag in subject, ignoring');
-      return;
-    }
-
-    const feedback = extractReplyBody(rawText);
-    console.log(`[Webhook Email] Resuming task ${taskId} with feedback: "${feedback.slice(0, 60)}…"`);
-
-    // fire-and-forget
-    resumeTask({ taskId, feedback, source: 'email-reply' })
-      .catch(err => console.error('[Webhook Email] resumeTask failed:', err.message));
-
+    // task-runner retirado en v7.0 — email replies no enganchan a tasks
+    console.log('[Webhook Email] task-runner retirado, email ignorado');
+    return;
+    // eslint-disable-next-line no-unreachable
   } catch (err) {
     console.error('[Webhook Email] Error:', err.message);
   }

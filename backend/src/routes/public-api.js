@@ -6,8 +6,9 @@ const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
 const { supabase } = require('../core/supabase');
-const { runTask } = require('../routines/task-runner');
-const { runGroupChat } = require('../routines/group-chat');
+// task-runner y group-chat retirados en v7.0
+const runTask = async () => { throw new Error('task-runner retirado en v7.0'); };
+const runGroupChat = async () => { throw new Error('group-chat retirado en v7.0'); };
 
 function hashKey(raw) { return crypto.createHash('sha256').update(raw).digest('hex'); }
 

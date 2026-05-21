@@ -179,15 +179,9 @@ class CommunicationSystem {
   /**
    * Trigger del QC-Bot
    */
-  async triggerQCBot(data) {
-    try {
-      const QCBotAgent = require('../agents/qcbot.agent');
-      const qcbot = new QCBotAgent();
-      await qcbot.init();
-      await qcbot.processCheck(data);
-    } catch (e) {
-      console.error('Error triggering QC-Bot:', e.message);
-    }
+  async triggerQCBot(_data) {
+    // QCBot retirado — no-op
+    return;
   }
 
   /**

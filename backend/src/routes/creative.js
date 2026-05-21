@@ -421,21 +421,16 @@ router.post('/design-plugin-audit', async (req, res) => {
 
     if (!brief) return res.status(400).json({ error: 'Se requiere brief o brief_id' });
 
-    // Instanciar Valentina
-    let valentina;
-    try {
-      const ValentinaAgent = require('../agents/valentina.agent');
-      valentina = new ValentinaAgent();
-    } catch (e) {
-      return res.status(500).json({ error: 'No se pudo instanciar ValentinaAgent', detail: e.message });
-    }
+    // Valentina retirada — endpoint disabled
+    return res.status(503).json({
+      error: 'design-plugin-audit retirado',
+      reason: 'Valentina agent fue removida en simplificación v7.0',
+    });
 
+    // eslint-disable-next-line no-unreachable
     const artUrl = art_url || brief.url_arte_final || '';
     const clienteNombre = cliente || brief.cliente || 'FIF';
-
-    console.log(`[creative/design-plugin-audit] Brief: ${brief.id || 'manual'} | ${clienteNombre} | ${brief.tipo_pieza || 'post'}`);
-
-    const audit = await valentina.designPluginAudit(brief, artUrl, clienteNombre);
+    const audit = { overall_status: 'disabled', overall_score: 0, dev_handoff: {} };
 
     // Guardar notas_entrega en Supabase si viene de un brief_id
     if (brief_id && audit.dev_handoff?.notas_para_claudia) {
@@ -538,13 +533,14 @@ router.post('/test-generate', async (req, res) => {
     message: 'Carlos está generando. Recibirás el resultado por WhatsApp en ~2 min.'
   });
 
-  // Generación en background
+  // Carlos retirado — background gen disabled
   setImmediate(async () => {
     try {
-      const CarlosAgent = require('../agents/carlos.agent');
       const { notifyNeiky } = require('../core/whatsapp');
-
-      const carlos = new CarlosAgent();
+      await notifyNeiky('⚠️ /api/creative/test-generate llamado pero Carlos fue retirado en v7.0. Endpoint deshabilitado.');
+      return;
+      // eslint-disable-next-line no-unreachable
+      const carlos = { generateFromBrief: async () => ({ ok: false }) };
 
       const clientMap = {
         'FIF': 'FIF', 'EFG': 'EFG', 'FRACTAL': 'FRACTAL',

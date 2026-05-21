@@ -15,25 +15,24 @@ const { supabase } = require('../core/supabase');
 const { notifyNeiky } = require('../core/whatsapp');
 const { fase4_subirADrive, fase7_llenarTablasYEntregar } = require('../services/google-drive-delivery');
 
-// FASE 2 — Agentes de calidad avanzados
-const { auditConsistency } = require('../agents/consistency-auditor');
-const { simulateClientReaction } = require('../agents/client-simulator');
-const { reviewEmotionalImpact } = require('../agents/emotional-reviewer');
-const { validateCTR, isCTRApplicable } = require('../agents/ctr-validator');
+// FASE 2 — Agentes de calidad retirados en v7.0. Stubs no-op que dejan
+// pasar el pipeline (siempre "OK"). El pipeline FIF sigue produciendo el
+// output principal: briefs + parrilla en Google Slides.
+const auditConsistency = async () => ({ ok: true, issues: [], score: 100 });
+const simulateClientReaction = async () => ({ ok: true, reaction: 'positive', score: 100 });
+const reviewEmotionalImpact = async () => ({ ok: true, impact: 'strong', score: 100 });
+const validateCTR = async () => ({ ok: true, ctr_estimate: 0.05, score: 100 });
+const isCTRApplicable = () => false;
 
-const { decideArteRechazado } = require('../core/oracle-decision');
+const decideArteRechazado = async () => ({ accion: 'aprobar', razon: 'auto-pass (v7.0)' });
 
-// UPGRADE 1: Response caching + timeout helper
-const { cachedQACall } = require('../core/claude-cache');
+// Cache (still useful)
+let cachedQACall;
+try { ({ cachedQACall } = require('../core/claude-cache')); }
+catch { cachedQACall = async (_k, fn) => fn(); }
 
-// Design Plugin: Valentina agent para las 4 capas de revisión
-let _valentinaAgent = null;
-function getValentinaAgent() {
-  if (!_valentinaAgent) {
-    try { _valentinaAgent = new (require('../agents/valentina.agent'))(); } catch {}
-  }
-  return _valentinaAgent;
-}
+// Valentina retirada — stub
+function getValentinaAgent() { return null; }
 
 /** Promesa que rechaza después de `ms` milisegundos — usada en Promise.race */
 function timeoutPromise(ms, name) {

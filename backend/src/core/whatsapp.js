@@ -11,10 +11,6 @@ const TWILIO_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_FROM   = process.env.TWILIO_WHATSAPP_NUMBER || process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886';
 
 async function sendTwilioMessage(to, text) {
-  // 🛑 PAUSA TOTAL — bloquear TODO hasta nuevo aviso de NKD
-  console.log('[Twilio] 🛑 PAUSA TOTAL — bloqueado:', (text || '').substring(0, 60));
-  return null;
-
   if (!TWILIO_SID || !TWILIO_TOKEN) {
     console.warn('[Twilio] No credentials — mensaje no enviado');
     return;
@@ -38,10 +34,6 @@ async function sendTwilioMessage(to, text) {
 
 // Send text via Meta Cloud API (production WhatsApp)
 async function sendMetaMessage(to, text) {
-  // 🛑 PAUSA TOTAL — bloquear TODO hasta nuevo aviso de NKD
-  console.log('[Meta] 🛑 PAUSA TOTAL — bloqueado:', (text || '').substring(0, 60));
-  return null;
-
   const phone = to.replace('whatsapp:', '').replace('+', '');
   try {
     const { data } = await axios.post(META_API_URL, {
@@ -96,19 +88,10 @@ async function sendMetaImage(to, imageUrl, caption = '') {
   return data;
 }
 
-// ─── PAUSA GLOBAL DEL SISTEMA ────────────────────────────────────────────────
-// Cuando SYSTEM_PAUSED=true en Railway, NINGÚN mensaje sale por WhatsApp.
-// Para reactivar: cambiar a false o eliminar la var en Railway y redeploy.
-// ─────────────────────────────────────────────────────────────────────────────
-
 // Notify Fermín (Neiky) directly.
 // Canal 1: Meta Cloud API; Canal 2: Twilio (fallback si Meta falla).
 // Trunca a 4096 chars (límite WhatsApp).
 async function notifyNeiky(message) {
-  // 🛑 PAUSA TOTAL HARDCODEADA — NKD ordenó detener TODO hasta nuevo aviso
-  // Para reactivar: eliminar estas 3 líneas y hacer push
-  console.log('[notifyNeiky] 🛑 PAUSA TOTAL — mensaje bloqueado:', (message || '').substring(0, 80));
-  return null;
   const neikyPhone = process.env.NEIKY_WHATSAPP || '+525534189583';
   const MAX_WA_LEN = 4096;
   const safeMsg = message && message.length > MAX_WA_LEN

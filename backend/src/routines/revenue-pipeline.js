@@ -422,9 +422,64 @@ ${stripeLink ? `<a class='cta' href='${stripeLink}' target='_blank'>Comprar ahor
 </div></body></html>`;
 }
 
+// ── WEEKLY REVENUE REPORT (único cron sobreviviente) ───────────────────
+async function weeklyRevenueReport() {
+  console.log('💰 Weekly Revenue Report…');
+  const { notifyNeiky } = require('../core/whatsapp');
+  const since = new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+
+  let totalRevenue = 0, totalSales = 0;
+  const perProduct = [];
+
+  try {
+    const { data: metrics } = await supabase
+      .from('revenue_metrics_daily')
+      .select('product_id, sales_n, revenue_usd, revenue_products(title)')
+      .gte('date', since);
+
+    if (metrics?.length) {
+      const agg = {};
+      for (const m of metrics) {
+        const key = m.product_id;
+        if (!agg[key]) agg[key] = { title: m.revenue_products?.title || key.slice(0, 8), sales: 0, revenue: 0 };
+        agg[key].sales += (m.sales_n || 0);
+        agg[key].revenue += Number(m.revenue_usd || 0);
+        totalSales += (m.sales_n || 0);
+        totalRevenue += Number(m.revenue_usd || 0);
+      }
+      for (const k of Object.keys(agg)) perProduct.push(agg[k]);
+      perProduct.sort((a, b) => b.revenue - a.revenue);
+    }
+  } catch (e) {
+    console.error('[weeklyRevenue] query error:', e.message);
+  }
+
+  const lines = [
+    '💰 *Reporte semanal de ingresos*',
+    `📅 Desde: ${since}`,
+    '',
+    `Ventas: ${totalSales}`,
+    `Ingresos: $${totalRevenue.toFixed(2)} USD`,
+    ''
+  ];
+  if (perProduct.length) {
+    lines.push('*Top productos:*');
+    for (const p of perProduct.slice(0, 5)) {
+      lines.push(`• ${p.title}: ${p.sales} ventas · $${p.revenue.toFixed(2)}`);
+    }
+  } else {
+    lines.push('_Sin ventas registradas esta semana._');
+  }
+
+  const message = lines.join('\n');
+  try { await notifyNeiky(message); } catch (e) { console.error('[weeklyRevenue] WA:', e.message); }
+  return { total_revenue: totalRevenue, total_sales: totalSales, products: perProduct.length };
+}
+
 module.exports = {
   kickoffProduct,
   phaseTrackingDaily,
+  weeklyRevenueReport,
   renderLandingHtml,
   COUNCIL,
   APPROVAL_THRESHOLD

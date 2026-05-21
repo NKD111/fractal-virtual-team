@@ -1,143 +1,28 @@
-const { supabase, getOrCreateClient, saveMessage, logActivity } = require('./supabase');
+// orchestrator.js — Simplificado: solo Mariana (WhatsApp).
+// Todo lo demás (Diana, Alex, Carlos, etc.) fue retirado.
+
 const { notifyNeiky } = require('./whatsapp');
 
-// ─── v4.2: Lazy load agents (prefer .agent.js, fallback to .js) ──────────────
-const agentInstances = {};
+const marianaInstance = (() => {
+  try { return new (require('../agents/mariana.agent'))(); }
+  catch (_) { return require('../agents/mariana'); }
+})();
 
-function getAgent(slug) {
-  if (!agentInstances[slug]) {
-    let AgentClass;
-    try {
-      // Intentar cargar la versión v4.2 primero
-      AgentClass = require(`../agents/${slug}.agent`);
-      const instance = new AgentClass();
-      agentInstances[slug] = instance;
-    } catch (e) {
-      // Fallback a versión legacy
-      agentInstances[slug] = require(`../agents/${slug}`);
-    }
-  }
-  return agentInstances[slug];
-}
+function getAgent(_slug) { return marianaInstance; }
 
-// QCBOT solo existe en v4.2
-function getQCBot() {
-  if (!agentInstances['qcbot']) {
-    const QCBotAgent = require('../agents/qcbot.agent');
-    agentInstances['qcbot'] = new QCBotAgent();
-  }
-  return agentInstances['qcbot'];
-}
-
-const ALL_SLUGS = ['mariana', 'diana', 'alex', 'carlos', 'sofia', 'lucas', 'diego', 'max', 'valentina', 'roberto', 'qcbot', 'nexus'];
-
-// Routing rules: which agent handles which topic keywords
-const ROUTING_RULES = [
-  { keywords: ['factura', 'pago', 'precio', 'cobro', 'contrato', 'presupuesto', 'costo', 'iva', 'sat', 'rfc'], agent: 'roberto' },
-  { keywords: ['diseño', 'logo', 'branding', 'identidad', 'tipografia', 'paleta', 'colores', 'brand'], agent: 'diego' },
-  { keywords: ['video', 'reel', 'tiktok', 'edicion', 'animacion', 'motion', 'youtube'], agent: 'max' },
-  { keywords: ['contenido', 'copy', 'caption', 'texto', 'blog', 'post', 'publicacion', 'instagram'], agent: 'alex' },
-  { keywords: ['proyecto', 'timeline', 'entrega', 'deadline', 'avance', 'status'], agent: 'sofia' },
-  { keywords: ['analitica', 'metricas', 'analytics', 'estadisticas', 'reach', 'engagement', 'reporte', 'kpi'], agent: 'lucas' },
-  { keywords: ['arte', 'creativo', 'campaña', 'concepto', 'vision', 'estrategia creativa'], agent: 'valentina' },
-  { keywords: ['cliente', 'cuenta', 'propuesta', 'negociacion', 'relacion'], agent: 'diana' },
-];
-
-// Detect which agent should handle the message
-// Normaliza texto para comparación sin acentos: "métricas" == "metricas", "campaña" == "campana"
-function normalizeText(str) {
-  return (str || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
-
-function routeMessage(text) {
-  const normalized = normalizeText(text);
-
-  // Match keyword: short keywords (≤3 chars) require word-boundary to avoid false positives
-  // e.g. "iva" in "creativa", "sat" in "saturado", "rfc" in "refactoring"
-  function kwMatch(kw) {
-    const normKw = normalizeText(kw);
-    if (normKw.length <= 3) {
-      // Word boundary: keyword must be surrounded by non-word chars or at string edge
-      const re = new RegExp(`(?:^|[^a-z])${normKw}(?:[^a-z]|$)`);
-      return re.test(normalized);
-    }
-    return normalized.includes(normKw);
-  }
-
-  for (const rule of ROUTING_RULES) {
-    if (rule.keywords.some(kwMatch)) {
-      return rule.agent;
-    }
-  }
-  return 'mariana'; // Default hub
-}
-
-// Normaliza cualquier identificador de phone/whatsapp a solo dígitos
 function normalizePhone(str) {
   return (str || '').replace(/\D/g, '');
 }
 
-// Main message processor
-// Quick heuristic: does this message look like a delegation/task request?
-// (vs a casual chat message). If yes, trigger the visual task pipeline.
-function looksLikeDelegation(text) {
-  const t = String(text || '').toLowerCase().trim();
-  if (t.length < 8) return false;
-  // Imperative or request verbs in Spanish
-  const verbs = [
-    'haz', 'hazme', 'arma', 'armame', 'crea', 'créame', 'créa', 'genera', 'generame',
-    'diseña', 'diseñame', 'cotiza', 'cotízame', 'manda', 'mándame', 'envia', 'envíame',
-    'investiga', 'busca', 'búscame', 'analiza', 'edita', 'organiza', 'planea', 'agenda',
-    'prepara', 'preparame', 'corre', 'ejecuta', 'pidele', 'pídele', 'asigna',
-    'necesito', 'quiero', 'requiero', 'urge', 'pásame', 'pasame', 'mándame',
-    'puedes', 'podrías'
-  ];
-  // Has a verb at start OR contains "necesito/quiero" anywhere
-  if (verbs.some(v => t.startsWith(v + ' ') || t.startsWith(v + ','))) return true;
-  if (t.includes('necesito') || t.includes('quiero que') || t.includes('puedes ')) return true;
-  return false;
-}
-
-async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = null, agentSlug = null }) {
-  console.log(`[Orchestrator] New message from ${from} via ${channel}: ${text?.substring(0, 80)}`);
+async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = null }) {
+  console.log(`[Orchestrator] msg from ${from} via ${channel}: ${(text || '').substring(0, 80)}`);
 
   try {
-    // Check if Fermín/Neiky is messaging
-    // Usamos normalización por últimos 10 dígitos para ser robustos ante variaciones
-    // de prefijo (+52 vs +521, whatsapp: prefix, etc.)
-    const neikyRef = normalizePhone(
-      process.env.NEIKY_WHATSAPP || process.env.NEIKY_PHONE || '+5215534189583'
-    );
-    const fromNorm = normalizePhone(from);
-    const isNeiky =
-      (channel === 'web' && (from === 'web_neiky' || from === 'neiky')) ||
-      (fromNorm.length >= 10 && fromNorm.endsWith(neikyRef.slice(-10)));
+    if (global.io) marianaInstance.setIo?.(global.io);
+    const result = await marianaInstance.processMessage({ from, text, channel, mediaUrl });
 
-    console.log(`[Orchestrator] isNeiky=${isNeiky} | from=${from} | fromNorm=${fromNorm} | neikyRef.slice(-10)=${neikyRef.slice(-10)}`);
-
-    // Route to appropriate agent — Neiky SIEMPRE va a Mariana primero
-    // Si viene agentSlug explícito desde web Y es Neiky, respetar selección (excepto routing de keywords)
-    const ALL_SLUGS_SET = new Set(ALL_SLUGS);
-    const targetSlug = isNeiky
-      ? 'mariana' // Neiky siempre a Mariana como hub primario
-      : (agentSlug && ALL_SLUGS_SET.has(agentSlug) ? agentSlug : routeMessage(text));
-    const agent = getAgent(targetSlug);
-
-    // Set Socket.io if available
-    if (global.io) agent.setIo(global.io);
-
-    // Process the agent's natural reply
-    const result = await agent.processMessage({ from, text, channel, mediaUrl });
-
-    // ── WhatsApp → Vercel Office sync ────────────────────────────────────────
-    // Cuando llega un mensaje de WhatsApp, emitir a todos los clientes conectados
-    // al dashboard para que vean la conversación en tiempo real:
-    //   · new_message  → Mariana anima (manejado por OfficeScene)
-    //   · chat_bubble  → burbuja con el texto sobre Mariana / agente
-    //   · wa_message   → ChatPanel recibe mensajes vía Socket en vivo
     if (global.io && channel !== 'web') {
       global.io.emit('new_message', { from, channel });
-
       if (text) {
         global.io.emit('chat_bubble', {
           agent: 'mariana',
@@ -145,89 +30,36 @@ async function processIncoming({ from, text, channel = 'whatsapp', mediaUrl = nu
           kind: 'whatsapp_in'
         });
       }
-
-      if (result && typeof result === 'string') {
+      if (typeof result === 'string') {
         global.io.emit('chat_bubble', {
-          agent: targetSlug,
+          agent: 'mariana',
           text: result.slice(0, 200),
           kind: 'whatsapp_out'
         });
       }
-
-      // wa_message para ChatPanel (conversación unificada en tiempo real)
-      global.io.emit('wa_message', {
-        direction: 'in', from,
-        text: text?.slice(0, 800), agent: 'mariana',
-        channel, isNeiky, ts: Date.now()
-      });
-      if (result && typeof result === 'string') {
-        global.io.emit('wa_message', {
-          direction: 'out', from: targetSlug,
-          text: result.slice(0, 800), agent: targetSlug,
-          channel, isNeiky, ts: Date.now()
-        });
-      }
     }
-
-    // Cross-channel sync: if Neiky from WhatsApp sent a delegation request,
-    // ALSO trigger the visual task pipeline so the Office View animates
-    // (bolita + bubbles + email) in parallel to the WA reply.
-    if (isNeiky && channel !== 'web' && text && looksLikeDelegation(text)) {
-      try {
-        const { runTask } = require('../routines/task-runner');
-        // Fire-and-forget — frontend listens via socket
-        runTask({ message: text, userEmail: 'nakedgeometry19@gmail.com', source: channel })
-          .catch(err => console.error('[orchestrator] runTask:', err.message));
-        console.log(`[Orchestrator] WA → Office sync: task pipeline triggered`);
-      } catch (err) {
-        console.warn('[Orchestrator] task bridge skipped:', err.message);
-      }
-    }
-
-    console.log(`[Orchestrator] ${targetSlug} responded successfully`);
     return result;
-
   } catch (err) {
     console.error('[Orchestrator] Error:', err.message);
-
-    // Fallback: notify Fermín if something breaks
-    try {
-      await notifyNeiky(`⚠️ Error en el sistema:\n${err.message}\nMensaje de: ${from}`);
-    } catch (_) {}
-
+    try { await notifyNeiky(`⚠️ Error: ${err.message}\nDe: ${from}`); } catch (_) {}
     throw err;
   }
 }
 
-// Process inter-agent tasks (from queue)
-async function processAgentTask({ fromSlug, toSlug, message, taskId }) {
-  const targetAgent = getAgent(toSlug);
-  if (global.io) targetAgent.setIo(global.io);
-
-  return targetAgent.processMessage({
-    from: 'internal',
-    text: `[De ${fromSlug}]: ${message}`,
-    channel: 'internal'
-  });
-}
-
-// Initialize all agents (pre-load data from DB)
 async function initAllAgents(io) {
   global.io = io;
-  console.log('[Orchestrator] Initializing all agents (v4.2)...');
-
-  for (const slug of ALL_SLUGS) {
-    try {
-      const agent = slug === 'qcbot' ? getQCBot() : getAgent(slug);
-      if (typeof agent.setIo === 'function') agent.setIo(io);
-      if (typeof agent.init === 'function') await agent.init();
-      const name = agent.name || agent.slug || slug;
-      console.log(`  ✓ ${name}`);
-    } catch (err) {
-      console.error(`  ✗ ${slug}:`, err.message);
-    }
+  if (typeof marianaInstance.setIo === 'function') marianaInstance.setIo(io);
+  if (typeof marianaInstance.init === 'function') {
+    try { await marianaInstance.init(); } catch (e) { console.error('[mariana init]', e.message); }
   }
-  console.log('[Orchestrator] All agents ready.');
+  console.log('[Orchestrator] Mariana ready (single-agent mode).');
 }
 
-module.exports = { processIncoming, processAgentTask, initAllAgents, routeMessage, getAgent };
+module.exports = {
+  processIncoming,
+  initAllAgents,
+  getAgent,
+  // back-compat stubs for any leftover imports
+  routeMessage: () => 'mariana',
+  processAgentTask: async () => { throw new Error('Multi-agent tasks disabled'); },
+};

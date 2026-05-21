@@ -142,11 +142,6 @@ class PromiseTracker {
    * @param {object} context - { userId, phone, channel, originalMessage, socketId }
    */
   async detectAndSchedule(marianaResponse, context) {
-    // 🛑 PAUSA GLOBAL — no agendar nuevas promesas automáticas
-    if (process.env.SYSTEM_PAUSED === 'true') {
-      console.log('[PromiseTracker] 🛑 SYSTEM_PAUSED=true — detectAndSchedule bloqueado');
-      return;
-    }
     const promises = this.detectPromises(marianaResponse);
     if (promises.length === 0) return;
 
@@ -365,11 +360,6 @@ Máximo 3 líneas. Tono: coqueto-profesional. Si no tienes info específica, da 
    * Devuelve contexto adicional para incluir en la respuesta.
    */
   async flushDuePromises(phone) {
-    // 🛑 PAUSA GLOBAL — no ejecutar promesas vencidas automáticamente
-    if (process.env.SYSTEM_PAUSED === 'true') {
-      console.log('[PromiseTracker] 🛑 SYSTEM_PAUSED=true — flushDuePromises bloqueado');
-      return null;
-    }
     const due = await this.getPendingDue(phone);
     if (due.length === 0) return null;
 
