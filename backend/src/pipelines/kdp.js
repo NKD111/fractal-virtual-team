@@ -218,6 +218,67 @@ async function htmlToPdf(html) {
   }
 }
 
+// ── Cloudinary upload (resource_type=raw for PDFs) ────────────────────────────
+async function uploadToCloudinary(buffer, publicId) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (!cloudName || cloudName === 'PENDING' || !apiKey || !apiSecret) {
+    console.warn('[kdp] Cloudinary not configured — skipping upload');
+    return null;
+  }
+
+  let axios, FormData;
+  try {
+    axios = require('axios');
+    FormData = require('form-data');
+  } catch (e) {
+    console.warn('[kdp] axios/form-data missing — skipping upload:', e.message);
+    return null;
+  }
+
+  // Signed upload: timestamp + signature (SHA1 of params + secret)
+  const crypto = require('crypto');
+  const timestamp = Math.floor(Date.now() / 1000);
+  const folder = 'fractal-mx/kdp';
+  // Signature params must be sorted alphabetically, key=value joined by &,
+  // then append secret (NO ampersand) and SHA1
+  const toSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}`;
+  const signature = crypto.createHash('sha1').update(toSign + apiSecret).digest('hex');
+
+  const form = new FormData();
+  form.append('file', buffer, { filename: `${publicId}.pdf`, contentType: 'application/pdf' });
+  form.append('api_key', apiKey);
+  form.append('timestamp', String(timestamp));
+  form.append('public_id', publicId);
+  form.append('folder', folder);
+  form.append('signature', signature);
+
+  try {
+    const res = await axios.post(
+      `https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`,
+      form,
+      {
+        headers: form.getHeaders(),
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout: 120000,
+      }
+    );
+    console.log(`[kdp] ✅ Cloudinary: ${res.data.secure_url}`);
+    return {
+      url: res.data.secure_url,
+      public_id: res.data.public_id,
+      bytes: res.data.bytes,
+      format: res.data.format,
+    };
+  } catch (err) {
+    const detail = err.response?.data?.error?.message || err.message;
+    console.error('[kdp] Cloudinary upload failed:', detail);
+    return null;
+  }
+}
+
 // ── Main: orchestrator ───────────────────────────────────────────────────────
 async function runKdp({ niche, title, days, pages } = {}) {
   if (!niche) throw new Error('niche is required');
@@ -235,14 +296,19 @@ async function runKdp({ niche, title, days, pages } = {}) {
   const fname = `${slug(book.title)}-${Date.now()}.pdf`;
   const pdfPath = path.join(OUT_DIR, fname);
   fs.writeFileSync(pdfPath, pdfBuf);
-
-  // Also save HTML for inspection
   fs.writeFileSync(path.join(OUT_DIR, fname.replace(/\.pdf$/, '.html')), html);
+
+  // Upload to Cloudinary for a permanent URL (container is ephemeral)
+  const publicId = fname.replace(/\.pdf$/, '');
+  const cloudinary = await uploadToCloudinary(pdfBuf, publicId);
 
   console.log(`[kdp] done → ${pdfPath} (${totalPages} pages)`);
   return {
     ok: true,
     pdfPath,
+    cloudinaryUrl: cloudinary?.url || null,
+    cloudinaryPublicId: cloudinary?.public_id || null,
+    cloudinaryBytes: cloudinary?.bytes || null,
     title: book.title,
     pages: totalPages,
     niche,
@@ -250,4 +316,4 @@ async function runKdp({ niche, title, days, pages } = {}) {
   };
 }
 
-module.exports = { runKdp, generateContent, renderHtml, htmlToPdf };
+module.exports = { runKdp, uploadToCloudinary, generateContent, renderHtml, htmlToPdf };
