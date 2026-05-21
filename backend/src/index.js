@@ -89,7 +89,6 @@ app.use('/api/verification', require('./routes/verification'));
 app.use('/api/features', require('./routes/features'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/creative', require('./routes/creative'));
-app.use('/api', require('./routes/unified'));
 app.use('/api', require('./routes/public-api'));
 app.use('/webhooks', require('./routes/webhooks'));
 

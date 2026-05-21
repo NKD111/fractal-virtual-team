@@ -3,12 +3,22 @@
 
 const express = require('express');
 const router = express.Router();
-const { runFullVerification } = require('../tests/verification-suite');
-const { runPromisesVerification } = require('../tests/promises-verification');
-const { runFase6Stress } = require('../tests/fase6-stress');
-const { runVisionStress } = require('../tests/vision-stress');
-const { runVisionAgentsStress } = require('../tests/vision-agents');
-const { runUnifiedContextStress } = require('../tests/unified-context-stress');
+// Lazy/optional requires — varios tests fueron retirados en v7.0
+function tryRequire(p) { try { return require(p); } catch { return null; } }
+const _vs   = tryRequire('../tests/verification-suite')   || {};
+const _pv   = tryRequire('../tests/promises-verification') || {};
+const _f6   = tryRequire('../tests/fase6-stress')          || {};
+const _vis  = tryRequire('../tests/vision-stress')         || {};
+const _va   = tryRequire('../tests/vision-agents')         || {};
+const _uc   = tryRequire('../tests/unified-context-stress') || {};
+
+const stub = async () => ({ ok: false, error: 'suite retirada en v7.0' });
+const runFullVerification    = _vs.runFullVerification    || stub;
+const runPromisesVerification= _pv.runPromisesVerification|| stub;
+const runFase6Stress         = _f6.runFase6Stress         || stub;
+const runVisionStress        = _vis.runVisionStress       || stub;
+const runVisionAgentsStress  = _va.runVisionAgentsStress  || stub;
+const runUnifiedContextStress= _uc.runUnifiedContextStress|| stub;
 
 // POST /api/verification/run — runs the full suite (5–60 seconds)
 router.post('/run', async (req, res) => {
